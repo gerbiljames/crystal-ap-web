@@ -5,28 +5,20 @@
 // window before the first emulator input.
 
 let ctx: AudioContext | null = null;
-let primed = false;
 
-function prime() {
-  if (primed) return;
-  primed = true;
+// Re-run on every user gesture, not just the first — iOS/Android can miss
+// a one-shot resume (first gesture may not fully unlock, or the context
+// can transition back to suspended on visibility / memory events).
+function onGesture() {
   if (!ctx) ctx = new AudioContext();
   if (ctx.state === "suspended") ctx.resume().catch(() => {});
 }
 
-const cleanup = () => {
-  document.removeEventListener("pointerdown", onGesture, true);
-  document.removeEventListener("keydown", onGesture, true);
-  document.removeEventListener("touchstart", onGesture, true);
-};
-function onGesture() {
-  prime();
-  cleanup();
-}
-
 document.addEventListener("pointerdown", onGesture, true);
-document.addEventListener("keydown", onGesture, true);
-document.addEventListener("touchstart", onGesture, true);
+document.addEventListener("keydown",     onGesture, true);
+document.addEventListener("touchstart",  onGesture, true);
+document.addEventListener("touchend",    onGesture, true);
+document.addEventListener("click",       onGesture, true);
 
 // Callers get the primed context; if no gesture has occurred yet, they
 // still get a suspended context and can set up nodes — the audio will
