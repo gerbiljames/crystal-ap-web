@@ -375,6 +375,7 @@ export async function connectSession() {
 export async function disconnectSession() {
   try { await apWorker.stopSession(); } catch {}
   setSessionState("idle", "disconnected");
+  logOk("session disconnected");
 }
 
 // Brand-click teardown: stop the session and reload for a clean slate.

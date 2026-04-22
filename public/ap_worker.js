@@ -161,6 +161,10 @@ sorted(os.listdir("/tmp/out"))
 
 async function sessionStart(id, server, slotName, password) {
   await ensureInit(id);
+  // Tear down any prior session first so repeated connects don't stack
+  // client instances (each old BizHawkClientContext keeps streaming its
+  // own py-log events and fires duplicate bridge requests).
+  if (sessionTasks) await sessionStop(id);
   // Register a JS-side resolver so the Python shim can hand off bizhawk
   // requests to the main thread and await responses.
   self._bhEnqueue = (reqId, payload) => {
@@ -175,12 +179,35 @@ async function sessionStop(id) {
   try {
     await pyodide.runPythonAsync(`
 import asyncio
+# Mark as intentional BEFORE cancelling — server_loop's finally block
+# queues an auto-reconnect unless this flag is set, which is what was
+# causing the session to keep coming back after stopSession.
+try: ctx.disconnected_intentionally = True
+except Exception: pass
 try: ctx.exit_event.set()
 except Exception: pass
-try: _bh_tasks["server"].cancel()
+# If an auto-reconnect was already scheduled by a prior blip, cancel it.
+try:
+    _ar = getattr(ctx, "autoreconnect_task", None)
+    if _ar is not None: _ar.cancel()
 except Exception: pass
-try: _bh_tasks["watcher"].cancel()
+# Close the live socket so pending reads unblock.
+try:
+    _sock = getattr(ctx, "server", None)
+    if _sock is not None:
+        _ws = getattr(_sock, "socket", None)
+        if _ws is not None:
+            await _ws.close()
 except Exception: pass
+# Cancel our own tasks and await them so server_loop's finally actually
+# runs before we exit sessionStop.
+for _n in ("server", "watcher"):
+    _t = _bh_tasks.get(_n)
+    if _t is None: continue
+    _t.cancel()
+    try: await _t
+    except (asyncio.CancelledError, Exception): pass
+_bh_tasks.clear()
     `);
   } catch {}
   sessionTasks = null;
@@ -375,14 +402,18 @@ _ws.connect = _ws_connect
 
 # ------------------------------------------------------------------ bootstrap
 import logging
+# Strip handlers that prior sessions attached (Archipelago's init_logging
+# adds both a FileLog (useless here — no filesystem) and a StreamLog that
+# ends up duplicating every message on reconnect). Clear them all and let
+# named loggers propagate to the one clean root StreamHandler we install
+# below. FileLog stays muzzled permanently.
+for _l in list(logging.Logger.manager.loggerDict.values()):
+    if isinstance(_l, logging.Logger):
+        _l.handlers.clear()
+_flog = logging.getLogger("FileLog")
+_flog.handlers.clear()
+_flog.propagate = False
 logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
-# Archipelago's init_logging (if run) adds both a FileLog and StreamLog logger
-# with their own handlers. We don't have a filesystem to log to, and both
-# forward to the root logger via propagation — muzzle the file one.
-for _n in ("FileLog",):
-    _l = logging.getLogger(_n)
-    _l.handlers.clear()
-    _l.propagate = False
 
 from CommonClient import server_loop
 from worlds._bizhawk.context import BizHawkClientContext, _game_watcher
