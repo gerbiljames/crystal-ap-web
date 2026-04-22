@@ -677,7 +677,10 @@
     max-width: 1600px;
     margin: 0 auto;
   }
-  .play-stack > .screen-frame { justify-self: start; align-self: start; }
+  /* Screen-frame is nested inside .play-game (which is display:contents on
+     desktop), so use descendant combinators — a `>` combinator won't match
+     through the wrapper even though it visually dissolves. */
+  .play-stack .screen-frame { justify-self: start; align-self: start; }
   /* .play-game is a real flex container on mobile (defined in the media
      query) but dissolves on desktop so screen-frame participates directly
      in the 2-col grid. */
@@ -999,7 +1002,10 @@
     /* Canvas becomes fluid once we're on a touch-y viewport — desktop
        fixed --screen-w/h would otherwise lock landscape iPhone (667px)
        to the desktop scale and overflow the grid. */
-    .play-stack > .screen-frame { justify-self: stretch; }
+    /* Override the desktop pin — on mobile the frame is a flex-column
+       child of .play-game, where align-self controls horizontal alignment
+       (cross-axis), so stretching is what we want. */
+    .play-stack .screen-frame { justify-self: stretch; align-self: stretch; }
     .screen-frame {
       padding: 8px;
       align-self: stretch;
@@ -1058,7 +1064,7 @@
      emulator. Split the gamepad around the emulator — dpad left, and
      A/B stacked over start/select on the right — so the emulator gets
      the full vertical height. Log is hidden; no room for it. */
-  @media (max-width: 900px) and (orientation: landscape) {
+  @media (max-width: 1100px) and (max-height: 600px) and (orientation: landscape) {
     .play-game {
       display: grid;
       grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1067,7 +1073,12 @@
       row-gap: 16px;
       height: var(--play-game-h, calc(100dvh - 70px));
     }
-    .play-game > .screen-frame {
+    /* Extra .play-stack ancestor for specificity — the wider
+       @media (max-width: 1100px) block further down sets
+       `.play-stack .screen-frame { justify-self: center }` which would
+       otherwise win at landscape-mobile widths (match 900 + 1100 + LS,
+       last-wins) and shrink the emulator. */
+    .play-stack .play-game > .screen-frame {
       grid-column: 2;
       grid-row: 1 / -1;
       min-width: 0;
@@ -1109,6 +1120,31 @@
     }
     .play-game .gp-ss .gp-btn { min-width: 0; }
     .step[data-step="play"] { padding-top: 6px; }
+
+    /* Landscape-without-mobile-width (e.g. 1024x600 tablet). Apply the
+       same fluid canvas sizing the 900px block uses, so the emulator
+       doesn't revert to the desktop fixed --screen-w/h. */
+    .screen-frame { padding: 8px; align-items: stretch; }
+    .screen-wrap {
+      padding: 6px;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    #screen, .screen-idle {
+      width: min(100%, calc(var(--emu-max-h, 100dvh) * 160 / 144));
+      max-height: var(--emu-max-h, none);
+      min-width: 0;
+      min-height: 0;
+      height: auto;
+      aspect-ratio: 160 / 144;
+    }
+    .gamepad { display: flex; }
+    .screen-keys { display: none; }
   }
 
   /* ---------- responsive ---------- */
@@ -1116,7 +1152,7 @@
     .play-stack {
       grid-template-columns: 1fr;
     }
-    .play-stack > .screen-frame { justify-self: center; }
+    .play-stack .screen-frame { justify-self: center; }
   }
 
   /* Tablet / narrow desktop: stack the home blurb above the main pane. */
@@ -1210,6 +1246,11 @@
 </style>
 </head>
 <body>
+<div id="root"></div>
+
+<!-- Legacy markup kept below (commented) for reference; Solid renders the
+     equivalent tree into #root. -->
+<template id="legacy-tree">
 <div class="app" data-step="options">
 
   <header class="nav">
@@ -1381,8 +1422,9 @@
   </main>
 
 </div>
+</template>
 
 <script src="/binjgb.js"></script>
-<script type="module" src="/src/main.js"></script>
+<script type="module" src="/src/index.jsx"></script>
 </body>
 </html>
