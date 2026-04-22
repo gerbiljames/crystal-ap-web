@@ -13,7 +13,7 @@ function Blurb() {
   return (
     <aside class="blurb">
       <h1>Pokémon Crystal Archipelago <em>in your browser.</em></h1>
-      <p>A full multiworld client for <a href="https://github.com/gerbiljames/Archipelago-Crystal/tree/pokecrystal" target="_blank" rel="noopener">Pokémon Crystal</a>. You provide a YAML and your own vanilla Crystal ROM; everything else happens locally.</p>
+      <p>A full multiworld client for <a href="https://github.com/gerbiljames/Archipelago-Crystal/tree/pokecrystal" target="_blank" rel="noopener">Pokémon Crystal</a>. You provide a YAML and your own vanilla Crystal ROM; generation and patching happen locally.</p>
       <ul class="blurb-list">
         <li>Generation and ROM patching run in your tab via <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>.</li>
         <li>Your ROM never leaves this browser. It's stored locally so you don't need to re-provide it.</li>
