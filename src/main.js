@@ -1082,11 +1082,12 @@ async function bootEmulatorAndUi() {
   window.addEventListener("orientationchange", updateEmuMaxH);
   new MutationObserver(updateEmuMaxH).observe(document.body, { attributes: true, attributeFilter: ["data-step"], subtree: true });
 
-  // --- on-screen gamepad (touch + mouse for desktop testing) ---
-  // Per-button listeners only see their own element, which breaks
-  // finger-rolling (slide from A to B without lifting). Instead, track
-  // touches at the gamepad level and use elementFromPoint to re-bind
-  // each touch to whichever button it's currently over.
+  // --- on-screen gamepad ---
+  // Pointer Events unify touch + mouse, and releasing pointer capture
+  // on pointerdown means subsequent pointermove events report the
+  // element currently under the finger/cursor (not the original
+  // pointerdown target). That's what lets a finger roll from one gp-btn
+  // to another without lifting.
   const setBtn = (btn, held) => {
     if (!btn) return;
     Module[`_set_joyp_${btn.dataset.input}`](e, held);
@@ -1096,68 +1097,57 @@ async function bootEmulatorAndUi() {
     const el = document.elementFromPoint(x, y);
     return el && el.closest(".gp-btn[data-input]");
   };
-  const touchBtns = new Map(); // touchId -> currently-held button
+  const gpRoot = document.querySelector(".gamepad");
+  // Touch events for mobile: track by identifier, re-bind via
+  // elementFromPoint on every touchmove so rolling re-presses the
+  // button currently under the finger.
+  // Map value is the button currently held by that touch, or null if
+  // the finger is between buttons. Keeping the entry (as null) lets a
+  // touch that rolls off a button later roll back onto another one.
+  const touchBtns = new Map();
   const onTouchStart = (ev) => {
     for (const t of ev.changedTouches) {
       const btn = btnUnder(t.clientX, t.clientY);
-      if (btn) {
-        setBtn(btn, true);
-        touchBtns.set(t.identifier, btn);
-        ev.preventDefault();
-      }
+      if (btn) setBtn(btn, true);
+      touchBtns.set(t.identifier, btn || null);
     }
+    ev.preventDefault();
   };
   const onTouchMove = (ev) => {
     for (const t of ev.changedTouches) {
       if (!touchBtns.has(t.identifier)) continue;
       const prev = touchBtns.get(t.identifier);
       const now = btnUnder(t.clientX, t.clientY);
-      if (now !== prev) {
-        setBtn(prev, false);
-        if (now) { setBtn(now, true); touchBtns.set(t.identifier, now); }
-        else touchBtns.delete(t.identifier);
-        ev.preventDefault();
-      }
+      if (now === prev) continue;
+      if (prev) setBtn(prev, false);
+      if (now) setBtn(now, true);
+      touchBtns.set(t.identifier, now || null);
     }
+    ev.preventDefault();
   };
   const onTouchEnd = (ev) => {
     for (const t of ev.changedTouches) {
+      if (!touchBtns.has(t.identifier)) continue;
       const btn = touchBtns.get(t.identifier);
-      if (btn) { setBtn(btn, false); touchBtns.delete(t.identifier); }
+      if (btn) setBtn(btn, false);
+      touchBtns.delete(t.identifier);
     }
   };
-  const gpRoot = document.querySelector(".gamepad");
   if (gpRoot) {
     gpRoot.addEventListener("touchstart",  onTouchStart, { passive: false });
     gpRoot.addEventListener("touchmove",   onTouchMove,  { passive: false });
     gpRoot.addEventListener("touchend",    onTouchEnd);
     gpRoot.addEventListener("touchcancel", onTouchEnd);
-  }
-  // Mouse drag rolling: same idea, tracked at the gamepad root so
-  // holding the button and moving between gp-btns re-binds the press.
-  let mouseBtn = null;
-  const onMouseDown = (ev) => {
-    if (ev.button !== 0) return;
-    const btn = btnUnder(ev.clientX, ev.clientY);
-    if (btn) { setBtn(btn, true); mouseBtn = btn; ev.preventDefault(); }
-  };
-  const onMouseMove = (ev) => {
-    if (!(ev.buttons & 1)) { if (mouseBtn) { setBtn(mouseBtn, false); mouseBtn = null; } return; }
-    const now = btnUnder(ev.clientX, ev.clientY);
-    if (now !== mouseBtn) {
-      if (mouseBtn) setBtn(mouseBtn, false);
-      if (now) setBtn(now, true);
-      mouseBtn = now;
-    }
-  };
-  const onMouseUp = () => { if (mouseBtn) { setBtn(mouseBtn, false); mouseBtn = null; } };
-  if (gpRoot) {
-    gpRoot.addEventListener("mousedown", onMouseDown);
     gpRoot.addEventListener("contextmenu", ev => ev.preventDefault());
   }
-  // mousemove/up on window so drags that leave the gamepad still release.
-  window.addEventListener("mousemove", onMouseMove);
-  window.addEventListener("mouseup", onMouseUp);
+  // Mouse events per-button for desktop testing — simple, no rolling.
+  document.querySelectorAll(".gp-btn[data-input]").forEach(btn => {
+    const press   = (ev) => { ev.preventDefault(); setBtn(btn, true); };
+    const release = () => { setBtn(btn, false); };
+    btn.addEventListener("mousedown",  press);
+    btn.addEventListener("mouseup",    release);
+    btn.addEventListener("mouseleave", release);
+  });
 
   // --- populate session + artifact UI ---
   if (STATE.hosted) $("#sess-server").value = `${STATE.hosted.host}:${STATE.hosted.port}`;
