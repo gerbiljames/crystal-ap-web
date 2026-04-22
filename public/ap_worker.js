@@ -363,22 +363,13 @@ class _BrowserWS:
     async def pong(self, *a, **kw): return None
 
 async def _ws_connect(uri, *args, **kwargs):
-    # Normalise schemes: the AP server often uses archipelago.gg:PORT without
-    # any scheme, and CommonClient sometimes passes ws:// vs wss:// depending
-    # on context. Browser WebSocket needs ws:// or wss://.
-    u = uri
-    if not re.match(r"^wss?://", u): u = "wss://" + u
+    # Force wss://. The page is served over HTTPS, so mixed-content
+    # blocks any ws:// connection with a SecurityError regardless of
+    # what scheme the user / CommonClient supplied.
+    u = re.sub(r"^wss?://", "", uri)
+    u = "wss://" + u
     ws = _BrowserWS(u)
-    try:
-        await ws.wait_open()
-    except Exception:
-        # try ws:// fallback for local dev servers
-        if u.startswith("wss://"):
-            u2 = "ws://" + u[len("wss://"):]
-            ws = _BrowserWS(u2)
-            await ws.wait_open()
-        else:
-            raise
+    await ws.wait_open()
     return ws
 _ws.connect = _ws_connect
 
