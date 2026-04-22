@@ -492,7 +492,7 @@
   }
   .result-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 10px;
   }
   .result-chip {
@@ -875,29 +875,18 @@
   .session-links a::after { content: '↗'; color: var(--jade-deep); font-size: 10px; }
   .session-links a[data-kind="download"]::after { content: '↓'; }
 
-  /* ---------- collapsible event log ---------- */
+  /* ---------- event log ---------- */
   .log-area { display: flex; flex-direction: column; gap: 0; margin-top: 2px; }
-  .log-toggle {
-    display: flex; justify-content: space-between; align-items: center;
-    background: transparent;
+  .log-heading {
     border: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
+    border-bottom: none;
     color: var(--ink-2);
     font-family: var(--mono);
     font-size: 10px;
     letter-spacing: 0.22em;
     text-transform: uppercase;
     padding: 8px 12px;
-    cursor: pointer;
   }
-  .log-toggle:hover { color: var(--ink-0); border-color: var(--line-bright); }
-  .log-toggle[aria-expanded="true"] { border-bottom-color: transparent; }
-  .log-toggle .chev {
-    font-family: var(--mono);
-    color: var(--ink-3);
-    letter-spacing: 0;
-  }
-  .log-toggle { width: 100%; }
   #log {
     margin: 0;
     padding: 10px 12px;
@@ -1024,6 +1013,19 @@
     }
     .play-game > .screen-frame { flex: 0 0 auto; }
     .play-game > .gamepad { flex: 0 0 auto; margin-top: auto; }
+    /* When JS relocates .log-area inside .play-game on mobile, it fills
+       the slack between emulator and gamepad. The gamepad's margin-top
+       auto becomes a no-op (nothing for it to absorb) so it still sits
+       right after the log. */
+    .play-game > .log-area {
+      flex: 1 1 0;
+      min-height: 0;
+      margin: 0;
+    }
+    .play-game > .log-area .log-wrap { min-height: 0; }
+    /* Post-gen artifact chips stack at mobile widths to avoid the
+       filename titles forcing horizontal overflow. */
+    .result-grid { grid-template-columns: 1fr; }
   }
 
   /* ---------- responsive ---------- */
@@ -1301,9 +1303,7 @@
           <div class="session-links" id="session-links"></div>
 
           <div class="log-area">
-            <button class="log-toggle" id="log-toggle" aria-expanded="true">
-              <span>event log</span><span class="chev">−</span>
-            </button>
+            <div class="log-heading">event log</div>
             <div id="log-wrap" class="log-wrap">
               <pre id="log"></pre>
             </div>

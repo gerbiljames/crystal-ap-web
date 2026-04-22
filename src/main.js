@@ -1009,6 +1009,25 @@ async function bootEmulatorAndUi() {
   const gamepadEl = document.querySelector(".gamepad");
   const screenFrameEl = document.querySelector(".screen-frame");
   const canvasEl = document.querySelector("#screen");
+  const logAreaEl = document.querySelector(".log-area");
+  const playControlsEl = document.querySelector(".play-controls");
+  const mobileMQ = window.matchMedia("(max-width: 900px)");
+  const relocateLogArea = () => {
+    if (!logAreaEl || !playGameEl || !playControlsEl || !gamepadEl) return;
+    if (mobileMQ.matches) {
+      // Slot the log between the emulator and the gamepad.
+      if (logAreaEl.parentElement !== playGameEl) {
+        playGameEl.insertBefore(logAreaEl, gamepadEl);
+      }
+    } else {
+      // Restore log to the play-controls column.
+      if (logAreaEl.parentElement !== playControlsEl) {
+        playControlsEl.appendChild(logAreaEl);
+      }
+    }
+  };
+  relocateLogArea();
+  mobileMQ.addEventListener("change", () => { relocateLogArea(); updateEmuMaxH(); });
   const doMeasure = () => {
     if (!playGameEl || !gamepadEl || !screenFrameEl || !canvasEl) return;
     // Only active when play step is live (mobile layout + visible).
@@ -1026,7 +1045,11 @@ async function bootEmulatorAndUi() {
     // bottom (not some guessed offset).
     const pgH = Math.max(240, vh - pgTop);
     document.documentElement.style.setProperty("--play-game-h", `${pgH}px`);
-    const budget = Math.max(120, pgH - gpH - 14 - frameChrome);
+    // Each flex-column gap between play-game children is 14px. Two gaps
+    // when the log sits between emulator and gamepad, one otherwise.
+    const logInside = logAreaEl && logAreaEl.parentElement === playGameEl;
+    const gaps = logInside ? 28 : 14;
+    const budget = Math.max(120, pgH - gpH - gaps - frameChrome);
     document.documentElement.style.setProperty("--emu-max-h", `${budget}px`);
   };
   // Defer to next frame so layout is settled after attribute/CSS changes.
@@ -1177,17 +1200,6 @@ async function bootEmulatorAndUi() {
 
   $("#btn-connect").addEventListener("click", connectSession);
   $("#btn-disconnect").addEventListener("click", disconnectSession);
-
-  // --- log toggle ---
-  $("#log-toggle").addEventListener("click", () => {
-    const wrap = $("#log-wrap");
-    const btn = $("#log-toggle");
-    const expanded = wrap.hidden;
-    wrap.hidden = !expanded;
-    btn.setAttribute("aria-expanded", String(expanded));
-    btn.querySelector(".chev").textContent = expanded ? "−" : "+";
-    if (expanded) wrap.scrollTop = wrap.scrollHeight;
-  });
 
   // --- expose for console poking ---
   STATE.emulator = { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash };
