@@ -908,9 +908,48 @@
     }
     .play-stack > .screen-frame { justify-self: center; }
   }
+
+  /* Tablet / narrow desktop: stack the home blurb above the main pane. */
+  @media (max-width: 820px) {
+    .home {
+      grid-template-columns: 1fr;
+      gap: 24px;
+      padding: 28px 16px 40px;
+    }
+    .blurb h1 { font-size: 24px; }
+    .blurb p, .blurb-list { font-size: 13px; }
+    .home-card { padding: 16px; }
+    .step { padding: 24px 16px 36px; }
+    .nav { padding: 12px 16px; gap: 10px; }
+  }
+
+  /* Phones: keep the emulator pixel-integer at 2x but cap by viewport so it
+     never triggers horizontal scroll. Collapse the session form. */
   @media (max-width: 640px) {
     :root { --scale: 2; }
     .session-form { grid-template-columns: 1fr; }
+    .screen-frame { padding: 10px; max-width: 100%; }
+    #screen, .screen-idle {
+      width: min(var(--screen-w), calc(100vw - 44px));
+      height: auto;
+      aspect-ratio: 160 / 144;
+    }
+    .result-grid { grid-template-columns: 1fr; }
+    .blurb h1 { font-size: 22px; }
+    .home { padding: 20px 12px 32px; }
+    .step { padding: 20px 12px 28px; }
+    .nav { padding: 10px 12px; font-size: 12px; }
+    .brand { font-size: 16px; }
+    .session-chip { padding: 4px 10px; font-size: 9px; letter-spacing: 0.16em; }
+    .resume-row {
+      grid-template-columns: 1fr auto;
+      grid-template-areas: "slot actions" "id actions" "meta meta";
+      gap: 6px 12px;
+    }
+    .resume-row .slot { grid-area: slot; }
+    .resume-row .id { grid-area: id; }
+    .resume-row .meta { grid-area: meta; text-align: left; }
+    .resume-row .actions { grid-area: actions; align-self: start; }
   }
 
   /* ---------- misc ---------- */
