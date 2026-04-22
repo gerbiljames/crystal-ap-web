@@ -1,0 +1,7 @@
+[submodule "vendor/archipelago"]
+	path = vendor/archipelago
+	url = https://github.com/gerbiljames/Archipelago-Crystal.git
+	branch = pokecrystal
+[submodule "binjgb"]
+	path = binjgb
+	url = https://github.com/binji/binjgb.git

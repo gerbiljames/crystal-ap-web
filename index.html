@@ -1,0 +1,1098 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>crystal.ap</title>
+<style>
+  :root {
+    /* Palette lifted from the Pokemon Crystal title screen:
+       near-black background, cream logo fill, lavender/purple (ARCHIPELAGO
+       title + Suicune silhouette) as primary accent, Crystal's hot pink
+       (CRYSTAL VERSION badge) for alerts / active states. */
+    --bg-0: #0d1018;
+    --bg-1: #181a26;
+    --bg-2: #22243a;
+    --bg-3: #2d304c;
+    --ink-0: #f0e8d0;   /* logo cream */
+    --ink-1: #b2a4d0;   /* lavender-tinted body */
+    --ink-2: #6f6687;
+    --ink-3: #3b3752;
+    --jade: #957bc2;          /* was jade — now lavender primary */
+    --jade-deep: #5d4b8a;
+    --jade-bright: #c7aff0;
+    --coral: #eb3b79;         /* Crystal pink */
+    --coral-deep: #a8205a;
+    --amber: #e8d5a0;         /* logo cream/gold for warnings */
+    --line: #2c2b44;
+    --line-bright: #3a3857;
+    --mono: ui-monospace, "SF Mono", "IBM Plex Mono", "Monaco", "Menlo", "Consolas", monospace;
+    --display: ui-serif, "Iowan Old Style", "Apple Garamond", "Baskerville", "Hoefler Text", "Garamond", "Georgia", serif;
+    /* emulator pixel multiplier — drives canvas size, scanline spacing, and
+       the idle placeholder so everything snaps to an integer scale. */
+    --scale: 3;
+    --screen-w: calc(160 * var(--scale) * 1px);
+    --screen-h: calc(144 * var(--scale) * 1px);
+  }
+  @media (min-width: 1500px) { :root { --scale: 4; } }
+  @media (min-width: 1900px) { :root { --scale: 5; } }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body {
+    margin: 0; padding: 0;
+    height: 100%;
+    background: var(--bg-0);
+    color: var(--ink-0);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    /* subtle grain, fixed */
+    background-image:
+      radial-gradient(at 15% 10%, rgba(149,123,194,0.04), transparent 40%),
+      radial-gradient(at 85% 90%, rgba(235,59,121,0.035), transparent 45%),
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.92  0 0 0 0 0.89  0 0 0 0 0.81  0 0 0 0.025 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    background-attachment: fixed;
+  }
+  a { color: var(--jade-bright); text-decoration: none; border-bottom: 1px solid transparent; transition: border-color 160ms; }
+  a:hover { border-bottom-color: var(--jade-bright); }
+
+  ::selection { background: var(--jade-deep); color: var(--ink-0); }
+
+  /* ---------- layout skeleton ---------- */
+  .app {
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+  }
+
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(to bottom, rgba(24,26,38,0.92), rgba(13,16,24,0.92));
+    backdrop-filter: blur(6px);
+  }
+  .nav-spacer { flex: 1; }
+  .brand {
+    display: flex; align-items: baseline; gap: 10px;
+    font-family: var(--display);
+    font-style: italic;
+    font-size: 18px;
+    letter-spacing: 0.01em;
+    color: var(--ink-0);
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .brand:hover { color: var(--jade-bright); border-bottom: none; }
+  .brand:hover .brand-mark { box-shadow: 0 0 18px rgba(149,123,194,0.65); }
+  .brand-mark {
+    display: inline-block;
+    width: 10px; height: 10px;
+    background: var(--jade);
+    transform: rotate(45deg);
+    margin-right: 2px;
+    box-shadow: 0 0 14px rgba(149,123,194,0.45);
+  }
+  .brand small {
+    font-family: var(--mono);
+    font-style: normal;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+
+  .session-chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 5px 12px;
+    border: 1px solid var(--line);
+    background: var(--bg-1);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ink-1);
+  }
+  .session-chip .dot {
+    width: 8px; height: 8px;
+    background: var(--ink-2);
+    border-radius: 50%;
+  }
+  .session-chip[data-state="connecting"] { color: var(--amber); border-color: rgba(232,213,160,0.4); }
+  .session-chip[data-state="connecting"] .dot { background: var(--amber); animation: pulse-fast 900ms infinite; }
+  .session-chip[data-state="live"] { color: var(--jade-bright); border-color: rgba(149,123,194,0.4); }
+  .session-chip[data-state="live"] .dot { background: var(--jade); box-shadow: 0 0 8px var(--jade); animation: pulse 1.6s infinite; }
+  .session-chip[data-state="error"] { color: var(--coral); border-color: rgba(235,59,121,0.4); }
+  .session-chip[data-state="error"] .dot { background: var(--coral); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  @keyframes pulse-fast {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ---------- main area ---------- */
+  main { position: relative; }
+
+  /* HOME (options / generating / rom): blurb sidebar + swappable pane.
+     Hidden when the app is in the play step. */
+  .home {
+    display: grid;
+    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+    gap: 40px;
+    padding: 40px 20px 48px;
+    max-width: 1200px;
+    margin: 0 auto;
+    animation: step-in 440ms cubic-bezier(.22,1,.36,1) both;
+  }
+  .app[data-step="play"] .home { display: none; }
+
+  /* PLAY step */
+  .step {
+    display: none;
+    min-height: calc(100vh - 90px);
+    padding: 32px 20px 48px;
+    position: relative;
+  }
+  .app[data-step="play"] .step[data-step="play"] {
+    display: block;
+    animation: step-in 440ms cubic-bezier(.22,1,.36,1) both;
+  }
+  @keyframes step-in {
+    0%   { opacity: 0; transform: translateY(12px); }
+    100% { opacity: 1; transform: translateY(0);    }
+  }
+
+  /* ---------- blurb ---------- */
+  .blurb { color: var(--ink-1); }
+  .blurb h1 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: clamp(22px, 2.2vw, 28px);
+    line-height: 1.45;
+    letter-spacing: -0.005em;
+    margin: 0 0 20px;
+    color: var(--ink-0);
+    overflow-wrap: break-word;
+  }
+  .blurb h1 em { font-style: italic; color: var(--coral); }
+  /* Highlights inherit the surrounding font so baselines don't shift —
+     only the color changes. Cream against the lavender body gives a proper
+     contrast bump. */
+  .blurb b { font-weight: inherit; color: var(--ink-0); }
+  .blurb-list b { color: var(--ink-0); }
+  .blurb p {
+    font-family: var(--display);
+    font-style: italic;
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--ink-1);
+    margin: 0 0 16px;
+  }
+  .blurb-list {
+    list-style: none; padding: 0; margin: 18px 0;
+    display: flex; flex-direction: column; gap: 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--ink-1);
+  }
+  .blurb-list li {
+    padding-left: 18px;
+    position: relative;
+  }
+  .blurb-list li::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0.6em;
+    width: 6px; height: 6px;
+    background: var(--jade);
+    transform: rotate(45deg);
+  }
+
+  /* ---------- home main (right column) ---------- */
+  .home-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+  .home-pane { display: none; flex-direction: column; gap: 20px; }
+  .app[data-step="options"]    .home-pane[data-pane="options"],
+  .app[data-step="generating"] .home-pane[data-pane="generating"],
+  .app[data-step="rom"]        .home-pane[data-pane="rom"],
+  .app[data-step="patching"]   .home-pane[data-pane="rom"] {
+    display: flex;
+    animation: step-in 320ms cubic-bezier(.22,1,.36,1) both;
+  }
+  /* During patching, hide the drop prompt so only the progress/errors show. */
+  .app[data-step="patching"] .home-pane[data-pane="rom"] .dropzone,
+  .app[data-step="patching"] .home-pane[data-pane="rom"] .tip,
+  .app[data-step="patching"] .home-pane[data-pane="rom"] .legend {
+    display: none;
+  }
+
+  /* ---------- home cards ---------- */
+  .home-card {
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    padding: 20px 22px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    position: relative;
+  }
+  .home-card::before, .home-card::after {
+    content: '';
+    position: absolute;
+    width: 10px; height: 10px;
+    border-color: var(--jade-deep);
+    border-style: solid;
+    pointer-events: none;
+  }
+  .home-card::before { top: -1px; left: -1px; border-width: 1px 0 0 1px; }
+  .home-card::after  { bottom: -1px; right: -1px; border-width: 0 1px 1px 0; }
+  .card-head { display: flex; justify-content: space-between; align-items: baseline; }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: 44px;
+    line-height: 1.05;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+  h1 em {
+    font-style: italic;
+    color: var(--jade-bright);
+  }
+
+  .tip {
+    font-family: var(--display);
+    font-style: italic;
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--ink-1);
+    margin: 0;
+    max-width: 52ch;
+  }
+  .tip strong {
+    font-style: normal;
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--coral);
+    padding: 2px 6px;
+    background: rgba(235,59,121,0.08);
+    border: 1px solid rgba(235,59,121,0.22);
+    margin-right: 4px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+
+  /* ---------- dropzone ---------- */
+  .dropzone {
+    position: relative;
+    border: 1px dashed var(--line-bright);
+    background: linear-gradient(135deg, var(--bg-1) 0%, rgba(29,34,35,0.4) 100%);
+    padding: 48px 28px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    cursor: pointer;
+    transition: border-color 200ms, background 200ms, transform 200ms;
+  }
+  .dropzone::before,
+  .dropzone::after {
+    content: '';
+    position: absolute;
+    width: 14px; height: 14px;
+    border: 1px solid var(--jade);
+  }
+  .dropzone::before {
+    top: -1px; left: -1px;
+    border-right: none; border-bottom: none;
+  }
+  .dropzone::after {
+    bottom: -1px; right: -1px;
+    border-left: none; border-top: none;
+  }
+  .dropzone.drag-over {
+    border-color: var(--jade-bright);
+    background: linear-gradient(135deg, rgba(149,123,194,0.1) 0%, rgba(149,123,194,0.02) 100%);
+    transform: scale(1.003);
+  }
+  .dz-mark {
+    font-family: var(--display);
+    font-size: 48px;
+    line-height: 1;
+    color: var(--jade);
+  }
+  .dz-primary {
+    font-family: var(--display);
+    font-size: 18px;
+    font-style: italic;
+    color: var(--ink-0);
+  }
+  .dz-meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .dropzone input[type="file"] {
+    position: absolute;
+    left: -9999px;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* ---------- toggle switch ---------- */
+  .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    user-select: none;
+    align-self: flex-start;
+  }
+  .switch input { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; }
+  .switch-track {
+    position: relative;
+    width: 32px; height: 16px;
+    background: var(--bg-2);
+    border: 1px solid var(--line-bright);
+    border-radius: 10px;
+    transition: background 160ms, border-color 160ms;
+  }
+  .switch-knob {
+    position: absolute;
+    top: 1px; left: 1px;
+    width: 12px; height: 12px;
+    background: var(--ink-2);
+    border-radius: 50%;
+    transition: transform 160ms, background 160ms;
+  }
+  .switch input:checked + .switch-track {
+    background: rgba(149,123,194,0.2);
+    border-color: var(--jade);
+  }
+  .switch input:checked + .switch-track .switch-knob {
+    transform: translateX(16px);
+    background: var(--jade-bright);
+  }
+  .switch-text {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .switch input:checked ~ .switch-text { color: var(--ink-0); }
+  .switch-text b {
+    color: var(--jade-bright);
+    font-weight: inherit;
+  }
+
+  /* ---------- buttons ---------- */
+  .btn, button {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    background: var(--bg-2);
+    color: var(--ink-0);
+    border: 1px solid var(--line-bright);
+    padding: 10px 18px;
+    cursor: pointer;
+    transition: background 140ms, border-color 140ms, color 140ms;
+  }
+  .btn:hover, button:hover { background: var(--bg-3); border-color: var(--jade); }
+  .btn:disabled, button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-primary {
+    background: var(--jade-deep);
+    color: var(--ink-0);
+    border-color: var(--jade);
+  }
+  .btn-primary:hover { background: var(--jade); color: var(--bg-0); }
+
+  /* ---------- progress bar ---------- */
+  .progress-bar {
+    position: relative;
+    height: 4px;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    overflow: hidden;
+  }
+  .progress-sweep {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 28%;
+    background: linear-gradient(90deg, transparent, var(--jade), transparent);
+    animation: sweep 1.8s ease-in-out infinite;
+  }
+  @keyframes sweep {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(360%); }
+  }
+
+  /* ---------- seed meta (dl) ---------- */
+  .seed-meta {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 6px 20px;
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .seed-meta dt {
+    color: var(--ink-2);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    font-size: 10px;
+    align-self: center;
+  }
+  .seed-meta dd { margin: 0; color: var(--ink-0); word-break: break-all; }
+
+  .seed-result {
+    display: flex; flex-direction: column; gap: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    animation: step-in 400ms cubic-bezier(.22,1,.36,1) both;
+  }
+  .result-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+  }
+  .result-chip {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-0);
+    text-decoration: none;
+    transition: background 140ms, border-color 140ms;
+  }
+  .result-chip:hover { background: var(--bg-2); border-color: var(--jade); }
+  .result-chip .chip-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+  .result-chip .label { color: var(--ink-1); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; }
+  .result-chip .title {
+    color: var(--ink-0);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .result-chip .arrow { color: var(--jade-bright); font-family: var(--display); font-style: italic; flex: 0 0 auto; }
+
+  /* ---------- error ---------- */
+  .resume-list {
+    border: 1px solid var(--line);
+    background: linear-gradient(135deg, var(--bg-1) 0%, rgba(29,34,35,0.3) 100%);
+    padding: 0;
+    margin-bottom: 8px;
+    animation: step-in 320ms cubic-bezier(.22,1,.36,1) both;
+  }
+  .resume-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-2);
+  }
+  .resume-head-hint {
+    font-family: var(--display);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+  .resume-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .resume-row:last-child { border-bottom: none; }
+  .resume-row:hover { background: rgba(149,123,194,0.04); }
+  .resume-row .slot {
+    color: var(--jade-bright);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+  .resume-row .id {
+    color: var(--ink-2);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .resume-row .rom-cached {
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    color: var(--jade-bright);
+    background: rgba(149,123,194,0.08);
+    border: 1px solid rgba(149,123,194,0.3);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+  .resume-row .meta {
+    color: var(--ink-1);
+    font-size: 11px;
+    text-align: right;
+  }
+  .resume-row .meta em {
+    font-family: var(--display);
+    font-style: italic;
+    color: var(--ink-2);
+    display: block;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+  .resume-row .actions {
+    display: flex; gap: 4px;
+  }
+  .resume-row .actions button {
+    padding: 6px 10px;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+  }
+  .resume-row .actions .forget {
+    background: transparent;
+    border-color: var(--line);
+    color: var(--ink-2);
+  }
+  .resume-row .actions .forget:hover {
+    color: var(--coral);
+    border-color: var(--coral-deep);
+  }
+
+  .error-box {
+    border-left: 3px solid var(--coral);
+    background: rgba(235,59,121,0.06);
+    padding: 14px 18px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-0);
+    max-height: 320px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .error-box .err-title {
+    color: var(--coral);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+  }
+  .error-box > span[id$="-err-msg"] {
+    white-space: pre-wrap;
+  }
+  .err-back {
+    display: none;        /* visible only when the paired error-box is shown */
+    align-self: flex-start;
+    background: transparent;
+    border: 1px solid rgba(235,59,121,0.35);
+    color: var(--coral);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+  .err-back:hover { background: rgba(235,59,121,0.12); border-color: var(--coral); color: var(--ink-0); }
+  .error-box:not([hidden]) + .err-back { display: inline-block; }
+
+  /* ---------- rom progress ---------- */
+  .rom-progress {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--jade-bright);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .spinner {
+    display: inline-block;
+    animation: spin 1.2s linear infinite;
+    font-size: 16px;
+    color: var(--jade);
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---------- play view ---------- */
+  .step[data-step="play"] {
+    padding: 40px 32px 24px;
+    display: none;
+  }
+  .app[data-step="play"] .step[data-step="play"] { display: block; }
+
+  .play-stack {
+    display: grid;
+    grid-template-columns: auto minmax(360px, 1fr);
+    gap: 28px;
+    align-items: stretch;
+    width: 100%;
+    max-width: 1600px;
+    margin: 0 auto;
+  }
+  .play-stack > .screen-frame { justify-self: start; align-self: start; }
+  .play-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0; /* allow child flex overflow */
+  }
+  .log-area {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 160px;
+  }
+  .log-wrap {
+    flex: 1;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-top: none;
+    background: var(--bg-1);
+  }
+
+  .screen-frame {
+    position: relative;
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    padding: 14px 14px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+  }
+  .screen-frame::before, .screen-frame::after {
+    content: '';
+    position: absolute;
+    width: 14px; height: 14px;
+    border: 1px solid var(--coral);
+    pointer-events: none;
+  }
+  .screen-frame::before { top: -1px; left: -1px; border-right: none; border-bottom: none; }
+  .screen-frame::after  { bottom: -1px; right: -1px; border-left: none; border-top: none; }
+
+  .screen-label-bottom {
+    width: 100%;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .screen-label-bottom .screen-keys { flex: 1; }
+  .vol {
+    display: inline-flex; align-items: center; gap: 6px;
+    cursor: pointer;
+  }
+  .vol-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .vol-label.muted { color: var(--coral); }
+  .vol input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    width: 80px; height: 2px;
+    background: var(--line-bright);
+    outline: none;
+    cursor: pointer;
+  }
+  .vol input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 10px; height: 10px;
+    background: var(--jade); border-radius: 50%;
+    border: none;
+    box-shadow: 0 0 6px rgba(149,123,194,0.4);
+  }
+  .vol input[type="range"]::-moz-range-thumb {
+    width: 10px; height: 10px;
+    background: var(--jade); border-radius: 50%;
+    border: none;
+  }
+
+  .screen-wrap {
+    position: relative;
+    background: #000;
+    padding: 10px;
+    border: 1px solid var(--ink-3);
+    box-shadow:
+      inset 0 0 60px rgba(0,0,0,0.7),
+      0 0 0 1px rgba(149,123,194,0.1),
+      0 12px 30px rgba(0,0,0,0.5);
+  }
+  #screen {
+    display: block;
+    width: var(--screen-w);
+    height: var(--screen-h);
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+    filter: contrast(1.02) saturate(1.04);
+  }
+
+  .screen-idle {
+    width: var(--screen-w); height: var(--screen-h);
+    background: #000;
+    display: grid;
+    place-items: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--jade-deep);
+    border: 1px solid var(--ink-3);
+  }
+
+  /* ---------- play controls ---------- */
+
+  .session-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    align-items: end;
+  }
+  .session-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .session-form input {
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    padding: 9px 12px;
+    color: var(--ink-0);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    outline: none;
+  }
+  .session-form input:focus { border-color: var(--jade); background: #0b0e0e; }
+  .session-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 8px;
+  }
+  .session-actions button { padding: 10px 14px; }
+
+  /* while connecting/live: hide connect, show inputs in read-only style
+     so the form layout doesn't jump around */
+  .app[data-session="live"] .session-actions #btn-connect,
+  .app[data-session="connecting"] .session-actions #btn-connect { display: none; }
+  .session-form input[readonly] {
+    color: var(--ink-1);
+    background: var(--bg-2);
+    border-color: var(--line);
+    cursor: default;
+  }
+  .session-form input[readonly]:focus { border-color: var(--line); background: var(--bg-2); }
+
+  /* disconnect only shows while the session is connecting or live */
+  #btn-disconnect { display: none; }
+  .app[data-session="connecting"] #btn-disconnect,
+  .app[data-session="live"] #btn-disconnect { display: inline-block; }
+
+  .session-links {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .session-links:empty { display: none; }
+  .session-links a {
+    color: var(--ink-1);
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    background: var(--bg-1);
+    border-bottom: 1px solid var(--line);
+    transition: border-color 140ms, color 140ms;
+  }
+  .session-links a:hover { color: var(--ink-0); border-color: var(--jade); }
+  .session-links a::after { content: '↗'; color: var(--jade-deep); font-size: 10px; }
+  .session-links a[data-kind="download"]::after { content: '↓'; }
+
+  /* ---------- collapsible event log ---------- */
+  .log-area { display: flex; flex-direction: column; gap: 0; margin-top: 2px; }
+  .log-toggle {
+    display: flex; justify-content: space-between; align-items: center;
+    background: transparent;
+    border: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    color: var(--ink-2);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    padding: 8px 12px;
+    cursor: pointer;
+  }
+  .log-toggle:hover { color: var(--ink-0); border-color: var(--line-bright); }
+  .log-toggle[aria-expanded="true"] { border-bottom-color: transparent; }
+  .log-toggle .chev {
+    font-family: var(--mono);
+    color: var(--ink-3);
+    letter-spacing: 0;
+  }
+  .log-wrap {
+    max-height: 320px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-top: none;
+    background: var(--bg-1);
+  }
+  .log-toggle { width: 100%; }
+  #log {
+    margin: 0;
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--ink-1);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  #log .log-time { color: var(--ink-3); }
+  #log .log-info { color: var(--ink-0); }
+  #log .log-warn { color: var(--amber); }
+  #log .log-err  { color: var(--coral); }
+  #log .log-ok   { color: var(--jade-bright); }
+  #log .log-chat { color: var(--ink-0); background: rgba(149,123,194,0.05); padding: 0 2px; }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 1100px) {
+    .play-stack {
+      grid-template-columns: 1fr;
+    }
+    .play-stack > .screen-frame { justify-self: center; }
+  }
+  @media (max-width: 640px) {
+    :root { --scale: 2; }
+    .session-form { grid-template-columns: 1fr; }
+  }
+
+  /* ---------- misc ---------- */
+  kbd {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 1px 5px;
+    border: 1px solid var(--line-bright);
+    background: var(--bg-2);
+    color: var(--ink-0);
+    border-radius: 2px;
+    margin: 0 1px;
+  }
+  .legend {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+</style>
+</head>
+<body>
+<div class="app" data-step="options">
+
+  <header class="nav">
+    <a class="brand" id="brand-home" href="#">
+      <span class="brand-mark"></span><span>crystal<span style="color:var(--jade-bright)">.</span>ap</span>
+    </a>
+    <div class="nav-spacer"></div>
+    <div class="session-chip" id="session-chip" data-state="idle">
+      <span class="dot"></span><span class="label">idle</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- HOME — shown for options / generating / rom / patching steps. The
+         left blurb persists across those states; the right pane swaps. -->
+    <section class="home">
+      <aside class="blurb">
+        <h1>Pokemon Crystal Archipelago <em>in your browser.</em></h1>
+        <p>A full multiworld client for <b>Pokemon Crystal</b>. You provide a YAML and your own vanilla Crystal ROM; everything else happens locally.</p>
+        <ul class="blurb-list">
+          <li>Generation and ROM patching run in your tab via <b>Pyodide</b>.</li>
+          <li>Your ROM never leaves this browser. It's stored locally so you don't need to re-provide it.</li>
+          <li>Emulation by <b>binjgb</b>. Saves persist per seed.</li>
+          <li>The multiworld is hosted on <b>archipelago.gg</b> via a tiny proxy.</li>
+        </ul>
+      </aside>
+
+      <div class="home-main">
+        <!-- OPTIONS: resume list + new seed dropzone stacked -->
+        <div class="home-pane" data-pane="options">
+          <div class="resume-list" id="resume-list" hidden>
+            <div class="resume-head">
+              <span class="eyebrow">active seeds</span>
+              <span class="resume-head-hint">saved locally · ROM cached</span>
+            </div>
+            <div id="resume-list-inner"></div>
+          </div>
+
+          <div class="home-card">
+            <div class="card-head"><span class="eyebrow">new seed</span></div>
+            <label class="dropzone" id="dz-yaml" for="yaml-file">
+              <input type="file" accept=".yaml,.yml,.apcrystal,.apcrystalpre,.zip,text/yaml" id="yaml-file">
+              <div class="dz-mark">◇</div>
+              <div class="dz-primary">Drop YAML, <b>.apcrystal</b>, or <b>output .zip</b></div>
+            </label>
+            <label class="switch" title="Generate locally and upload to archipelago.gg so anyone with the room URL can join. When off, the multidata is produced but you'll need to host it yourself.">
+              <input type="checkbox" id="host-toggle" checked>
+              <span class="switch-track"><span class="switch-knob"></span></span>
+              <span class="switch-text">host on <b>archipelago.gg</b></span>
+            </label>
+            <div class="error-box" id="yaml-err" hidden><span class="err-title">rejected</span><span id="yaml-err-msg"></span></div>
+          </div>
+        </div>
+
+        <!-- GENERATING: progress + reveal -->
+        <div class="home-pane" data-pane="generating">
+          <div class="home-card">
+            <div class="card-head"><span class="eyebrow">rolling seed</span></div>
+            <div class="progress-bar" id="gen-progress"><div class="progress-sweep"></div></div>
+            <dl class="seed-meta">
+              <dt>seed id</dt><dd id="gen-seed">—</dd>
+              <dt>status</dt><dd id="gen-status">queued</dd>
+              <dt>elapsed</dt><dd id="gen-elapsed">0.0s</dd>
+            </dl>
+            <div class="seed-result" id="seed-result" hidden>
+              <div class="result-grid" id="result-grid"></div>
+              <div style="display:flex; gap:12px; margin-top:4px;">
+                <button class="btn-primary" id="next-rom">Continue → ROM</button>
+              </div>
+            </div>
+            <div class="error-box" id="gen-err" hidden>
+              <span class="err-title">generation failed</span>
+              <span id="gen-err-msg"></span>
+            </div>
+            <button class="err-back" data-back="options" data-for="gen-err">← start over</button>
+          </div>
+        </div>
+
+        <!-- ROM / PATCHING -->
+        <div class="home-pane" data-pane="rom">
+          <div class="home-card">
+            <div class="card-head"><span class="eyebrow">your rom</span></div>
+            <p class="tip">Patching happens entirely in your browser — Python via Pyodide, in a Web Worker. Your ROM never leaves this tab.</p>
+            <p class="legend">accepts: <kbd>.gbc</kbd> · 2,097,152 bytes · Crystal v1.0 or v1.1</p>
+            <label class="dropzone" id="dz-rom" for="rom-file">
+              <input type="file" accept=".gbc,.gb,application/octet-stream" id="rom-file">
+              <div class="dz-mark">▱</div>
+              <div class="dz-primary">Drop vanilla Pokemon Crystal ROM</div>
+              <div class="dz-meta">your file · your machine</div>
+            </label>
+            <div class="rom-progress" id="rom-progress" hidden>
+              <span class="spinner" aria-hidden="true">◐</span>
+              <span id="rom-progress-text">patching…</span>
+            </div>
+            <div class="error-box" id="rom-err" hidden>
+              <span class="err-title">patch failed</span>
+              <span id="rom-err-msg"></span>
+            </div>
+            <button class="err-back" data-back="options" data-for="rom-err">← start over</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 04 · play -->
+    <section class="step" data-step="play">
+      <div class="play-stack">
+        <div class="screen-frame">
+          <div class="screen-wrap">
+            <canvas id="screen" width="160" height="144"></canvas>
+          </div>
+          <div class="screen-label-bottom">
+            <span class="screen-keys">arrows · <kbd>Z</kbd> b · <kbd>X</kbd> a · <kbd>↵</kbd> start · <kbd>⇥</kbd> select</span>
+            <label class="vol" title="volume">
+              <span class="vol-label" id="vol-label">vol</span>
+              <input type="range" id="vol" min="0" max="100" value="50">
+            </label>
+          </div>
+        </div>
+
+        <div class="play-controls">
+          <div class="session-form" id="session-form">
+            <label>server<input type="text" id="sess-server" autocomplete="off" spellcheck="false" placeholder="archipelago.gg:50193"></label>
+            <label>slot<input type="text" id="sess-slot" autocomplete="off" spellcheck="false" value="Player1"></label>
+            <label>password<input type="password" id="sess-pw" autocomplete="off"></label>
+            <div class="session-actions">
+              <button class="btn-primary" id="btn-connect">connect</button>
+              <button id="btn-disconnect" disabled>disconnect</button>
+            </div>
+          </div>
+
+          <div class="session-links" id="session-links"></div>
+
+          <div class="log-area">
+            <button class="log-toggle" id="log-toggle" aria-expanded="true">
+              <span>event log</span><span class="chev">−</span>
+            </button>
+            <div id="log-wrap" class="log-wrap">
+              <pre id="log"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+</div>
+
+<script src="/binjgb.js"></script>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
