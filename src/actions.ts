@@ -320,11 +320,18 @@ async function bootEmulatorAndUi() {
 
   const volInput = $<HTMLInputElement>("#vol");
   const volLabel = $<HTMLElement>("#vol-label");
+  // Restore last-used volume from localStorage (0-100). Falls back to
+  // whatever the element's default `value` attribute was.
+  const savedVol = localStorage.getItem("crystal-ap-volume");
+  if (savedVol !== null && !Number.isNaN(Number(savedVol))) {
+    volInput.value = savedVol;
+  }
   const applyVol = () => {
     const v = Number(volInput.value) / 100;
     setVolume(v);
     volLabel.classList.toggle("muted", v === 0);
     volLabel.textContent = v === 0 ? "mute" : "vol";
+    try { localStorage.setItem("crystal-ap-volume", volInput.value); } catch {}
   };
   volInput.addEventListener("input", applyVol);
   applyVol();

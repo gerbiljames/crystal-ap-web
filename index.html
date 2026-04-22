@@ -750,6 +750,9 @@
     color: var(--ink-2);
   }
   .screen-label-bottom .screen-keys { flex: 1; }
+  /* Anchor .vol to the right so the slider's position stays stable when
+     the label text changes width (e.g. "vol" <-> "mute"). */
+  .screen-label-bottom .vol { margin-left: auto; }
   .vol {
     display: inline-flex; align-items: center; gap: 6px;
     cursor: pointer;
