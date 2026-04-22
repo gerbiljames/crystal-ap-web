@@ -1113,16 +1113,29 @@ async function bootEmulatorAndUi() {
     }
     ev.preventDefault();
   };
-  const onTouchMove = (ev) => {
-    for (const t of ev.changedTouches) {
-      if (!touchBtns.has(t.identifier)) continue;
-      const prev = touchBtns.get(t.identifier);
-      const now = btnUnder(t.clientX, t.clientY);
+  // Touchmove fires many times per frame on mobile. Coalesce each
+  // touch's latest position into a map and resolve it once per rAF so
+  // we don't spam elementFromPoint (a layout read) on every event.
+  const pendingMove = new Map(); // touchId -> {x, y}
+  let moveQueued = false;
+  const flushMove = () => {
+    moveQueued = false;
+    for (const [id, pos] of pendingMove) {
+      if (!touchBtns.has(id)) continue;
+      const prev = touchBtns.get(id);
+      const now = btnUnder(pos.x, pos.y);
       if (now === prev) continue;
       if (prev) setBtn(prev, false);
       if (now) setBtn(now, true);
-      touchBtns.set(t.identifier, now || null);
+      touchBtns.set(id, now || null);
     }
+    pendingMove.clear();
+  };
+  const onTouchMove = (ev) => {
+    for (const t of ev.changedTouches) {
+      pendingMove.set(t.identifier, { x: t.clientX, y: t.clientY });
+    }
+    if (!moveQueued) { moveQueued = true; requestAnimationFrame(flushMove); }
     ev.preventDefault();
   };
   const onTouchEnd = (ev) => {
