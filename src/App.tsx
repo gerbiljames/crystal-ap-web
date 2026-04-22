@@ -4,6 +4,10 @@ import { teardownAndReload } from "./actions.js";
 import { Nav } from "./components/Nav.jsx";
 import { Home } from "./components/Home.jsx";
 import { PlayStep } from "./components/Play.jsx";
+// Side-effect import: installs one-shot gesture listeners on document so
+// the AudioContext is primed by the time the emulator boots (avoids a
+// silent window before the user's first in-emulator input).
+import "./lib/audio.js";
 
 export function App() {
   onMount(() => {

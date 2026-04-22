@@ -8,6 +8,7 @@
 
 import { idbGet, idbPut } from "./idb.js";
 import { log, logOk, logErr, logWarn } from "./log.js";
+import { getAudioContext } from "./audio.js";
 
 const EVENT_NEW_FRAME = 1, EVENT_AUDIO_BUFFER_FULL = 2, EVENT_UNTIL_TICKS = 4;
 const CPU_TICKS_PER_SECOND = 4194304;
@@ -48,7 +49,10 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
   const romPtr = Module._malloc(size);
   new Uint8Array(Module.HEAP8.buffer, romPtr, size).fill(0).set(new Uint8Array(romBuf));
 
-  const audioCtx = new AudioContext();
+  // Shared AudioContext, primed on the first user gesture in the tab
+  // (see lib/audio.ts). Already running by the time we get here, so
+  // there's no silent window before the first emulator input.
+  const audioCtx = getAudioContext();
   const e = Module._emulator_new_simple(romPtr, size, audioCtx.sampleRate, AUDIO_FRAMES, CGB_COLOR_CURVE);
   if (e === 0) { logErr("invalid ROM (binjgb rejected it)"); return null; }
 
@@ -93,25 +97,17 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
   const imageData = ctx2d.createImageData(160, 144);
 
   // --- audio ---
-  // Browsers require a user gesture before audio can start. We resume the
-  // AudioContext on the first click/keydown; until then pushAudio is a no-op.
+  // AudioContext is primed by lib/audio.ts on the first user gesture. If
+  // the user somehow reaches play before any gesture (unlikely — they had
+  // to click through dropzones etc.), pushAudio waits for state==running.
   const audioBufPtr  = Module._get_audio_buffer_ptr(e);
   const audioBufCap  = Module._get_audio_buffer_capacity(e);
-  let audioStarted = false;
   let audioStartSec = 0;
   let audioVolume  = 0.5;
   let audioMuted   = false;
-  const resumeAudio = () => {
-    if (audioCtx.state === "suspended") audioCtx.resume();
-    audioStarted = true;
-    window.removeEventListener("click", resumeAudio, true);
-    window.removeEventListener("keydown", resumeAudio, true);
-  };
-  window.addEventListener("click", resumeAudio, true);
-  window.addEventListener("keydown", resumeAudio, true);
 
   function pushAudio() {
-    if (!audioStarted) return;
+    if (audioCtx.state !== "running") return;
     const srcBuf = new Uint8Array(Module.HEAP8.buffer, audioBufPtr, audioBufCap);
     const now = audioCtx.currentTime;
     const nowPlusLatency = now + AUDIO_LATENCY_SEC;
