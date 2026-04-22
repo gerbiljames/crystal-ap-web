@@ -1,0 +1,202 @@
+import { For, Show, createSignal, createEffect } from "solid-js";
+import { app, setApp, persistHostPref } from "../state.js";
+import { formatAge } from "../lib/sessions.js";
+import { isPatchName } from "../lib/zip.js";
+import { db, idbGet } from "../lib/idb.js";
+import { GB_ROM_SIZE, VANILLA_STORE } from "../lib/constants.js";
+import {
+  handleYamlDrop, handleRomDrop, continueToRom, resumeSession, forgetSession, resetTransient,
+} from "../actions.js";
+import { Dropzone } from "./Dropzone.jsx";
+
+function Blurb() {
+  return (
+    <aside class="blurb">
+      <h1>Pokémon Crystal Archipelago <em>in your browser.</em></h1>
+      <p>A full multiworld client for <a href="https://github.com/gerbiljames/Archipelago-Crystal/tree/pokecrystal" target="_blank" rel="noopener">Pokémon Crystal</a>. You provide a YAML and your own vanilla Crystal ROM; everything else happens locally.</p>
+      <ul class="blurb-list">
+        <li>Generation and ROM patching run in your tab via <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>.</li>
+        <li>Your ROM never leaves this browser. It's stored locally so you don't need to re-provide it.</li>
+        <li>Emulation by <a href="https://github.com/binji/binjgb" target="_blank" rel="noopener">binjgb</a>. Saves persist per seed.</li>
+        <li>The multiworld can be hosted on <a href="https://archipelago.gg" target="_blank" rel="noopener">archipelago.gg</a> via a tiny proxy.</li>
+        <li>You can generate a YAML on <a href="https://ap-lobby.bananium.fr/options/pokemon_crystal" target="_blank" rel="noopener">Bananium</a>.</li>
+      </ul>
+    </aside>
+  );
+}
+
+function ResumeList() {
+  return (
+    <Show when={app.sessions.length > 0}>
+      <div class="resume-list" id="resume-list">
+        <div class="resume-head">
+          <span class="eyebrow">active seeds</span>
+          <span class="resume-head-hint">saved locally · ROM cached</span>
+        </div>
+        <div id="resume-list-inner">
+          <For each={app.sessions}>{(s) => (
+            <div class="resume-row">
+              <span class="slot">{s.slot || "?"}</span>
+              <span class="id">
+                {s.id}
+                <Show when={s.romCached}>
+                  <span class="rom-cached" title="patched ROM cached locally — resume skips the ROM upload">ROM</span>
+                </Show>
+              </span>
+              <span class="meta">
+                <em>{s.hosted ? `${s.hosted.host}:${s.hosted.port}` : "no host"}</em>
+                {" "}{formatAge(Date.now() - s.savedAt)}
+              </span>
+              <span class="actions">
+                <button class="btn-primary resume" onClick={() => resumeSession(s.id)}>resume</button>
+                <button class="forget" title="remove from this device" onClick={() => forgetSession(s.id)}>forget</button>
+              </span>
+            </div>
+          )}</For>
+        </div>
+      </div>
+    </Show>
+  );
+}
+
+function OptionsPane() {
+  return (
+    <div class="home-pane" data-pane="options">
+      <ResumeList />
+      <div class="home-card">
+        <div class="card-head"><span class="eyebrow">new seed</span></div>
+        <Dropzone id="dz-yaml" inputId="yaml-file" accept=".yaml,.yml,.apcrystal,.apcrystalpre,.zip,text/yaml" onFile={handleYamlDrop}>
+          <div class="dz-mark">◇</div>
+          <div class="dz-primary">Drop YAML, <b>.apcrystal</b>, or <b>output .zip</b></div>
+        </Dropzone>
+        <label class="switch" title="Generate locally and upload to archipelago.gg so anyone with the room URL can join. When off, the multidata is produced but you'll need to host it yourself.">
+          <input type="checkbox" id="host-toggle" checked={app.hostPref} onChange={(ev) => persistHostPref(ev.target.checked)} />
+          <span class="switch-track"><span class="switch-knob"></span></span>
+          <span class="switch-text">host on <b>archipelago.gg</b></span>
+        </label>
+        <Show when={app.yamlErr}>
+          <div class="error-box" id="yaml-err">
+            <span class="err-title">rejected</span>
+            <span id="yaml-err-msg">{app.yamlErr}</span>
+          </div>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+function ArtifactChips() {
+  const artifacts = () => app.artifacts || {};
+  const blobUrl = (name) => URL.createObjectURL(new Blob([artifacts()[name]], { type: "application/octet-stream" }));
+  const chips = () => {
+    const a = artifacts();
+    const out = [];
+    if (app.hosted) out.push({ href: app.hosted.room_url, title: "archipelago.gg room", kind: "external", sublabel: "host" });
+    const patch = Object.keys(a).find(isPatchName);
+    const spoil = Object.keys(a).find(n => n.endsWith("_Spoiler.txt"));
+    const multi = Object.keys(a).find(n => n.endsWith(".archipelago"));
+    if (patch) out.push({ href: blobUrl(patch), title: patch,       kind: "download", sublabel: "patch",       download: patch });
+    if (spoil) out.push({ href: blobUrl(spoil), title: "spoiler",   kind: "download", sublabel: "txt",         download: spoil });
+    if (multi) out.push({ href: blobUrl(multi), title: "multidata", kind: "download", sublabel: "archipelago", download: multi });
+    return out;
+  };
+  return (
+    <div class="result-grid" id="result-grid">
+      <For each={chips()}>{(c) => (
+        <a class="result-chip" href={c.href} target="_blank" rel="noopener" title={c.title}
+           attr:download={c.kind === "download" ? (c.download || c.title) : undefined}>
+          <span class="chip-left">
+            <span class="label">{c.sublabel}</span>
+            <span class="title">{c.title}</span>
+          </span>
+          <span class="arrow">{c.kind === "download" ? "↓" : "↗"}</span>
+        </a>
+      )}</For>
+    </div>
+  );
+}
+
+function GeneratingPane() {
+  // "Continue" label flips based on whether we have a cached vanilla ROM —
+  // if yes, we skip straight to Play; if not, the user has to upload a ROM.
+  const [continueLabel, setContinueLabel] = createSignal("Continue → ROM");
+  createEffect(async () => {
+    if (!app.gen.done) return;
+    const dbc = await db();
+    const cached = dbc ? await idbGet(dbc, "rom", VANILLA_STORE).catch(() => null) : null;
+    setContinueLabel((cached && cached.byteLength === GB_ROM_SIZE) ? "Continue → Play" : "Continue → ROM");
+  });
+  return (
+    <div class="home-pane" data-pane="generating">
+      <div class="home-card">
+        <div class="card-head"><span class="eyebrow">rolling seed</span></div>
+        <Show when={app.gen.visible}>
+          <div class="progress-bar" id="gen-progress"><div class="progress-sweep"></div></div>
+        </Show>
+        <dl class="seed-meta">
+          <dt>seed id</dt><dd id="gen-seed">{app.seedId || "—"}</dd>
+          <dt>status</dt><dd id="gen-status">{app.gen.status}</dd>
+          <dt>elapsed</dt><dd id="gen-elapsed">{app.gen.elapsed}</dd>
+        </dl>
+        <Show when={app.gen.done}>
+          <div class="seed-result" id="seed-result">
+            <ArtifactChips />
+            <div style="display:flex; gap:12px; margin-top:4px;">
+              <button class="btn-primary" id="next-rom" onClick={continueToRom}>{continueLabel()}</button>
+            </div>
+          </div>
+        </Show>
+        <Show when={app.gen.error}>
+          <div class="error-box" id="gen-err">
+            <span class="err-title">generation failed</span>
+            <span id="gen-err-msg">{app.gen.error}</span>
+          </div>
+          <button class="err-back" onClick={resetTransient}>← start over</button>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+function RomPane() {
+  return (
+    <div class="home-pane" data-pane="rom">
+      <div class="home-card">
+        <div class="card-head"><span class="eyebrow">your rom</span></div>
+        <p class="tip">Patching happens entirely in your browser — Python via Pyodide, in a Web Worker. Your ROM never leaves this tab.</p>
+        <p class="legend">accepts: <kbd>.gbc</kbd> · 2,097,152 bytes · Crystal v1.0 or v1.1</p>
+        <Dropzone id="dz-rom" inputId="rom-file" accept=".gbc,.gb,application/octet-stream" onFile={handleRomDrop}>
+          <div class="dz-mark">▱</div>
+          <div class="dz-primary">Drop vanilla Pokémon Crystal ROM</div>
+          <div class="dz-meta">your file · your machine</div>
+        </Dropzone>
+        <Show when={app.rom.progressText}>
+          <div class="rom-progress" id="rom-progress">
+            <span class="spinner" aria-hidden="true">◐</span>
+            <span id="rom-progress-text">{app.rom.progressText}</span>
+          </div>
+        </Show>
+        <Show when={app.rom.error}>
+          <div class="error-box" id="rom-err">
+            <span class="err-title">patch failed</span>
+            <span id="rom-err-msg">{app.rom.error}</span>
+          </div>
+          <button class="err-back" onClick={resetTransient}>← start over</button>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+export function Home() {
+  return (
+    <section class="home">
+      <Blurb />
+      <div class="home-main">
+        <OptionsPane />
+        <GeneratingPane />
+        <RomPane />
+      </div>
+    </section>
+  );
+}
