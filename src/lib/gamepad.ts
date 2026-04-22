@@ -21,12 +21,18 @@ export function bindGamepad(rootEl, { emulator, module }) {
   // rolls off a button later roll back onto another one.
   const touchBtns = new Map();
   const onTouchStart = (ev) => {
+    let hitAny = false;
     for (const t of ev.changedTouches) {
       const btn = btnUnder(t.clientX, t.clientY);
-      if (btn) setBtn(btn, true);
-      touchBtns.set(t.identifier, btn || null);
+      if (!btn) continue;
+      setBtn(btn, true);
+      touchBtns.set(t.identifier, btn);
+      hitAny = true;
     }
-    ev.preventDefault();
+    // Only consume the event when the touch actually landed on a button,
+    // so swipes that start in the gap between buttons still trigger
+    // native vertical scroll (touch-action: pan-y on .gamepad).
+    if (hitAny) ev.preventDefault();
   };
 
   // Touchmove fires many times per frame on mobile. Coalesce each touch's

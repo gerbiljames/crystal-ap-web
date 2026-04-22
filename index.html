@@ -930,7 +930,10 @@
     padding: 14px 0 4px;
     user-select: none;
     -webkit-user-select: none;
-    touch-action: none;
+    /* Allow vertical scrolling when the touch starts in the gap between
+       buttons — buttons themselves override to `none` so presses don't
+       initiate a scroll gesture. */
+    touch-action: pan-y;
   }
   .gamepad-row {
     display: flex;
