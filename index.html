@@ -997,6 +997,33 @@
   @media (max-width: 900px) {
     .gamepad { display: flex; }
     .screen-keys { display: none; }
+    /* Canvas becomes fluid once we're on a touch-y viewport — desktop
+       fixed --screen-w/h would otherwise lock landscape iPhone (667px)
+       to the desktop scale and overflow the grid. */
+    .play-stack > .screen-frame { justify-self: stretch; }
+    .screen-frame {
+      padding: 8px;
+      align-self: stretch;
+      align-items: stretch;
+    }
+    .screen-wrap {
+      padding: 6px;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    #screen, .screen-idle {
+      width: min(100%, calc(var(--emu-max-h, 100dvh) * 160 / 144));
+      max-height: var(--emu-max-h, none);
+      min-width: 0;
+      min-height: 0;
+      height: auto;
+      aspect-ratio: 160 / 144;
+    }
     /* .play-game (screen + gamepad) occupies at least the viewport minus
        nav/step padding so the sibling .play-controls is pushed below the
        fold. The gamepad follows the emulator directly rather than pinning
@@ -1028,6 +1055,63 @@
     .result-grid { grid-template-columns: 1fr; }
   }
 
+  /* Landscape phones: there's no vertical room to stack gamepad under
+     emulator. Split the gamepad around the emulator — dpad left, and
+     A/B stacked over start/select on the right — so the emulator gets
+     the full vertical height. Log is hidden; no room for it. */
+  @media (max-width: 900px) and (orientation: landscape) {
+    .play-game {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-rows: 1fr auto auto 1fr;
+      column-gap: 12px;
+      row-gap: 16px;
+      height: var(--play-game-h, calc(100dvh - 70px));
+    }
+    .play-game > .screen-frame {
+      grid-column: 2;
+      grid-row: 1 / -1;
+      min-width: 0;
+      min-height: 0;
+      max-width: 100%;
+      max-height: 100%;
+      /* Vertically: size to content so the frame hugs the canvas + chrome
+         rather than stretching down. Horizontally: stretch so the canvas
+         has a width anchor to resolve its `100%` against. */
+      align-self: center;
+      justify-self: stretch;
+    }
+    /* Dissolve the gamepad + dpad-row wrappers so dpad/ab/ss land
+       directly in the play-game grid. */
+    .play-game > .gamepad,
+    .play-game > .gamepad > .gamepad-row:not(.gp-ss) {
+      display: contents;
+    }
+    .play-game .gp-dpad {
+      grid-column: 1;
+      grid-row: 1 / -1;
+      align-self: center;
+    }
+    .play-game .gp-ab {
+      grid-column: 3;
+      grid-row: 2;
+    }
+    .play-game .gp-ss {
+      grid-column: 3;
+      grid-row: 3;
+      /* Nudge start/select further from A/B without moving A/B — grid
+         auto rows would otherwise re-center the pair if we changed the
+         row-gap. */
+      transform: translateY(24px);
+      flex-direction: column;
+      gap: 6px;
+      align-items: stretch;
+      justify-content: flex-start;
+    }
+    .play-game .gp-ss .gp-btn { min-width: 0; }
+    .step[data-step="play"] { padding-top: 6px; }
+  }
+
   /* ---------- responsive ---------- */
   @media (max-width: 1100px) {
     .play-stack {
@@ -1050,32 +1134,12 @@
     .nav { padding: 12px 16px; gap: 10px; }
   }
 
-  /* Phones: emulator scales fluidly with its container (no more overflow at
-     narrow widths). Session form collapses, gamepad buttons shrink. */
+  /* Phones: session form collapses, gamepad buttons shrink.
+     The canvas fluid-sizing moved up to the 900px gamepad block so
+     landscape iPhone (667px) gets it too. */
   @media (max-width: 640px) {
     :root { --scale: 2; }
     .session-form { grid-template-columns: 1fr; }
-    .play-stack > .screen-frame { justify-self: stretch; }
-    .screen-frame {
-      padding: 8px;
-      align-self: stretch;
-      align-items: stretch;   /* let screen-wrap fill frame width */
-    }
-    .screen-wrap {
-      padding: 6px;
-      width: 100%;
-      max-width: 100%;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-    #screen, .screen-idle {
-      /* Cap the canvas width so its aspect-derived height fits the
-         emulator budget published by JS (--emu-max-h). */
-      width: min(100%, calc(var(--emu-max-h, 100dvh) * 160 / 144));
-      height: auto;
-      aspect-ratio: 160 / 144;
-    }
     .result-grid { grid-template-columns: 1fr; }
     .blurb h1 { font-size: 22px; }
     .home { padding: 20px 12px 32px; }
