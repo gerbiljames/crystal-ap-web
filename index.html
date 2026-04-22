@@ -911,6 +911,83 @@
   #log .log-ok   { color: var(--jade-bright); }
   #log .log-chat { color: var(--ink-0); background: rgba(149,123,194,0.05); padding: 0 2px; }
 
+  /* ---------- on-screen gamepad (touch / narrow) ---------- */
+  .gamepad {
+    display: none;
+    flex-direction: column;
+    gap: 16px;
+    padding: 14px 0 4px;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+  .gamepad-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 0 8px;
+  }
+  .gamepad-row.gp-ss { justify-content: center; gap: 12px; }
+  .gp-dpad {
+    display: grid;
+    grid-template-columns: repeat(3, 48px);
+    grid-template-rows: repeat(3, 48px);
+    gap: 2px;
+  }
+  .gp-up    { grid-column: 2; grid-row: 1; }
+  .gp-left  { grid-column: 1; grid-row: 2; }
+  .gp-right { grid-column: 3; grid-row: 2; }
+  .gp-down  { grid-column: 2; grid-row: 3; }
+  .gp-ab { display: flex; gap: 18px; align-items: center; }
+  .gp-ab .gp-btn {
+    width: 58px; height: 58px;
+    border-radius: 50%;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .gp-ab .gp-b { transform: translateY(8px); }     /* slight GB diagonal */
+  .gp-ab .gp-a { transform: translateY(-8px); }
+  .gp-ss .gp-btn {
+    min-width: 96px;
+    padding: 8px 14px;
+    border-radius: 12px;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .gp-btn {
+    background: var(--bg-2);
+    border: 1px solid var(--line-bright);
+    color: var(--ink-0);
+    font-family: var(--mono);
+    font-size: 14px;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .gp-btn:active, .gp-btn[data-held="1"] {
+    background: var(--jade-deep);
+    border-color: var(--jade);
+    color: var(--ink-0);
+  }
+  .gp-a {
+    background: rgba(235,59,121,0.14);
+    border-color: rgba(235,59,121,0.55);
+    color: var(--coral);
+  }
+  .gp-a:active, .gp-a[data-held="1"] { background: var(--coral); color: var(--bg-0); }
+  .gp-b {
+    background: rgba(149,123,194,0.14);
+    border-color: rgba(149,123,194,0.55);
+    color: var(--jade-bright);
+  }
+  .gp-b:active, .gp-b[data-held="1"] { background: var(--jade); color: var(--bg-0); }
+
+  /* Show on narrow viewports (where keyboard is usually unavailable anyway). */
+  @media (max-width: 900px) {
+    .gamepad { display: flex; }
+  }
+
   /* ---------- responsive ---------- */
   @media (max-width: 1100px) {
     .play-stack {
@@ -951,6 +1028,12 @@
     .nav { padding: 10px 12px; font-size: 12px; }
     .brand { font-size: 16px; }
     .session-chip { padding: 4px 10px; font-size: 9px; letter-spacing: 0.16em; }
+  }
+
+  /* Resume rows reshuffle early. Even when the home grid is still 2-col, the
+     home-main column is narrow enough below ~1100px that the 4-col row
+     overflows its container. */
+  @media (max-width: 1100px) {
     .resume-row {
       grid-template-columns: 1fr auto;
       grid-template-areas: "slot actions" "id actions" "meta meta";
@@ -959,7 +1042,13 @@
     .resume-row .slot { grid-area: slot; }
     .resume-row .id { grid-area: id; }
     .resume-row .meta { grid-area: meta; text-align: left; }
-    .resume-row .actions { grid-area: actions; align-self: start; }
+    .resume-row .actions {
+      grid-area: actions;
+      align-self: start;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .resume-row .actions button { width: 100%; }
   }
 
   /* ---------- misc ---------- */
@@ -1103,6 +1192,26 @@
               <span class="vol-label" id="vol-label">vol</span>
               <input type="range" id="vol" min="0" max="100" value="50">
             </label>
+          </div>
+        </div>
+
+        <!-- Touch-only gamepad. Hidden on desktop via CSS. -->
+        <div class="gamepad" aria-hidden="true">
+          <div class="gamepad-row">
+            <div class="gp-dpad">
+              <button class="gp-btn gp-up"    data-input="up"    aria-label="up">▲</button>
+              <button class="gp-btn gp-left"  data-input="left"  aria-label="left">◀</button>
+              <button class="gp-btn gp-right" data-input="right" aria-label="right">▶</button>
+              <button class="gp-btn gp-down"  data-input="down"  aria-label="down">▼</button>
+            </div>
+            <div class="gp-ab">
+              <button class="gp-btn gp-b" data-input="B" aria-label="B">B</button>
+              <button class="gp-btn gp-a" data-input="A" aria-label="A">A</button>
+            </div>
+          </div>
+          <div class="gamepad-row gp-ss">
+            <button class="gp-btn gp-sel"   data-input="select" aria-label="select">select</button>
+            <button class="gp-btn gp-start" data-input="start"  aria-label="start">start</button>
           </div>
         </div>
 

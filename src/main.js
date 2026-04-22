@@ -1000,6 +1000,22 @@ async function bootEmulatorAndUi() {
   window.addEventListener("keydown", ev => { if (isTextTarget(ev.target)) return; const fn = keyMap[ev.code]; if (fn) { Module[fn](e, true); ev.preventDefault(); } });
   window.addEventListener("keyup",   ev => { if (isTextTarget(ev.target)) return; const fn = keyMap[ev.code]; if (fn) { Module[fn](e, false); ev.preventDefault(); } });
 
+  // --- on-screen gamepad (touch + mouse for desktop testing) ---
+  document.querySelectorAll(".gp-btn[data-input]").forEach(btn => {
+    const input = btn.dataset.input;
+    const fn = `_set_joyp_${input}`;
+    const press = (ev) => { ev.preventDefault(); Module[fn](e, true);  btn.dataset.held = "1"; };
+    const release = (ev) => { ev.preventDefault(); Module[fn](e, false); btn.dataset.held = "0"; };
+    btn.addEventListener("touchstart", press,   { passive: false });
+    btn.addEventListener("touchend",   release, { passive: false });
+    btn.addEventListener("touchcancel",release, { passive: false });
+    btn.addEventListener("mousedown",  press);
+    btn.addEventListener("mouseup",    release);
+    btn.addEventListener("mouseleave", release);
+    // Prevent the default button context menu (long-press on iOS).
+    btn.addEventListener("contextmenu", ev => ev.preventDefault());
+  });
+
   // --- populate session + artifact UI ---
   if (STATE.hosted) $("#sess-server").value = `${STATE.hosted.host}:${STATE.hosted.port}`;
   if (STATE.slotName) $("#sess-slot").value = STATE.slotName;
