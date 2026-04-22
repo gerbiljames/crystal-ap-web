@@ -1136,7 +1136,9 @@ async function bootEmulatorAndUi() {
       pendingMove.set(t.identifier, { x: t.clientX, y: t.clientY });
     }
     if (!moveQueued) { moveQueued = true; requestAnimationFrame(flushMove); }
-    ev.preventDefault();
+    // No preventDefault — touch-action: none on .gamepad already blocks
+    // scroll/zoom, and making this listener passive lets the browser
+    // dispatch events without waiting for this handler to finish.
   };
   const onTouchEnd = (ev) => {
     for (const t of ev.changedTouches) {
@@ -1148,7 +1150,7 @@ async function bootEmulatorAndUi() {
   };
   if (gpRoot) {
     gpRoot.addEventListener("touchstart",  onTouchStart, { passive: false });
-    gpRoot.addEventListener("touchmove",   onTouchMove,  { passive: false });
+    gpRoot.addEventListener("touchmove",   onTouchMove,  { passive: true });
     gpRoot.addEventListener("touchend",    onTouchEnd);
     gpRoot.addEventListener("touchcancel", onTouchEnd);
     gpRoot.addEventListener("contextmenu", ev => ev.preventDefault());
