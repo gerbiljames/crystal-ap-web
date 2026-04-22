@@ -8,6 +8,10 @@ const base = process.env.BASE_PATH || "/";
 export default defineConfig({
   base,
   plugins: [solid()],
+  // esbuild defaults to the React factory for .tsx in dev, clobbering
+  // vite-plugin-solid's JSX transform before it can run. `preserve` leaves
+  // JSX alone so the Solid babel pass owns the transform.
+  esbuild: { jsx: "preserve" },
   server: {
     host: "127.0.0.1",
     port: 8765,
