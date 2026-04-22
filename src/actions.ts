@@ -11,6 +11,7 @@ import { loadSessions, saveSessions, recordSession as recordSessionPure, removeS
 import { tryHostMultidata } from "./lib/host.js";
 import { apWorker } from "./lib/ap-worker.js";
 import { bindGamepad } from "./lib/gamepad.js";
+import { bindController } from "./lib/controller.js";
 import { initPlayLayout } from "./lib/layout.js";
 import { bootEmulator } from "./lib/emulator.js";
 import { installBizHawkBridge } from "./lib/bizhawk.js";
@@ -338,6 +339,7 @@ async function bootEmulatorAndUi() {
 
   initPlayLayout();
   bindGamepad($<HTMLElement>(".gamepad"), { emulator: e, module: Module });
+  bindController({ emulator: e, module: Module });
   installBizHawkBridge(emu, apWorker);
 
   // Seed the session form with host/slot info.
