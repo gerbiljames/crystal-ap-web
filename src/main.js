@@ -35,6 +35,7 @@ const app = $(".app");
 let _historyPushed = false;
 function setStep(step) {
   app.dataset.step = step;
+  if (window.__updateEmuMaxH) window.__updateEmuMaxH();
   if (step !== "options" && !_historyPushed) {
     history.pushState({ inApp: true }, "");
     _historyPushed = true;
@@ -999,6 +1000,42 @@ async function bootEmulatorAndUi() {
   const isTextTarget = t => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
   window.addEventListener("keydown", ev => { if (isTextTarget(ev.target)) return; const fn = keyMap[ev.code]; if (fn) { Module[fn](e, true); ev.preventDefault(); } });
   window.addEventListener("keyup",   ev => { if (isTextTarget(ev.target)) return; const fn = keyMap[ev.code]; if (fn) { Module[fn](e, false); ev.preventDefault(); } });
+
+  // --- compute emulator max-height from actual layout ---
+  // CSS can't model the real chrome (nav + step padding + frame chrome +
+  // gap + gamepad) reliably across devices, so measure it and publish a
+  // CSS var the canvas can clamp against.
+  const playGameEl = document.querySelector(".play-game");
+  const gamepadEl = document.querySelector(".gamepad");
+  const screenFrameEl = document.querySelector(".screen-frame");
+  const canvasEl = document.querySelector("#screen");
+  const doMeasure = () => {
+    if (!playGameEl || !gamepadEl || !screenFrameEl || !canvasEl) return;
+    // Only active when play step is live (mobile layout + visible).
+    if (playGameEl.offsetParent === null || getComputedStyle(gamepadEl).display === "none") {
+      document.documentElement.style.removeProperty("--emu-max-h");
+      return;
+    }
+    const vh = window.innerHeight;
+    const pgTop = playGameEl.getBoundingClientRect().top;
+    const gpH = gamepadEl.offsetHeight;
+    // Chrome inside screen-frame = frame minus canvas.
+    const frameChrome = screenFrameEl.offsetHeight - canvasEl.offsetHeight;
+    // Size play-game to exactly fill from its top to the viewport bottom,
+    // so margin-top:auto on the gamepad actually anchors to viewport
+    // bottom (not some guessed offset).
+    const pgH = Math.max(240, vh - pgTop);
+    document.documentElement.style.setProperty("--play-game-h", `${pgH}px`);
+    const budget = Math.max(120, pgH - gpH - 14 - frameChrome);
+    document.documentElement.style.setProperty("--emu-max-h", `${budget}px`);
+  };
+  // Defer to next frame so layout is settled after attribute/CSS changes.
+  const updateEmuMaxH = () => requestAnimationFrame(() => requestAnimationFrame(doMeasure));
+  window.__updateEmuMaxH = updateEmuMaxH;
+  updateEmuMaxH();
+  window.addEventListener("resize", updateEmuMaxH);
+  window.addEventListener("orientationchange", updateEmuMaxH);
+  new MutationObserver(updateEmuMaxH).observe(document.body, { attributes: true, attributeFilter: ["data-step"], subtree: true });
 
   // --- on-screen gamepad (touch + mouse for desktop testing) ---
   document.querySelectorAll(".gp-btn[data-input]").forEach(btn => {

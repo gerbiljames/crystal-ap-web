@@ -679,6 +679,10 @@
     margin: 0 auto;
   }
   .play-stack > .screen-frame { justify-self: start; align-self: start; }
+  /* .play-game is a real flex container on mobile (defined in the media
+     query) but dissolves on desktop so screen-frame participates directly
+     in the 2-col grid. */
+  .play-game { display: contents; }
   .play-controls {
     display: flex;
     flex-direction: column;
@@ -939,6 +943,18 @@
   .gp-left  { grid-column: 1; grid-row: 2; }
   .gp-right { grid-column: 3; grid-row: 2; }
   .gp-down  { grid-column: 2; grid-row: 3; }
+  /* Hide Unicode glyph text and draw pixel-centered triangles via borders. */
+  .gp-dpad .gp-btn { font-size: 0; }
+  .gp-dpad .gp-btn::before {
+    content: '';
+    display: block;
+    width: 0; height: 0;
+    border: 7px solid transparent;
+  }
+  .gp-dpad .gp-up::before    { border-bottom-color: var(--ink-0); margin-top: -5px; }
+  .gp-dpad .gp-down::before  { border-top-color: var(--ink-0);    margin-bottom: -5px; }
+  .gp-dpad .gp-left::before  { border-right-color: var(--ink-0);  margin-left: -5px; }
+  .gp-dpad .gp-right::before { border-left-color: var(--ink-0);   margin-right: -5px; }
   .gp-ab { display: flex; gap: 18px; align-items: center; }
   .gp-ab .gp-btn {
     width: 58px; height: 58px;
@@ -962,6 +978,11 @@
     color: var(--ink-0);
     font-family: var(--mono);
     font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
     touch-action: manipulation;
   }
@@ -986,6 +1007,23 @@
   /* Show on narrow viewports (where keyboard is usually unavailable anyway). */
   @media (max-width: 900px) {
     .gamepad { display: flex; }
+    .screen-keys { display: none; }
+    /* .play-game (screen + gamepad) occupies at least the viewport minus
+       nav/step padding so the sibling .play-controls is pushed below the
+       fold. The gamepad follows the emulator directly rather than pinning
+       to the bottom — on tall viewports any slack becomes empty space
+       under the gamepad, which keeps start/select visible on short ones. */
+    .play-game {
+      display: flex;
+      flex-direction: column;
+      /* Height is pushed by JS via --play-game-h = viewport_bottom - top
+         offset, so the gamepad's margin-top:auto anchor lands exactly on
+         the viewport bottom rather than some guessed offset. */
+      height: var(--play-game-h, calc(100dvh - 70px));
+      gap: 14px;
+    }
+    .play-game > .screen-frame { flex: 0 0 auto; }
+    .play-game > .gamepad { flex: 0 0 auto; margin-top: auto; }
   }
 
   /* ---------- responsive ---------- */
@@ -1010,14 +1048,29 @@
     .nav { padding: 12px 16px; gap: 10px; }
   }
 
-  /* Phones: keep the emulator pixel-integer at 2x but cap by viewport so it
-     never triggers horizontal scroll. Collapse the session form. */
+  /* Phones: emulator scales fluidly with its container (no more overflow at
+     narrow widths). Session form collapses, gamepad buttons shrink. */
   @media (max-width: 640px) {
     :root { --scale: 2; }
     .session-form { grid-template-columns: 1fr; }
-    .screen-frame { padding: 10px; max-width: 100%; }
+    .play-stack > .screen-frame { justify-self: stretch; }
+    .screen-frame {
+      padding: 8px;
+      align-self: stretch;
+      align-items: stretch;   /* let screen-wrap fill frame width */
+    }
+    .screen-wrap {
+      padding: 6px;
+      width: 100%;
+      max-width: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
     #screen, .screen-idle {
-      width: min(var(--screen-w), calc(100vw - 44px));
+      /* Cap the canvas width so its aspect-derived height fits the
+         emulator budget published by JS (--emu-max-h). */
+      width: min(100%, calc(var(--emu-max-h, 100dvh) * 160 / 144));
       height: auto;
       aspect-ratio: 160 / 144;
     }
@@ -1025,9 +1078,26 @@
     .blurb h1 { font-size: 22px; }
     .home { padding: 20px 12px 32px; }
     .step { padding: 20px 12px 28px; }
+    .home-card { padding: 14px; }
     .nav { padding: 10px 12px; font-size: 12px; }
     .brand { font-size: 16px; }
     .session-chip { padding: 4px 10px; font-size: 9px; letter-spacing: 0.16em; }
+
+    /* Shrink the gamepad so it fits on 375px viewports. */
+    .gp-dpad {
+      grid-template-columns: repeat(3, 44px);
+      grid-template-rows: repeat(3, 44px);
+    }
+    .gp-ab .gp-btn { width: 52px; height: 52px; font-size: 15px; }
+    .gp-ab { gap: 14px; }
+    .gamepad-row { padding: 0 4px; gap: 10px; }
+    .gamepad { gap: 14px; padding: 12px 0 20px; }
+    .gp-ss .gp-btn {
+      min-width: 72px;
+      padding: 6px 10px;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+    }
   }
 
   /* Resume rows reshuffle early. Even when the home grid is still 2-col, the
@@ -1182,6 +1252,7 @@
     <!-- STEP 04 · play -->
     <section class="step" data-step="play">
       <div class="play-stack">
+        <div class="play-game">
         <div class="screen-frame">
           <div class="screen-wrap">
             <canvas id="screen" width="160" height="144"></canvas>
@@ -1214,6 +1285,7 @@
             <button class="gp-btn gp-start" data-input="start"  aria-label="start">start</button>
           </div>
         </div>
+        </div> <!-- /.play-game -->
 
         <div class="play-controls">
           <div class="session-form" id="session-form">
