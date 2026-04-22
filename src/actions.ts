@@ -18,8 +18,10 @@ import { installBizHawkBridge } from "./lib/bizhawk.js";
 // -----------------------------------------------------------------------------
 // step machine + history
 // -----------------------------------------------------------------------------
+export type Step = "options" | "generating" | "rom" | "patching" | "play";
+
 let _historyPushed = false;
-export function setStep(step) {
+export function setStep(step: Step) {
   setApp("step", step);
   if (window.__updateEmuMaxH) window.__updateEmuMaxH();
   if (step !== "options" && !_historyPushed) {
@@ -30,8 +32,15 @@ export function setStep(step) {
   }
 }
 
-export function setSessionState(state, label) {
+export type SessionState = "idle" | "connecting" | "live" | "error";
+export function setSessionState(state: SessionState, label?: string) {
   setApp("session", { state, label: label ?? state });
+}
+
+// Short-hand for element lookups. Typed as the caller expects — callers pass
+// the HTML element subtype they need, e.g. `$<HTMLInputElement>("#vol")`.
+function $<T extends HTMLElement = HTMLElement>(sel: string): T {
+  return document.querySelector(sel) as T;
 }
 
 export function resetTransient() {
@@ -48,7 +57,7 @@ export function resetTransient() {
 // -----------------------------------------------------------------------------
 // resume + forget
 // -----------------------------------------------------------------------------
-export async function forgetSession(id) {
+export async function forgetSession(id: string) {
   const { removed } = removeSession(id);
   refreshSessions();
   const dbc = await db();
@@ -59,18 +68,18 @@ export async function forgetSession(id) {
   }
 }
 
-export async function resumeSession(id) {
-  const session = loadSessions().find(s => s.id === id);
+export async function resumeSession(id: string) {
+  const session = loadSessions().find((s: any) => s.id === id);
   if (!session) return;
   setApp("seedId", id);
   setApp("slotName", session.slot || "Player1");
   setApp("hosted", session.hosted || null);
 
   const dbc = await db();
-  const cachedRom = dbc ? await idbGet(dbc, id, ROM_STORE).catch(() => null) : null;
+  const cachedRom = dbc ? await idbGet<ArrayBuffer>(dbc, id, ROM_STORE).catch(() => null) : null;
   if (cachedRom && cachedRom.byteLength === GB_ROM_SIZE) {
     setApp("patchedRom", cachedRom);
-    const savedArtifacts = dbc ? await idbGet(dbc, id, ARTIFACTS_STORE).catch(() => null) : null;
+    const savedArtifacts = dbc ? await idbGet<Record<string, Uint8Array>>(dbc, id, ARTIFACTS_STORE).catch(() => null) : null;
     if (savedArtifacts) setApp("artifacts", savedArtifacts);
     setStep("play");
     logOk(`resumed ${id} with cached ROM`);
@@ -83,7 +92,7 @@ export async function resumeSession(id) {
 // -----------------------------------------------------------------------------
 // generation
 // -----------------------------------------------------------------------------
-async function runGeneration(yamlText) {
+async function runGeneration(yamlText: string) {
   const start = performance.now();
   setApp("gen", { visible: true, status: "starting", elapsed: "0.0s", error: null, done: false });
   const elapsedTimer = setInterval(
@@ -137,7 +146,7 @@ export async function continueToRom() {
   setStep("rom");
 }
 
-async function runPatch(romBytes, sourceLabel = "uploaded") {
+async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") {
   setApp("rom", { progressText: "reading ROM…", error: null });
   setStep("patching");
   log(`${sourceLabel} ROM (${romBytes.length} bytes); patching locally`);
@@ -156,15 +165,16 @@ async function runPatch(romBytes, sourceLabel = "uploaded") {
       setApp("rom", "progressText", PHASE_LABELS[phase] || phase);
       log("patcher: " + phase);
     });
+    const patched: Uint8Array = out;
     setApp("rom", "progressText", "booting emulator…");
-    if (out.byteLength !== GB_ROM_SIZE) {
-      const msg = `patched ROM was ${out.byteLength} bytes, expected ${GB_ROM_SIZE}`;
+    if (patched.byteLength !== GB_ROM_SIZE) {
+      const msg = `patched ROM was ${patched.byteLength} bytes, expected ${GB_ROM_SIZE}`;
       setApp("rom", { progressText: null, error: msg });
       logErr(msg);
       return;
     }
-    setApp("patchedRom", out.buffer);
-    logOk(`patched locally (${out.byteLength} bytes)`);
+    setApp("patchedRom", patched.buffer);
+    logOk(`patched locally (${patched.byteLength} bytes)`);
     recordSessionPure({
       id: app.seedId,
       slot: app.slotName,
@@ -174,7 +184,7 @@ async function runPatch(romBytes, sourceLabel = "uploaded") {
     refreshSessions();
     const dbc = await db();
     if (dbc) {
-      idbPut(dbc, app.seedId, out.buffer.slice(0), ROM_STORE).catch(err => logWarn("cache patched rom failed: " + err));
+      idbPut(dbc, app.seedId, patched.buffer.slice(0), ROM_STORE).catch(err => logWarn("cache patched rom failed: " + err));
       idbPut(dbc, "rom", vanillaBuf, VANILLA_STORE).catch(err => logWarn("cache vanilla rom failed: " + err));
       if (app.artifacts) {
         idbPut(dbc, app.seedId, app.artifacts, ARTIFACTS_STORE).catch(err => logWarn("cache artifacts failed: " + err));
@@ -193,13 +203,13 @@ async function runPatch(romBytes, sourceLabel = "uploaded") {
 // -----------------------------------------------------------------------------
 // yaml / rom drops
 // -----------------------------------------------------------------------------
-function extractSlotNameFromYaml(text) {
+function extractSlotNameFromYaml(text: string): string | null {
   const m = text.match(/^name:\s*(.+)\s*$/m);
   if (!m) return null;
   return m[1].trim().replace(/^["']|["']$/g, "").replace(/\s*#.*$/, "");
 }
 
-export async function handleYamlDrop(f) {
+export async function handleYamlDrop(f: File) {
   setApp("yamlErr", null);
   log(`read ${f.name} (${f.size} bytes)`);
   setApp("seedId", (crypto.randomUUID?.() || Math.random().toString(36).slice(2)).replace(/-/g, "").slice(0, 12));
@@ -213,7 +223,7 @@ export async function handleYamlDrop(f) {
     try { bytes = new Uint8Array(await f.arrayBuffer()); }
     catch (e) { setApp("yamlErr", `could not read file: ${e}`); logErr(`could not read file: ${e}`); return; }
 
-    let artifacts = {};
+    let artifacts: Record<string, Uint8Array> = {};
     if (isPatch) {
       artifacts[f.name] = bytes;
     } else {
@@ -223,7 +233,7 @@ export async function handleYamlDrop(f) {
     const patchName = Object.keys(artifacts).find(isPatchName);
     if (!patchName) { setApp("yamlErr", `no .apcrystal found inside ${f.name}`); logErr(`no .apcrystal found inside ${f.name}`); return; }
 
-    let manifest = {};
+    let manifest: Awaited<ReturnType<typeof readPatchManifest>> = {};
     try { manifest = await readPatchManifest(artifacts[patchName]); }
     catch (e) { logWarn(`couldn't read archipelago.json: ${e.message || e}`); }
     if (manifest.player_name) {
@@ -272,7 +282,7 @@ export async function handleYamlDrop(f) {
   runGeneration(text);
 }
 
-export async function handleRomDrop(f) {
+export async function handleRomDrop(f: File) {
   setApp("rom", "error", null);
   if (f.size !== GB_ROM_SIZE) {
     const msg = `expected 2,097,152 bytes, got ${f.size.toLocaleString()} — is this the right file?`;
@@ -292,7 +302,7 @@ export async function handleRomDrop(f) {
 async function bootEmulatorAndUi() {
   const saveDb = await db();
   const emu = await bootEmulator({
-    canvas: document.querySelector("#screen"),
+    canvas: $<HTMLCanvasElement>("#screen"),
     romBuf: app.patchedRom,
     saveDb,
   });
@@ -301,15 +311,15 @@ async function bootEmulatorAndUi() {
 
   if (app.seedId) {
     const list = loadSessions();
-    const entry = list.find(s => s.id === app.seedId);
+    const entry = list.find((s: any) => s.id === app.seedId);
     if (entry && entry.romHash !== romHash) {
       entry.romHash = romHash;
       saveSessions(list);
     }
   }
 
-  const volInput = document.querySelector("#vol");
-  const volLabel = document.querySelector("#vol-label");
+  const volInput = $<HTMLInputElement>("#vol");
+  const volLabel = $<HTMLElement>("#vol-label");
   const applyVol = () => {
     const v = Number(volInput.value) / 100;
     setVolume(v);
@@ -320,12 +330,12 @@ async function bootEmulatorAndUi() {
   applyVol();
 
   initPlayLayout();
-  bindGamepad(document.querySelector(".gamepad"), { emulator: e, module: Module });
+  bindGamepad($<HTMLElement>(".gamepad"), { emulator: e, module: Module });
   installBizHawkBridge(emu, apWorker);
 
   // Seed the session form with host/slot info.
-  document.querySelector("#sess-server").value = app.hosted ? `${app.hosted.host}:${app.hosted.port}` : "";
-  document.querySelector("#sess-slot").value = app.slotName || "";
+  $<HTMLInputElement>("#sess-server").value = app.hosted ? `${app.hosted.host}:${app.hosted.port}` : "";
+  $<HTMLInputElement>("#sess-slot").value   = app.slotName || "";
 
   // Expose for console poking.
   window.ap = { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash, RAM, WRAM_BASE };
@@ -333,9 +343,9 @@ async function bootEmulatorAndUi() {
 }
 
 export async function connectSession() {
-  const server = document.querySelector("#sess-server").value.trim();
-  const slot   = document.querySelector("#sess-slot").value.trim();
-  const pw     = document.querySelector("#sess-pw").value;
+  const server = $<HTMLInputElement>("#sess-server").value.trim();
+  const slot   = $<HTMLInputElement>("#sess-slot").value.trim();
+  const pw     = $<HTMLInputElement>("#sess-pw").value;
   if (!server || !slot) { logErr("server and slot are required"); return; }
   setSessionState("connecting", "connecting…");
   logOk(`connecting session for ${slot}@${server}`);
@@ -344,7 +354,7 @@ export async function connectSession() {
     setSessionState("live", slot);
     logOk(`session started`);
     const list = loadSessions();
-    const entry = list.find(s => s.id === app.seedId);
+    const entry = list.find((s: any) => s.id === app.seedId);
     if (entry) {
       entry.slot = slot;
       const [h, portStr] = server.split(":");
@@ -356,7 +366,7 @@ export async function connectSession() {
       setApp("slotName", slot);
       setApp("hosted", entry.hosted);
     }
-  } catch (err) {
+  } catch (err: any) {
     setSessionState("error", "error");
     logErr("session start failed: " + (err.message || err));
   }
@@ -368,7 +378,7 @@ export async function disconnectSession() {
 }
 
 // Brand-click teardown: stop the session and reload for a clean slate.
-export function teardownAndReload(ev) {
+export function teardownAndReload(ev?: Event) {
   if (ev) ev.preventDefault();
   try { apWorker.stopSession(); } catch {}
   window.location.reload();

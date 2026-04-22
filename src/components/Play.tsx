@@ -93,8 +93,8 @@ function SessionLinks() {
     <div class="session-links" id="session-links">
       <For each={items()}>{(l) => (
         <a href={l.href} target="_blank" rel="noopener"
-           attr:data-kind={l.kind === "download" ? "download" : undefined}
-           attr:download={l.kind === "download" ? l.download : undefined}>
+           data-kind={l.kind === "download" ? "download" : undefined}
+           download={l.kind === "download" ? l.download : undefined}>
           {l.label}
         </a>
       )}</For>

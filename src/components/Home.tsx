@@ -104,7 +104,7 @@ function ArtifactChips() {
     <div class="result-grid" id="result-grid">
       <For each={chips()}>{(c) => (
         <a class="result-chip" href={c.href} target="_blank" rel="noopener" title={c.title}
-           attr:download={c.kind === "download" ? (c.download || c.title) : undefined}>
+           download={c.kind === "download" ? (c.download || c.title) : undefined}>
           <span class="chip-left">
             <span class="label">{c.sublabel}</span>
             <span class="title">{c.title}</span>

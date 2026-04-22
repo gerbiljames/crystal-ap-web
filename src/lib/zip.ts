@@ -30,7 +30,15 @@ export async function readZipEntry(bytes, targetName) {
   throw new Error(`${targetName} not found in patch`);
 }
 
-export async function readPatchManifest(patchBytes) {
+// Archipelago patch manifests carry slot/server hints. We only use a couple
+// of fields; declare them narrow and let the rest pass through.
+export type PatchManifest = {
+  player_name?: string;
+  server?: string;
+  [key: string]: any;
+};
+
+export async function readPatchManifest(patchBytes: Uint8Array): Promise<PatchManifest> {
   const raw = await readZipEntry(patchBytes, "archipelago.json");
   return JSON.parse(new TextDecoder().decode(raw));
 }

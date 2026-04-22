@@ -16,7 +16,26 @@ const AUDIO_LATENCY_SEC = 0.1;
 const AUDIO_FRAMES = 4096;
 const CGB_COLOR_CURVE = 2;
 
-export async function bootEmulator({ canvas, romBuf, saveDb }) {
+export interface EmulatorHandle {
+  e: number;
+  Module: any;
+  readMem: (addr: number, len?: number) => Uint8Array;
+  writeMem: (addr: number, bytes: Uint8Array) => void;
+  guardedWrite: (guardAddr: number, expected: Uint8Array, writeAddr: number, bytes: Uint8Array) => boolean;
+  readDomain: (domain: string, addr: number, sz: number) => Uint8Array;
+  writeDomain: (domain: string, addr: number, bytes: Uint8Array) => void;
+  romHash: string;
+  DOMAIN_SIZE: Record<string, number>;
+  setVolume: (v: number) => void;
+}
+
+export interface BootEmulatorOptions {
+  canvas: HTMLCanvasElement;
+  romBuf: ArrayBuffer;
+  saveDb: IDBDatabase | null;
+}
+
+export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptions): Promise<EmulatorHandle | null> {
   log("booting binjgb…");
   const Module = await Binjgb();
 
@@ -137,7 +156,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb }) {
     Module._file_data_delete(fd);
   };
   if (saveDb) {
-    const existing = await idbGet(saveDb, romHash).catch(() => null);
+    const existing = await idbGet<ArrayBuffer>(saveDb, romHash).catch(() => null);
     if (existing) { loadSram(new Uint8Array(existing)); logOk(`loaded SRAM (${existing.byteLength} bytes) from prior session`); }
     else { log("fresh save slot"); }
   }

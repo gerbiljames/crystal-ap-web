@@ -7,12 +7,12 @@
 // roles in each layout.
 
 export function initPlayLayout() {
-  const playGameEl     = document.querySelector(".play-game");
-  const gamepadEl      = document.querySelector(".gamepad");
-  const screenFrameEl  = document.querySelector(".screen-frame");
-  const canvasEl       = document.querySelector("#screen");
-  const logAreaEl      = document.querySelector(".log-area");
-  const playControlsEl = document.querySelector(".play-controls");
+  const playGameEl     = document.querySelector<HTMLElement>(".play-game");
+  const gamepadEl      = document.querySelector<HTMLElement>(".gamepad");
+  const screenFrameEl  = document.querySelector<HTMLElement>(".screen-frame");
+  const canvasEl       = document.querySelector<HTMLCanvasElement>("#screen");
+  const logAreaEl      = document.querySelector<HTMLElement>(".log-area");
+  const playControlsEl = document.querySelector<HTMLElement>(".play-controls");
   if (!playGameEl || !gamepadEl || !screenFrameEl || !canvasEl) return;
 
   const mobileMQ    = window.matchMedia("(max-width: 900px)");
@@ -47,8 +47,8 @@ export function initPlayLayout() {
     // to fill a grid cell (landscape), in which case
     // frame.offsetHeight - canvas.offsetHeight reflects all the stretched
     // slack, not the actual chrome.
-    const screenWrapEl = screenFrameEl.querySelector(".screen-wrap");
-    const labelEl = screenFrameEl.querySelector(".screen-label-bottom");
+    const screenWrapEl = screenFrameEl.querySelector<HTMLElement>(".screen-wrap");
+    const labelEl = screenFrameEl.querySelector<HTMLElement>(".screen-label-bottom");
     const fCs = getComputedStyle(screenFrameEl);
     const wCs = screenWrapEl ? getComputedStyle(screenWrapEl) : null;
     const framePad = parseFloat(fCs.paddingTop) + parseFloat(fCs.paddingBottom);
