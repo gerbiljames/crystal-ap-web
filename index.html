@@ -187,9 +187,19 @@
   .blurb h1 em { font-style: italic; color: var(--coral); }
   /* Highlights inherit the surrounding font so baselines don't shift —
      only the color changes. Cream against the lavender body gives a proper
-     contrast bump. */
+     contrast bump. Links get the same cream + a subtle underline hint. */
   .blurb b { font-weight: inherit; color: var(--ink-0); }
   .blurb-list b { color: var(--ink-0); }
+  .blurb a {
+    color: var(--ink-0);
+    text-decoration: none;
+    border-bottom: 1px solid rgba(240, 232, 208, 0.25);
+    transition: color 160ms, border-color 160ms;
+  }
+  .blurb a:hover {
+    color: var(--jade-bright);
+    border-bottom-color: var(--jade-bright);
+  }
   .blurb p {
     font-family: var(--display);
     font-style: italic;
@@ -994,12 +1004,12 @@
     <section class="home">
       <aside class="blurb">
         <h1>Pokemon Crystal Archipelago <em>in your browser.</em></h1>
-        <p>A full multiworld client for <b>Pokemon Crystal</b>. You provide a YAML and your own vanilla Crystal ROM; everything else happens locally.</p>
+        <p>A full multiworld client for <a href="https://github.com/gerbiljames/Archipelago-Crystal/tree/pokecrystal" target="_blank" rel="noopener">Pokemon Crystal</a>. You provide a YAML and your own vanilla Crystal ROM; everything else happens locally.</p>
         <ul class="blurb-list">
-          <li>Generation and ROM patching run in your tab via <b>Pyodide</b>.</li>
+          <li>Generation and ROM patching run in your tab via <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>.</li>
           <li>Your ROM never leaves this browser. It's stored locally so you don't need to re-provide it.</li>
-          <li>Emulation by <b>binjgb</b>. Saves persist per seed.</li>
-          <li>The multiworld is hosted on <b>archipelago.gg</b> via a tiny proxy.</li>
+          <li>Emulation by <a href="https://github.com/binji/binjgb" target="_blank" rel="noopener">binjgb</a>. Saves persist per seed.</li>
+          <li>The multiworld is hosted on <a href="https://archipelago.gg" target="_blank" rel="noopener">archipelago.gg</a> via a tiny proxy.</li>
         </ul>
       </aside>
 
