@@ -945,9 +945,9 @@
   .gamepad-row.gp-ss { justify-content: center; gap: 12px; }
   .gp-dpad {
     display: grid;
-    grid-template-columns: repeat(3, 48px);
-    grid-template-rows: repeat(3, 48px);
-    gap: 2px;
+    grid-template-columns: repeat(3, 56px);
+    grid-template-rows: repeat(3, 56px);
+    gap: 0;
   }
   .gp-up    { grid-column: 2; grid-row: 1; }
   .gp-left  { grid-column: 1; grid-row: 2; }
@@ -995,7 +995,11 @@
     justify-content: center;
     cursor: pointer;
     touch-action: none;
+    /* The gamepad isn't a keyboard-nav target (we bind keys at the window
+       level). Suppress the focus outline that lingers after a touch. */
+    outline: none;
   }
+  .gp-btn::-moz-focus-inner { border: 0; }
   .gp-btn:active, .gp-btn[data-held="1"] {
     background: var(--jade-deep);
     border-color: var(--jade);
@@ -1205,8 +1209,8 @@
 
     /* Shrink the gamepad so it fits on 375px viewports. */
     .gp-dpad {
-      grid-template-columns: repeat(3, 44px);
-      grid-template-rows: repeat(3, 44px);
+      grid-template-columns: repeat(3, 52px);
+      grid-template-rows: repeat(3, 52px);
     }
     .gp-ab .gp-btn { width: 52px; height: 52px; font-size: 15px; }
     .gp-ab { gap: 14px; }
