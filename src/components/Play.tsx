@@ -186,7 +186,7 @@ function PlayControls() {
   return (
     <div class="play-controls">
       <div class="session-form" id="session-form">
-        <label>server<input type="text" id="sess-server" autocomplete="off" spellcheck={false} placeholder="archipelago.gg:50193" /></label>
+        <label>server<input type="text" id="sess-server" autocomplete="off" spellcheck={false} placeholder="archipelago.gg:xxxxx" /></label>
         <label>slot<input type="text" id="sess-slot" autocomplete="off" spellcheck={false} value="Player1" /></label>
         <label>password<input type="password" id="sess-pw" autocomplete="off" /></label>
         <div class="session-actions">
