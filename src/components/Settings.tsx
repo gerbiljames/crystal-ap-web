@@ -1,5 +1,5 @@
 import { For, Show, createSignal, createEffect, onCleanup } from "solid-js";
-import { settingsOpen, setSettingsOpen } from "../state.js";
+import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs } from "../state.js";
 import {
   DEFAULT_BINDINGS, loadBindings, saveBindings, captureNextButton, getActivePad,
   type InputName,
@@ -16,7 +16,7 @@ const INPUT_ROWS: { name: InputName; label: string }[] = [
   { name: "right",  label: "right" },
 ];
 
-type Tab = "controller";
+type Tab = "controller" | "overlay";
 
 export function Settings() {
   const [tab, setTab] = createSignal<Tab>("controller");
@@ -46,12 +46,22 @@ export function Settings() {
                 data-active={tab() === "controller"}
                 onClick={() => setTab("controller")}
               >controller</button>
+              <button
+                class="modal-tab"
+                role="tab"
+                aria-selected={tab() === "overlay"}
+                data-active={tab() === "overlay"}
+                onClick={() => setTab("overlay")}
+              >overlay</button>
             </div>
             <button class="modal-close" onClick={() => setSettingsOpen(false)} aria-label="close">✕</button>
           </div>
           <div class="modal-body">
             <Show when={tab() === "controller"}>
               <ControllerPanel />
+            </Show>
+            <Show when={tab() === "overlay"}>
+              <OverlayPanel />
             </Show>
           </div>
         </div>
@@ -151,6 +161,62 @@ function ControllerPanel() {
         Tip: the highlighted index next to each row lights up when that button is pressed.
         Useful for figuring out which physical button is which if your pad reports a non-standard mapping.
       </p>
+    </div>
+  );
+}
+
+function OverlayPanel() {
+  const prefs = overlayPrefs;
+
+  const onPersistChange = (ev: Event) => {
+    const v = Number((ev.currentTarget as HTMLInputElement).value);
+    if (!Number.isFinite(v) || v < 0) return;
+    setOverlayPrefs({ ...prefs(), persistSec: Math.floor(v) });
+  };
+  const onMaxChange = (ev: Event) => {
+    const v = Number((ev.currentTarget as HTMLInputElement).value);
+    if (!Number.isFinite(v) || v < 1) return;
+    setOverlayPrefs({ ...prefs(), maxEntries: Math.min(50, Math.floor(v)) });
+  };
+
+  return (
+    <div class="overlay-panel">
+      <p class="panel-intro">
+        The event log overlay appears in the top-left while the emulator is fullscreen.
+      </p>
+
+      <div class="pref-row">
+        <label class="pref-label" for="ov-persist">
+          <span>persist duration</span>
+          <span class="pref-sub">seconds an entry stays visible — <strong>0</strong> keeps them forever</span>
+        </label>
+        <input
+          id="ov-persist"
+          class="pref-input"
+          type="number"
+          min="0"
+          step="1"
+          value={prefs().persistSec}
+          onInput={onPersistChange}
+        />
+      </div>
+
+      <div class="pref-row">
+        <label class="pref-label" for="ov-max">
+          <span>max entries</span>
+          <span class="pref-sub">how many lines to show at once (1–50)</span>
+        </label>
+        <input
+          id="ov-max"
+          class="pref-input"
+          type="number"
+          min="1"
+          max="50"
+          step="1"
+          value={prefs().maxEntries}
+          onInput={onMaxChange}
+        />
+      </div>
     </div>
   );
 }

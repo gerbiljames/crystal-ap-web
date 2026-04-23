@@ -1,5 +1,5 @@
-import { For, createEffect, createMemo } from "solid-js";
-import { app, logLines } from "../state.js";
+import { For, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { app, logLines, overlayPrefs } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
 import { connectSession, disconnectSession } from "../actions.js";
@@ -13,16 +13,45 @@ function ScreenFrame() {
       frameRef.requestFullscreen?.();
     }
   };
-  // Last N log entries — rendered as an overlay only while fullscreen.
+  // Tick every second so age-based expiry re-evaluates while fullscreen.
+  // Cheap: only wakes the overlay memo, not the whole page.
+  const [now, setNow] = createSignal(Date.now());
+  const tick = setInterval(() => setNow(Date.now()), 1000);
+  onCleanup(() => clearInterval(tick));
+
+  const FADE_SEC = 0.8;
+
+  // Last N non-expired log entries — rendered as an overlay only while
+  // fullscreen. `persistSec === 0` means entries never expire.
   const tailLines = createMemo(() => {
-    const all = logLines();
-    return all.slice(Math.max(0, all.length - 8));
+    const prefs = overlayPrefs();
+    const n = now();
+    const visible = logLines().filter(e => {
+      if (prefs.persistSec === 0) return true;
+      const ageSec = (n - (e.ts ?? 0)) / 1000;
+      return ageSec < prefs.persistSec + FADE_SEC;
+    });
+    return visible.slice(Math.max(0, visible.length - prefs.maxEntries));
   });
+
+  // Per-entry CSS for the fade animation. A negative animation-delay
+  // fast-forwards entries that are already part-way through their fade
+  // (e.g. when the overlay first mounts with entries already in the buffer).
+  const lineStyle = (entry: { ts?: number }) => {
+    const prefs = overlayPrefs();
+    if (prefs.persistSec === 0) return undefined;
+    const ageSec = (Date.now() - (entry.ts ?? 0)) / 1000;
+    const delaySec = prefs.persistSec - ageSec;
+    return {
+      "animation": `fs-line-fade ${FADE_SEC}s linear forwards`,
+      "animation-delay": `${delaySec}s`,
+    };
+  };
   return (
     <div class="screen-frame" ref={frameRef}>
       <div class="fs-log-overlay" aria-hidden="true">
         <For each={tailLines()}>{(entry) => (
-          <div class={`fs-log-line log-${entry.kind}`}>
+          <div class={`fs-log-line log-${entry.kind}`} style={lineStyle(entry)}>
             <span class="fs-log-time">{entry.time}</span>{" "}
             {entry.ansi !== undefined
               ? <span innerHTML={ansiToHtml(entry.ansi)} />

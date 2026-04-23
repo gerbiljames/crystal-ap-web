@@ -836,6 +836,10 @@
   .fs-log-line.log-err  { border-left-color: var(--coral); }
   .fs-log-line.log-warn { border-left-color: var(--amber); }
   .fs-log-line.log-ok   { border-left-color: var(--jade-bright); }
+  @keyframes fs-line-fade {
+    from { opacity: 1; }
+    to   { opacity: 0; }
+  }
   .vol {
     display: inline-flex; align-items: center; gap: 6px;
     cursor: pointer;
@@ -1512,6 +1516,52 @@
     color: var(--ink-2);
     line-height: 1.5;
   }
+
+  /* overlay panel */
+  .overlay-panel { display: flex; flex-direction: column; gap: 14px; }
+  .panel-intro {
+    margin: 0 0 4px;
+    font-size: 12px;
+    color: var(--ink-2);
+    line-height: 1.5;
+  }
+  .pref-row {
+    display: grid;
+    grid-template-columns: 1fr 110px;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 12px;
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+  }
+  .pref-label {
+    display: flex; flex-direction: column; gap: 4px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-1);
+    cursor: pointer;
+  }
+  .pref-label .pref-sub {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: none;
+    color: var(--ink-2);
+  }
+  .pref-label .pref-sub strong { color: var(--ink-0); font-weight: normal; }
+  .pref-input {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-0);
+    background: var(--bg-2);
+    border: 1px solid var(--line-bright);
+    padding: 6px 10px;
+    width: 100%;
+    box-sizing: border-box;
+    transition: border-color 120ms;
+  }
+  .pref-input:focus { outline: none; border-color: var(--jade); }
 </style>
 </head>
 <body>

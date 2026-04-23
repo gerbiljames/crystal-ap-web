@@ -38,5 +38,28 @@ export function refreshSessions() { setApp("sessions", loadSessions()); }
 
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 
+// ---------- overlay settings ----------
+const OVERLAY_KEY = "crystal-ap-overlay";
+export type OverlayPrefs = { persistSec: number; maxEntries: number };
+const OVERLAY_DEFAULTS: OverlayPrefs = { persistSec: 0, maxEntries: 8 };
+
+function loadOverlayPrefs(): OverlayPrefs {
+  try {
+    const raw = localStorage.getItem(OVERLAY_KEY);
+    if (!raw) return { ...OVERLAY_DEFAULTS };
+    const p = JSON.parse(raw);
+    return {
+      persistSec: Number.isFinite(p.persistSec) && p.persistSec >= 0 ? p.persistSec : OVERLAY_DEFAULTS.persistSec,
+      maxEntries: Number.isFinite(p.maxEntries) && p.maxEntries >= 1 ? Math.min(50, Math.floor(p.maxEntries)) : OVERLAY_DEFAULTS.maxEntries,
+    };
+  } catch { return { ...OVERLAY_DEFAULTS }; }
+}
+
+export const [overlayPrefs, _setOverlayPrefs] = createSignal<OverlayPrefs>(loadOverlayPrefs());
+export function setOverlayPrefs(next: OverlayPrefs) {
+  _setOverlayPrefs(next);
+  try { localStorage.setItem(OVERLAY_KEY, JSON.stringify(next)); } catch {}
+}
+
 // Log buffer. Each entry is { kind, time, text?, ansi? }.
 export const [logLines, setLogLines] = createSignal([]);

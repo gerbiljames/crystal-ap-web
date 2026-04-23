@@ -11,7 +11,7 @@ function timeString() {
 }
 
 function push(kind, content) {
-  setLogLines(l => [...l, { kind, time: timeString(), ...content }]);
+  setLogLines(l => [...l, { kind, time: timeString(), ts: Date.now(), ...content }]);
 }
 
 export function logLine(kind, msg) { push(kind, { text: String(msg) }); }
