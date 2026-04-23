@@ -41,6 +41,12 @@ export function refreshYamls()    { setApp("yamls", loadYamls()); }
 
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 
+// Toggle right before an intentional in-app reload so the beforeunload
+// handler doesn't double-prompt the user.
+let _suppressUnloadWarn = false;
+export function markIntentionalReload() { _suppressUnloadWarn = true; }
+export function unloadWarnSuppressed() { return _suppressUnloadWarn; }
+
 // ---------- overlay settings ----------
 const OVERLAY_KEY = "crystal-ap-overlay";
 export type OverlayPrefs = { persistSec: number; maxEntries: number };

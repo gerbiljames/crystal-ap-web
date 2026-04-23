@@ -1,5 +1,5 @@
 import { onMount, onCleanup } from "solid-js";
-import { app } from "./state.js";
+import { app, unloadWarnSuppressed } from "./state.js";
 import { teardownAndReload } from "./actions.js";
 import { Nav } from "./components/Nav.jsx";
 import { Home } from "./components/Home.jsx";
@@ -22,6 +22,7 @@ export function App() {
     // but setting returnValue is still what triggers the dialog.
     const onBeforeUnload = (ev: BeforeUnloadEvent) => {
       if (app.step !== "play") return;
+      if (unloadWarnSuppressed()) return;
       ev.preventDefault();
       ev.returnValue = "Make sure you've saved in-game before leaving.";
     };
