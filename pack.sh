@@ -19,6 +19,7 @@ tar -cf "$OUT" -C "$AP" \
     --exclude="test" \
     --exclude="docs" \
     --exclude="**/docs" \
+    LICENSE \
     BaseClasses.py \
     Options.py \
     NetUtils.py \

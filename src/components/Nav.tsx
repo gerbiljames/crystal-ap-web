@@ -20,6 +20,13 @@ export function Nav() {
           <path fill="currentColor" d="M19.14 12.94a7.49 7.49 0 0 0 .05-.94 7.49 7.49 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7.03 7.03 0 0 0-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.66 8.48a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.38 1.05.7 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54c.58-.24 1.13-.56 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.04-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/>
         </svg>
       </button>
+      <a class="license-link" href="/THIRD_PARTY_LICENSES.txt" target="_blank" rel="noopener" aria-label="third-party licenses" title="third-party licenses">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" d="M7 3h7l4 4v14H7z"/>
+          <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" d="M14 3v4h4"/>
+          <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M9.5 12h5M9.5 15h5M9.5 18h3"/>
+        </svg>
+      </a>
       <div class="session-chip" id="session-chip" data-state={app.session.state}>
         <span class="dot"></span><span class="label">{app.session.label}</span>
       </div>
