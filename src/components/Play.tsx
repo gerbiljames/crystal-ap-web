@@ -3,6 +3,9 @@ import { app, logLines, overlayPrefs } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
 import { connectSession, disconnectSession } from "../actions.js";
+import { db, idbGet } from "../lib/idb.js";
+import { SAVE_STORE } from "../lib/constants.js";
+import { logErr, logWarn } from "../lib/log.js";
 
 function ScreenFrame() {
   let frameRef!: HTMLDivElement;
@@ -146,6 +149,25 @@ function SessionLinks() {
     if (spoil) out.push({ href: blobUrl(spoil), label: "spoiler log",        kind: "download", download: spoil });
     return out;
   };
+
+  const downloadSave = async () => {
+    const session = app.sessions.find((s) => s.id === app.seedId);
+    const romHash = session?.romHash;
+    if (!romHash) { logErr("no ROM hash on this session — can't locate save"); return; }
+    const dbc = await db();
+    if (!dbc) { logErr("IDB unavailable"); return; }
+    const sram = await idbGet<ArrayBuffer>(dbc, romHash, SAVE_STORE).catch(() => null);
+    if (!sram || !sram.byteLength) { logWarn("no save data yet — play a bit first"); return; }
+    const url = URL.createObjectURL(new Blob([sram], { type: "application/octet-stream" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${session?.slot || app.slotName || "pokecrystal"}.sav`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   return (
     <div class="session-links" id="session-links">
       <For each={items()}>{(l) => (
@@ -155,6 +177,7 @@ function SessionLinks() {
           {l.label}
         </a>
       )}</For>
+      <a href="#" data-kind="download" onClick={(ev) => { ev.preventDefault(); downloadSave(); }}>save file</a>
     </div>
   );
 }
