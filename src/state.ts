@@ -36,5 +36,7 @@ export function persistHostPref(on) {
 
 export function refreshSessions() { setApp("sessions", loadSessions()); }
 
+export const [settingsOpen, setSettingsOpen] = createSignal(false);
+
 // Log buffer. Each entry is { kind, time, text?, ansi? }.
 export const [logLines, setLogLines] = createSignal([]);
