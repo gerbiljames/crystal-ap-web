@@ -4,6 +4,14 @@
 export const GEN_BASE = "https://crystal-ap-host.gerbiljames.workers.dev";
 export const GB_ROM_SIZE = 2097152;
 
+// SHA-256 of the two vanilla Pokémon Crystal ROMs the Archipelago apworld
+// accepts as a patch base (English 1.0 and English 1.1). The AU revision
+// is not supported by the apworld, so we reject it here too.
+export const VANILLA_ROM_HASHES: Record<string, string> = {
+  "d6702e353dcbe2d2c69183046c878ef13a0dae4006e8cdff521cca83dd1582fe": "Crystal (English) 1.0",
+  "fdcc3c8c43813cf8731fc037d2a6d191bac75439c34b24ba1c27526e6acdc8a2": "Crystal (English) 1.1",
+};
+
 // Pokemon Crystal WRAM offsets (from 0xC000). Drawn from
 // worlds/pokemon_crystal/data/data.json.
 export const WRAM_BASE = 0xC000;

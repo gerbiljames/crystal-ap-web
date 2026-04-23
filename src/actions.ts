@@ -3,7 +3,7 @@
 // (state.js) and talk to the framework-agnostic lib/ modules.
 
 import { app, setApp, refreshSessions } from "./state.js";
-import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, WRAM_BASE, RAM } from "./lib/constants.js";
+import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
 import { db, idbGet, idbPut, idbDel } from "./lib/idb.js";
@@ -294,6 +294,18 @@ export async function handleRomDrop(f: File) {
   let romBuf;
   try { romBuf = new Uint8Array(await f.arrayBuffer()); }
   catch (e) { setApp("rom", "error", `read failed: ${e}`); logErr(`read failed: ${e}`); return; }
+
+  const digest = await crypto.subtle.digest("SHA-256", romBuf.slice().buffer);
+  const hex = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
+  const label = VANILLA_ROM_HASHES[hex];
+  if (!label) {
+    const msg = "ROM hash doesn't match a supported vanilla Crystal — only English 1.0 and 1.1 are accepted";
+    setApp("rom", "error", msg);
+    logErr(`${msg} (sha256 ${hex})`);
+    return;
+  }
+  log(`vanilla ROM verified: ${label}`);
+
   await runPatch(romBuf, "uploaded");
 }
 
