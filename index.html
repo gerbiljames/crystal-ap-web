@@ -1517,6 +1517,46 @@
     line-height: 1.5;
   }
 
+  /* saved yamls list reuses resume-row layout but needs an editable name cell */
+  .yaml-list { margin-top: 12px; }
+  /* Give row action buttons a consistent min width so short labels
+     ("use") line up with longer ones ("forget", "resume"). */
+  .resume-row .actions button { min-width: 72px; }
+  /* Swap the hint copy on touch-primary devices so it says "tap" instead
+     of "click". Falls back to desktop text if the media query is unsupported. */
+  .hint-touch { display: none; }
+  @media (hover: none) and (pointer: coarse) {
+    .hint-desktop { display: none; }
+    .hint-touch   { display: inline; }
+  }
+  .resume-row .yaml-name-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    letter-spacing: inherit;
+    text-transform: none;
+    cursor: text;
+    text-align: left;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .resume-row .yaml-name-btn:hover { color: var(--jade-bright); background: transparent; border: none; }
+  .resume-row .yaml-name-input {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-0);
+    background: var(--bg-2);
+    border: 1px solid var(--jade);
+    padding: 3px 6px;
+    width: 100%;
+    box-sizing: border-box;
+    outline: none;
+  }
+
   /* overlay panel */
   .overlay-panel { display: flex; flex-direction: column; gap: 14px; }
   .panel-intro {

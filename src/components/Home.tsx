@@ -6,6 +6,7 @@ import { db, idbGet } from "../lib/idb.js";
 import { GB_ROM_SIZE, VANILLA_STORE } from "../lib/constants.js";
 import {
   handleYamlDrop, handleRomDrop, continueToRom, resumeSession, forgetSession, resetTransient,
+  useSavedYaml, renameSavedYaml, forgetSavedYaml,
 } from "../actions.js";
 import { Dropzone } from "./Dropzone.jsx";
 
@@ -59,10 +60,74 @@ function ResumeList() {
   );
 }
 
+function SavedYamlsList() {
+  const [editing, setEditing] = createSignal<string | null>(null);
+  const [draft, setDraft] = createSignal("");
+
+  const beginEdit = (hash: string, current: string) => {
+    setEditing(hash);
+    setDraft(current);
+  };
+  const commitEdit = (hash: string) => {
+    renameSavedYaml(hash, draft());
+    setEditing(null);
+  };
+
+  return (
+    <Show when={app.yamls.length > 0}>
+      <div class="resume-list yaml-list">
+        <div class="resume-head">
+          <span class="eyebrow">saved yamls</span>
+          <span class="resume-head-hint">
+            <span class="hint-desktop">click name to rename</span>
+            <span class="hint-touch">tap name to rename</span>
+          </span>
+        </div>
+        <div>
+          <For each={app.yamls}>{(y) => (
+            <div class="resume-row">
+              <span class="slot">{y.slotName || "?"}</span>
+              <span class="id yaml-name">
+                <Show
+                  when={editing() === y.hash}
+                  fallback={
+                    <button class="yaml-name-btn" onClick={() => beginEdit(y.hash, y.name)} title="rename">{y.name}</button>
+                  }
+                >
+                  <input
+                    class="yaml-name-input"
+                    value={draft()}
+                    autofocus
+                    onInput={(e) => setDraft(e.currentTarget.value)}
+                    onBlur={() => commitEdit(y.hash)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitEdit(y.hash);
+                      else if (e.key === "Escape") setEditing(null);
+                    }}
+                  />
+                </Show>
+              </span>
+              <span class="meta">
+                <em>{(y.size / 1024).toFixed(1)} KB</em>
+                {" "}{formatAge(Date.now() - y.savedAt)}
+              </span>
+              <span class="actions">
+                <button class="btn-primary resume" onClick={() => useSavedYaml(y.hash)}>use</button>
+                <button class="forget" title="remove from this device" onClick={() => forgetSavedYaml(y.hash)}>forget</button>
+              </span>
+            </div>
+          )}</For>
+        </div>
+      </div>
+    </Show>
+  );
+}
+
 function OptionsPane() {
   return (
     <div class="home-pane" data-pane="options">
       <ResumeList />
+      <SavedYamlsList />
       <div class="home-card">
         <div class="card-head"><span class="eyebrow">new seed</span></div>
         <Dropzone id="dz-yaml" inputId="yaml-file" accept=".yaml,.yml,.apcrystal,.apcrystalpre,.zip,text/yaml" onFile={handleYamlDrop}>

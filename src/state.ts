@@ -7,6 +7,7 @@
 import { createStore } from "solid-js/store";
 import { createSignal } from "solid-js";
 import { loadSessions } from "./lib/sessions.js";
+import { loadYamls } from "./lib/yamls.js";
 
 const HOST_PREF_KEY = "crystal-ap-host-pref";
 
@@ -20,6 +21,7 @@ export const [app, setApp] = createStore({
   hosted: null,        // {room_url, ws_url, host, port}
   patchedRom: null,    // ArrayBuffer
   sessions: loadSessions(),
+  yamls: loadYamls(),
 
   hostPref: localStorage.getItem(HOST_PREF_KEY) === "on",
 
@@ -35,6 +37,7 @@ export function persistHostPref(on) {
 }
 
 export function refreshSessions() { setApp("sessions", loadSessions()); }
+export function refreshYamls()    { setApp("yamls", loadYamls()); }
 
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 

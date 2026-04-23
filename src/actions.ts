@@ -3,12 +3,13 @@
 // (state.js) and talk to the framework-agnostic lib/ modules.
 
 import { unwrap } from "solid-js/store";
-import { app, setApp, refreshSessions } from "./state.js";
-import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
+import { app, setApp, refreshSessions, refreshYamls } from "./state.js";
+import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, YAML_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
 import { db, idbGet, idbPut, idbDel } from "./lib/idb.js";
 import { loadSessions, saveSessions, recordSession as recordSessionPure, removeSession } from "./lib/sessions.js";
+import { recordYaml, renameYaml as renameYamlPure, removeYaml, sha256Hex, loadYamls } from "./lib/yamls.js";
 import { tryHostMultidata } from "./lib/host.js";
 import { apWorker } from "./lib/ap-worker.js";
 import { bindGamepad } from "./lib/gamepad.js";
@@ -291,8 +292,61 @@ export async function handleYamlDrop(f: File) {
   const slot = extractSlotNameFromYaml(text);
   if (slot) { setApp("slotName", slot); log(`parsed slot name: ${slot}`); }
 
+  await saveYamlToLibrary(text, f.name, slot);
+
   setStep("generating");
   runGeneration(text);
+}
+
+async function saveYamlToLibrary(text: string, filename: string, slot: string | null) {
+  try {
+    const hash = await sha256Hex(text);
+    const existing = loadYamls().find(y => y.hash === hash);
+    const dbc = await db();
+    if (dbc) await idbPut(dbc, hash, { text }, YAML_STORE).catch((err) => logWarn(`save yaml text failed: ${err}`));
+    recordYaml({
+      hash,
+      name: existing?.name ?? filename,
+      slotName: slot,
+      size: text.length,
+      savedAt: Date.now(),
+    });
+    refreshYamls();
+    if (existing) log(`YAML already saved as "${existing.name}" — timestamp refreshed`);
+    else logOk(`saved YAML "${filename}" to library`);
+  } catch (err: any) {
+    logWarn(`could not save YAML to library: ${err.message || err}`);
+  }
+}
+
+export async function useSavedYaml(hash: string) {
+  const dbc = await db();
+  const stored = dbc ? await idbGet<{ text: string }>(dbc, hash, YAML_STORE).catch(() => null) : null;
+  if (!stored?.text) {
+    logErr(`YAML text missing from storage — forgetting entry`);
+    forgetSavedYaml(hash);
+    return;
+  }
+  setApp("yamlErr", null);
+  setApp("seedId", (crypto.randomUUID?.() || Math.random().toString(36).slice(2)).replace(/-/g, "").slice(0, 12));
+  const slot = extractSlotNameFromYaml(stored.text);
+  if (slot) { setApp("slotName", slot); log(`parsed slot name: ${slot}`); }
+  setStep("generating");
+  runGeneration(stored.text);
+}
+
+export function renameSavedYaml(hash: string, newName: string) {
+  const trimmed = newName.trim();
+  if (!trimmed) return;
+  renameYamlPure(hash, trimmed);
+  refreshYamls();
+}
+
+export async function forgetSavedYaml(hash: string) {
+  removeYaml(hash);
+  refreshYamls();
+  const dbc = await db();
+  if (dbc) idbDel(dbc, hash, YAML_STORE).catch(() => {});
 }
 
 export async function handleRomDrop(f: File) {
