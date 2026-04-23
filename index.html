@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>crystal.ap</title>
 <style>
+  @font-face {
+    font-family: "Pokemon GB";
+    src: url("/fonts/PokemonGb.ttf") format("truetype");
+    font-display: swap;
+  }
   :root {
     /* Palette lifted from the Pokemon Crystal title screen:
        near-black background, cream logo fill, lavender/purple (ARCHIPELAGO
@@ -80,10 +85,9 @@
   .nav-spacer { flex: 1; }
   .brand {
     display: flex; align-items: baseline; gap: 10px;
-    font-family: var(--display);
-    font-style: italic;
-    font-size: 18px;
-    letter-spacing: 0.01em;
+    font-family: "Pokemon GB", var(--mono);
+    font-size: 14px;
+    letter-spacing: 0;
     color: var(--ink-0);
     text-decoration: none;
     cursor: pointer;
@@ -193,6 +197,12 @@
     overflow-wrap: break-word;
   }
   .blurb h1 em { font-style: italic; color: var(--coral); }
+  .blurb-title {
+    font-family: "Pokemon GB", var(--mono);
+    font-size: clamp(16px, 1.6vw, 21px);
+    letter-spacing: 0;
+    line-height: 1.2;
+  }
   /* Highlights inherit the surrounding font so baselines don't shift —
      only the color changes. Cream against the lavender body gives a proper
      contrast bump. Links get the same cream + a subtle underline hint. */
@@ -1291,7 +1301,7 @@
     .step { padding: 20px 12px 28px; }
     .home-card { padding: 14px; }
     .nav { padding: 10px 12px; font-size: 12px; }
-    .brand { font-size: 16px; }
+    .brand { font-size: 12px; }
     .session-chip { padding: 4px 10px; font-size: 9px; letter-spacing: 0.16em; }
 
     /* Shrink the gamepad so it fits on 375px viewports. */
