@@ -753,6 +753,53 @@
   /* Anchor .vol to the right so the slider's position stays stable when
      the label text changes width (e.g. "vol" <-> "mute"). */
   .screen-label-bottom .vol { margin-left: auto; }
+
+  .fs-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--ink-2);
+    cursor: pointer;
+    transition: color 140ms;
+  }
+  .fs-btn:hover { background: transparent; border-color: transparent; color: var(--jade-bright); }
+  .fs-btn svg { width: 16px; height: 16px; display: block; }
+
+  /* When the screen-frame is the fullscreen element, blow the canvas up
+     to fill while preserving the 160:144 aspect. The label bar stays as
+     a thin overlay at the bottom so volume + exit are still reachable. */
+  .screen-frame:fullscreen {
+    width: 100vw; height: 100vh;
+    padding: 0; gap: 0;
+    background: #000;
+    border: none;
+    justify-content: center;
+  }
+  .screen-frame:fullscreen::before,
+  .screen-frame:fullscreen::after { display: none; }
+  .screen-frame:fullscreen .screen-wrap {
+    flex: 1 1 auto;
+    width: 100%;
+    padding: 0;
+    border: none;
+    box-shadow: none;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .screen-frame:fullscreen #screen {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .screen-frame:fullscreen .screen-label-bottom {
+    flex: 0 0 auto;
+    padding: 8px 16px;
+    background: rgba(0,0,0,0.6);
+  }
   .vol {
     display: inline-flex; align-items: center; gap: 6px;
     cursor: pointer;

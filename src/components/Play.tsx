@@ -5,8 +5,16 @@ import { isPatchName } from "../lib/zip.js";
 import { connectSession, disconnectSession } from "../actions.js";
 
 function ScreenFrame() {
+  let frameRef!: HTMLDivElement;
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    } else {
+      frameRef.requestFullscreen?.();
+    }
+  };
   return (
-    <div class="screen-frame">
+    <div class="screen-frame" ref={frameRef}>
       <div class="screen-wrap">
         <canvas id="screen" width="160" height="144"></canvas>
       </div>
@@ -16,6 +24,11 @@ function ScreenFrame() {
           <span class="vol-label" id="vol-label">vol</span>
           <input type="range" id="vol" min="0" max="100" value="50" />
         </label>
+        <button class="fs-btn" onClick={toggleFullscreen} aria-label="fullscreen" title="fullscreen">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M4 9V4h5v2H6v3H4zm11-5h5v5h-2V6h-3V4zM4 15h2v3h3v2H4v-5zm16 0v5h-5v-2h3v-3h2z"/>
+          </svg>
+        </button>
       </div>
     </div>
   );
