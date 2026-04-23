@@ -1,4 +1,4 @@
-import { For, createEffect } from "solid-js";
+import { For, createEffect, createMemo } from "solid-js";
 import { app, logLines } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
@@ -13,8 +13,23 @@ function ScreenFrame() {
       frameRef.requestFullscreen?.();
     }
   };
+  // Last N log entries — rendered as an overlay only while fullscreen.
+  const tailLines = createMemo(() => {
+    const all = logLines();
+    return all.slice(Math.max(0, all.length - 8));
+  });
   return (
     <div class="screen-frame" ref={frameRef}>
+      <div class="fs-log-overlay" aria-hidden="true">
+        <For each={tailLines()}>{(entry) => (
+          <div class={`fs-log-line log-${entry.kind}`}>
+            <span class="fs-log-time">{entry.time}</span>{" "}
+            {entry.ansi !== undefined
+              ? <span innerHTML={ansiToHtml(entry.ansi)} />
+              : <span>{entry.text}</span>}
+          </div>
+        )}</For>
+      </div>
       <div class="screen-wrap">
         <canvas id="screen" width="160" height="144"></canvas>
       </div>

@@ -805,6 +805,37 @@
     padding: 8px 16px;
     background: rgba(0,0,0,0.6);
   }
+
+  /* Event log overlay: only visible in fullscreen, anchored top-left,
+     does not intercept pointer events so the canvas still gets input. */
+  .fs-log-overlay { display: none; }
+  .screen-frame:fullscreen .fs-log-overlay {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    max-width: min(520px, 40vw);
+    pointer-events: none;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--ink-0);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+    z-index: 2;
+  }
+  .fs-log-line {
+    padding: 2px 6px;
+    background: rgba(0,0,0,0.45);
+    border-left: 2px solid var(--jade);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .fs-log-line .fs-log-time { color: var(--ink-2); margin-right: 4px; }
+  .fs-log-line.log-err  { border-left-color: var(--coral); }
+  .fs-log-line.log-warn { border-left-color: var(--amber); }
+  .fs-log-line.log-ok   { border-left-color: var(--jade-bright); }
   .vol {
     display: inline-flex; align-items: center; gap: 6px;
     cursor: pointer;
