@@ -80,9 +80,9 @@ export async function resumeSession(id: string) {
 
   const dbc = await db();
   const cachedRom = dbc ? await idbGet<ArrayBuffer>(dbc, id, ROM_STORE).catch(() => null) : null;
+  const savedArtifacts = dbc ? await idbGet<Record<string, Uint8Array>>(dbc, id, ARTIFACTS_STORE).catch((err) => { logWarn(`read artifacts failed: ${err}`); return null; }) : null;
   if (cachedRom && cachedRom.byteLength === GB_ROM_SIZE) {
     setApp("patchedRom", cachedRom);
-    const savedArtifacts = dbc ? await idbGet<Record<string, Uint8Array>>(dbc, id, ARTIFACTS_STORE).catch((err) => { logWarn(`read artifacts failed: ${err}`); return null; }) : null;
     if (savedArtifacts && Object.keys(savedArtifacts).length > 0) {
       setApp("artifacts", savedArtifacts);
     } else {
@@ -93,7 +93,16 @@ export async function resumeSession(id: string) {
     await bootEmulatorAndUi();
     return;
   }
-  logErr(`no cached ROM for ${id} — drop your YAML again to regenerate`);
+  // No patched ROM yet — if we still have the generation artifacts, drop
+  // the user back into the ROM-upload step (or straight to patching if the
+  // vanilla ROM is already cached).
+  if (savedArtifacts && Object.keys(savedArtifacts).length > 0) {
+    setApp("artifacts", savedArtifacts);
+    logOk(`resumed ${id} — need ROM to patch`);
+    await continueToRom();
+    return;
+  }
+  logErr(`no cached artifacts for ${id} — drop your YAML again to regenerate`);
 }
 
 // -----------------------------------------------------------------------------
@@ -137,6 +146,26 @@ async function runGeneration(yamlText: string) {
   clearInterval(elapsedTimer);
   setApp("gen", { visible: false, status: hosted ? "ready · hosted" : "ready", done: true });
   logOk(hosted ? `hosted on ${hosted.host}:${hosted.port}` : "no archipelago.gg room (skipped)");
+
+  // Persist artifacts + record the session now so a reload before
+  // patching can still resume from the ROM step.
+  if (app.seedId) {
+    recordSessionPure({
+      id: app.seedId,
+      slot: app.slotName,
+      hosted,
+      romCached: false,
+    });
+    refreshSessions();
+    const dbc = await db();
+    if (dbc) {
+      try {
+        await idbPut(dbc, app.seedId, unwrap(artifacts), ARTIFACTS_STORE);
+      } catch (err) {
+        logWarn("cache artifacts failed: " + err);
+      }
+    }
+  }
 }
 
 // -----------------------------------------------------------------------------

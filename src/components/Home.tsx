@@ -41,7 +41,7 @@ function ResumeList() {
               <span class="id">
                 {s.id}
                 <Show when={s.romCached}>
-                  <span class="rom-cached" title="patched ROM cached locally — resume skips the ROM upload">ROM</span>
+                  <span class="rom-cached" title="patched ROM cached locally">ROM</span>
                 </Show>
               </span>
               <span class="meta">
