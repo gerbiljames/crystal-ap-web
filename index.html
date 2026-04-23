@@ -781,6 +781,10 @@
   .screen-frame:fullscreen::after { display: none; }
   .screen-frame:fullscreen .screen-wrap {
     flex: 1 1 auto;
+    /* Override the default flex min-height:auto so the wrap can shrink
+       below the canvas's intrinsic 144px when needed. */
+    min-height: 0;
+    min-width: 0;
     width: 100%;
     padding: 0;
     border: none;
@@ -789,6 +793,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
   }
   .screen-frame:fullscreen #screen {
     width: 100%;
