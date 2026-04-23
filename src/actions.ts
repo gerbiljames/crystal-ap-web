@@ -2,6 +2,7 @@
 // patching, session connect/disconnect. These mutate the reactive store
 // (state.js) and talk to the framework-agnostic lib/ modules.
 
+import { unwrap } from "solid-js/store";
 import { app, setApp, refreshSessions } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
@@ -80,8 +81,12 @@ export async function resumeSession(id: string) {
   const cachedRom = dbc ? await idbGet<ArrayBuffer>(dbc, id, ROM_STORE).catch(() => null) : null;
   if (cachedRom && cachedRom.byteLength === GB_ROM_SIZE) {
     setApp("patchedRom", cachedRom);
-    const savedArtifacts = dbc ? await idbGet<Record<string, Uint8Array>>(dbc, id, ARTIFACTS_STORE).catch(() => null) : null;
-    if (savedArtifacts) setApp("artifacts", savedArtifacts);
+    const savedArtifacts = dbc ? await idbGet<Record<string, Uint8Array>>(dbc, id, ARTIFACTS_STORE).catch((err) => { logWarn(`read artifacts failed: ${err}`); return null; }) : null;
+    if (savedArtifacts && Object.keys(savedArtifacts).length > 0) {
+      setApp("artifacts", savedArtifacts);
+    } else {
+      logWarn(`no cached artifacts for ${id} — download links will be empty, regenerate to restore them`);
+    }
     setStep("play");
     logOk(`resumed ${id} with cached ROM`);
     await bootEmulatorAndUi();
@@ -185,11 +190,18 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
     refreshSessions();
     const dbc = await db();
     if (dbc) {
-      idbPut(dbc, app.seedId, patched.buffer.slice(0), ROM_STORE).catch(err => logWarn("cache patched rom failed: " + err));
-      idbPut(dbc, "rom", vanillaBuf, VANILLA_STORE).catch(err => logWarn("cache vanilla rom failed: " + err));
-      if (app.artifacts) {
-        idbPut(dbc, app.seedId, app.artifacts, ARTIFACTS_STORE).catch(err => logWarn("cache artifacts failed: " + err));
-      }
+      // Await so we don't race a tab close; without this, a quick reload
+      // after a fresh patch can resume with a cached ROM but no artifacts,
+      // leaving the play screen without download links.
+      await Promise.all([
+        idbPut(dbc, app.seedId, patched.buffer.slice(0), ROM_STORE).catch(err => logWarn("cache patched rom failed: " + err)),
+        idbPut(dbc, "rom", vanillaBuf, VANILLA_STORE).catch(err => logWarn("cache vanilla rom failed: " + err)),
+        app.artifacts
+          // Solid store values are proxies; hand IDB the raw object so
+          // structured-clone doesn't trip on proxy internals.
+          ? idbPut(dbc, app.seedId, unwrap(app.artifacts), ARTIFACTS_STORE).catch(err => logWarn("cache artifacts failed: " + err))
+          : Promise.resolve(),
+      ]);
     }
     setStep("play");
     setApp("rom", "progressText", null);
