@@ -54,6 +54,7 @@ export const apWorker = {
   generate:        (yaml: string, cb?: ProgressCb)                     => call("generate", { yaml }, [], cb ?? null),
   startSession:    (server: string, slot: string, password: string)    => call("session-start", { server, slot, password }),
   stopSession:     ()                                                  => call("session-stop"),
+  sendInput:       (text: string)                                      => fire("session-input", { text }),
   sendBhResponse:  (reqId: number, payload: string)                    => fire("bh-res", { reqId, payload }),
   setBhHandler:    (fn: typeof onBhReq)                                => { onBhReq = fn; },
   setPrintHandler: (fn: typeof onPrint)                                => { onPrint = fn; },

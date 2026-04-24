@@ -231,6 +231,12 @@ self.onmessage = async (ev) => {
     } else if (cmd === "session-stop") {
       await sessionStop(id);
       post({ id, ok: true });
+    } else if (cmd === "session-input") {
+      // Dispatch a line of user input through the same ClientCommandProcessor
+      // that console_loop would — handles both /commands and plain chat.
+      if (!sessionTasks) return;
+      const text = ev.data.text || "";
+      pyodide.globals.get("_cmdproc")(text);
     } else if (cmd === "bh-res") {
       // Main-thread's response to a previously sent bizhawk request.
       pyodide.globals.get("_bh_resolve")(ev.data.reqId, ev.data.payload);
@@ -425,6 +431,8 @@ ctx = BizHawkClientContext(_server_arg, _password_arg)
 ctx.auth = ${j(slot)}
 _bh_tasks["server"]  = asyncio.create_task(server_loop(ctx), name="ServerLoop")
 _bh_tasks["watcher"] = asyncio.create_task(_game_watcher(ctx), name="GameWatcher")
+_cmdproc = ctx.command_processor(ctx)
+globals()["_cmdproc"] = _cmdproc
 print("session started")
 `;
 }

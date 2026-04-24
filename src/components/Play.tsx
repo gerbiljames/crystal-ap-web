@@ -6,6 +6,7 @@ import { connectSession, disconnectSession } from "../actions.js";
 import { db, idbGet } from "../lib/idb.js";
 import { SAVE_STORE } from "../lib/constants.js";
 import { logErr, logWarn } from "../lib/log.js";
+import { apWorker } from "../lib/ap-worker.js";
 
 function ScreenFrame() {
   let frameRef!: HTMLDivElement;
@@ -106,6 +107,7 @@ function Gamepad() {
 
 function LogArea() {
   let wrapRef;
+  let inputRef: HTMLInputElement | undefined;
   let atBottom = true;
   const onScroll = () => {
     atBottom = wrapRef.scrollHeight - wrapRef.clientHeight - wrapRef.scrollTop < 16;
@@ -115,6 +117,18 @@ function LogArea() {
     if (!wrapRef) return;
     if (atBottom) queueMicrotask(() => { wrapRef.scrollTop = wrapRef.scrollHeight; });
   });
+  const submitInput = () => {
+    if (!inputRef) return;
+    const text = inputRef.value.trim();
+    if (!text) return;
+    if (app.session.state !== "live") { logWarn("not connected — can't send"); return; }
+    inputRef.value = "";
+    try { apWorker.sendInput(text); }
+    catch (err: any) { logErr("send failed: " + (err?.message || err)); }
+  };
+  const onKey = (ev: KeyboardEvent) => {
+    if (ev.key === "Enter") { ev.preventDefault(); submitInput(); }
+  };
   return (
     <div class="log-area">
       <div class="log-heading">event log</div>
@@ -130,6 +144,26 @@ function LogArea() {
             </>
           )}</For>
         </pre>
+      </div>
+      <div class="log-input-row">
+        <input
+          ref={inputRef}
+          class="log-input"
+          type="text"
+          autocomplete="off"
+          spellcheck={false}
+          placeholder={app.session.state === "live" ? "send message or !command…" : "connect to send messages"}
+          disabled={app.session.state !== "live"}
+          onKeyDown={onKey}
+        />
+        <button
+          class="log-send-btn"
+          type="button"
+          disabled={app.session.state !== "live"}
+          onClick={submitInput}
+          aria-label="send"
+          title="send"
+        >send</button>
       </div>
     </div>
   );

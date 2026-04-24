@@ -757,7 +757,7 @@
     font-size: 10px;
     letter-spacing: 0.22em;
     text-transform: uppercase;
-    color: var(--ink-2);
+    color: var(--ink-1);
   }
   .screen-label-bottom .screen-keys { flex: 1; }
   /* Anchor .vol to the right so the slider's position stays stable when
@@ -770,7 +770,7 @@
     padding: 0;
     background: transparent;
     border: 1px solid transparent;
-    color: var(--ink-2);
+    color: var(--ink-1);
     cursor: pointer;
     transition: color 140ms;
   }
@@ -1012,12 +1012,50 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
-  #log .log-time { color: var(--ink-3); }
+  #log .log-time { color: var(--ink-2); }
   #log .log-info { color: var(--ink-0); }
   #log .log-warn { color: var(--amber); }
   #log .log-err  { color: var(--coral); }
   #log .log-ok   { color: var(--jade-bright); }
   #log .log-chat { color: var(--ink-0); background: rgba(149,123,194,0.05); padding: 0 2px; }
+
+  .log-input-row {
+    display: flex;
+    border: 1px solid var(--line);
+    margin-top: -1px;
+    position: relative;
+    background: var(--bg-1);
+  }
+  .log-input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--ink-0);
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.6;
+    padding: 8px 12px;
+    outline: none;
+    min-width: 0;
+  }
+  .log-input::placeholder { color: var(--ink-2); opacity: 1; }
+  .log-input-row:focus-within { border-color: var(--jade); }
+  .log-input:disabled { color: var(--ink-2); cursor: not-allowed; }
+  .log-send-btn {
+    border: none;
+    border-left: 1px solid var(--line);
+    background: transparent;
+    color: var(--ink-0);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    padding: 0 14px;
+    cursor: pointer;
+    transition: color 140ms, background 140ms;
+  }
+  .log-send-btn:hover:not(:disabled) { color: var(--jade-bright); background: rgba(149,123,194,0.08); }
+  .log-send-btn:disabled { color: var(--ink-2); cursor: not-allowed; }
 
   /* ---------- on-screen gamepad (touch / narrow) ---------- */
   .gamepad {
