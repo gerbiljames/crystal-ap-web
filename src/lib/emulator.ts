@@ -179,7 +179,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     // yet accumulated a savestate; if a savestate exists, applying it second
     // overwrites everything including cart RAM to the exact prior moment.
     const existingSram = await idbGet<ArrayBuffer>(saveDb, romHash).catch(() => null);
-    if (existingSram) { loadSram(new Uint8Array(existingSram)); logOk(`loaded SRAM (${existingSram.byteLength} bytes) from prior session`); }
+    if (existingSram) { loadSram(new Uint8Array(existingSram)); logOk("loaded SRAM from prior session"); }
     else { log("fresh save slot"); }
     const existingState = await idbGet<ArrayBuffer>(saveDb, romHash, STATE_STORE).catch(() => null);
     if (existingState && loadState(new Uint8Array(existingState))) logOk("resumed from savestate");
