@@ -139,41 +139,38 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
   // serialised separately by binjgb, so we persist both. SRAM alone lets the
   // user download a vanilla .sav; the savestate is what actually resumes them
   // mid-step, mid-battle, mid-dialogue.
+  //
+  // Both file_data buffers are allocated once and reused — the wasm heap is
+  // fixed at 16MB and mallocing ~200KB savestate buffers every 2s fragments
+  // it into OOM within a few minutes.
+  const sramFd  = Module._ext_ram_file_data_new(e);
+  const stateFd = Module._state_file_data_new(e);
+
   const extractSram = () => {
-    const fd = Module._ext_ram_file_data_new(e);
-    Module._emulator_write_ext_ram(e, fd);
-    const p = Module._get_file_data_ptr(fd);
-    const l = Module._get_file_data_size(fd);
-    const out = new Uint8Array(Module.HEAP8.buffer, p, l).slice();
-    Module._file_data_delete(fd);
-    return out;
+    Module._emulator_write_ext_ram(e, sramFd);
+    const p = Module._get_file_data_ptr(sramFd);
+    const l = Module._get_file_data_size(sramFd);
+    return new Uint8Array(Module.HEAP8.buffer, p, l).slice();
   };
   const loadSram = (bytes) => {
-    const fd = Module._ext_ram_file_data_new(e);
-    const l = Module._get_file_data_size(fd);
-    if (bytes.length !== l) { Module._file_data_delete(fd); logWarn(`save size mismatch, skipping load`); return; }
-    new Uint8Array(Module.HEAP8.buffer, Module._get_file_data_ptr(fd), l).set(bytes);
-    Module._emulator_read_ext_ram(e, fd);
-    Module._file_data_delete(fd);
+    const l = Module._get_file_data_size(sramFd);
+    if (bytes.length !== l) { logWarn("save size mismatch, skipping load"); return; }
+    new Uint8Array(Module.HEAP8.buffer, Module._get_file_data_ptr(sramFd), l).set(bytes);
+    Module._emulator_read_ext_ram(e, sramFd);
   };
   const extractState = () => {
-    const fd = Module._state_file_data_new(e);
-    Module._emulator_write_state(e, fd);
-    const p = Module._get_file_data_ptr(fd);
-    const l = Module._get_file_data_size(fd);
-    const out = new Uint8Array(Module.HEAP8.buffer, p, l).slice();
-    Module._file_data_delete(fd);
-    return out;
+    Module._emulator_write_state(e, stateFd);
+    const p = Module._get_file_data_ptr(stateFd);
+    const l = Module._get_file_data_size(stateFd);
+    return new Uint8Array(Module.HEAP8.buffer, p, l).slice();
   };
   const loadState = (bytes) => {
-    const fd = Module._state_file_data_new(e);
-    const l = Module._get_file_data_size(fd);
+    const l = Module._get_file_data_size(stateFd);
     // State size is binjgb-version sensitive — mismatch means a build bump
     // happened between sessions, so drop it rather than corrupt the emulator.
-    if (bytes.length !== l) { Module._file_data_delete(fd); logWarn("savestate size mismatch, ignoring it"); return false; }
-    new Uint8Array(Module.HEAP8.buffer, Module._get_file_data_ptr(fd), l).set(bytes);
-    Module._emulator_read_state(e, fd);
-    Module._file_data_delete(fd);
+    if (bytes.length !== l) { logWarn("savestate size mismatch, ignoring it"); return false; }
+    new Uint8Array(Module.HEAP8.buffer, Module._get_file_data_ptr(stateFd), l).set(bytes);
+    Module._emulator_read_state(e, stateFd);
     return true;
   };
   if (saveDb) {
