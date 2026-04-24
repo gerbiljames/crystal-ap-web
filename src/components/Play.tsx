@@ -2,7 +2,7 @@ import { For, createEffect, createMemo, createSignal, onCleanup } from "solid-js
 import { app, logLines, overlayPrefs } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
-import { connectSession, disconnectSession } from "../actions.js";
+import { connectSession, disconnectSession, disposeEmulator } from "../actions.js";
 import { db, idbGet } from "../lib/idb.js";
 import { SAVE_STORE } from "../lib/constants.js";
 import { logErr, logWarn } from "../lib/log.js";
@@ -22,6 +22,10 @@ function ScreenFrame() {
   const [now, setNow] = createSignal(Date.now());
   const tick = setInterval(() => setNow(Date.now()), 1000);
   onCleanup(() => clearInterval(tick));
+
+  // When this frame unmounts (HMR, route-like teardown), dispose the
+  // emulator so its ticker/interval/listeners don't outlive the canvas.
+  onCleanup(() => disposeEmulator());
 
   const FADE_SEC = 0.8;
 

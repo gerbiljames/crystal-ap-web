@@ -15,7 +15,7 @@ import { apWorker } from "./lib/ap-worker.js";
 import { bindGamepad } from "./lib/gamepad.js";
 import { bindController } from "./lib/controller.js";
 import { initPlayLayout } from "./lib/layout.js";
-import { bootEmulator } from "./lib/emulator.js";
+import { bootEmulator, type EmulatorHandle } from "./lib/emulator.js";
 import { installBizHawkBridge } from "./lib/bizhawk.js";
 
 // -----------------------------------------------------------------------------
@@ -410,7 +410,22 @@ export async function handleRomDrop(f: File) {
 // -----------------------------------------------------------------------------
 // play-step boot + session connect
 // -----------------------------------------------------------------------------
+let currentEmu: EmulatorHandle | null = null;
+
+// Called on canvas unmount (e.g. HMR replacing <ScreenFrame/>) so the worker
+// ticker, save interval, keyboard listeners, and wasm allocations don't
+// outlive the DOM they were bound to and keep emitting audio into the void.
+export function disposeEmulator() {
+  if (!currentEmu) return;
+  try { currentEmu.dispose(); } catch {}
+  currentEmu = null;
+  try { delete (window as any).ap; } catch {}
+}
+
 async function bootEmulatorAndUi() {
+  // Clear any prior instance so consecutive boots (session reset, HMR, etc.)
+  // don't leak.
+  disposeEmulator();
   const saveDb = await db();
   const emu = await bootEmulator({
     canvas: $<HTMLCanvasElement>("#screen"),
@@ -418,6 +433,7 @@ async function bootEmulatorAndUi() {
     saveDb,
   });
   if (!emu) return;
+  currentEmu = emu;
   const { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash, setVolume } = emu;
 
   if (app.seedId) {

@@ -29,6 +29,7 @@ export interface EmulatorHandle {
   romHash: string;
   DOMAIN_SIZE: Record<string, number>;
   setVolume: (v: number) => void;
+  dispose: () => void;
 }
 
 export interface BootEmulatorOptions {
@@ -191,7 +192,9 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
   // the natural browser repaint cadence, which is all that matters
   // visually — and audio is gated separately in pushAudio.
   let lastTickSec = 0, leftoverTicks = 0, sramDirty = false, stateDirty = false;
+  let disposed = false;
   function step() {
+    if (disposed) return;
     const nowSec = performance.now() / 1000;
     const deltaSec = Math.max(nowSec - (lastTickSec || nowSec), 0);
     const deltaTicks = Math.min(deltaSec, MAX_UPDATE_SEC) * CPU_TICKS_PER_SECOND;
@@ -221,12 +224,16 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
   const ticker = new Worker(tickerUrl);
   ticker.onmessage = step;
   ticker.postMessage("start");
-  window.addEventListener("pagehide", () => ticker.postMessage("stop"));
+  const onTickerPagehide = () => ticker.postMessage("stop");
+  window.addEventListener("pagehide", onTickerPagehide);
   logOk("emulator running");
 
   // --- debounced SRAM + savestate commit ---
+  let saveTimer: ReturnType<typeof setInterval> | null = null;
+  let onSavePagehide: (() => void) | null = null;
   if (saveDb) {
-    setInterval(async () => {
+    saveTimer = setInterval(async () => {
+      if (disposed) return;
       if (sramDirty) {
         sramDirty = false;
         try { await idbPut(saveDb, romHash, extractSram()); }
@@ -238,10 +245,11 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
         catch (err) { logErr("savestate save failed: " + err); stateDirty = true; }
       }
     }, 2000);
-    window.addEventListener("pagehide", () => {
+    onSavePagehide = () => {
       try { if (sramDirty)  idbPut(saveDb, romHash, extractSram()); } catch {}
       try { if (stateDirty) idbPut(saveDb, romHash, extractState(), STATE_STORE); } catch {}
-    });
+    };
+    window.addEventListener("pagehide", onSavePagehide);
   }
 
   // --- keyboard (ignore text inputs) ---
@@ -252,8 +260,38 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     Enter: "_set_joyp_start", Tab: "_set_joyp_select",
   };
   const isTextTarget = t => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
-  window.addEventListener("keydown", ev => { if (isTextTarget(ev.target)) return; const fn = keyMap[ev.code]; if (fn) { Module[fn](e, true); ev.preventDefault(); } });
-  window.addEventListener("keyup",   ev => { if (isTextTarget(ev.target)) return; const fn = keyMap[ev.code]; if (fn) { Module[fn](e, false); ev.preventDefault(); } });
+  const onKeyDown = (ev: KeyboardEvent) => { if (isTextTarget(ev.target)) return; const fn = keyMap[ev.code]; if (fn) { Module[fn](e, true); ev.preventDefault(); } };
+  const onKeyUp   = (ev: KeyboardEvent) => { if (isTextTarget(ev.target)) return; const fn = keyMap[ev.code]; if (fn) { Module[fn](e, false); ev.preventDefault(); } };
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup",   onKeyUp);
+
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    // Tear down in the reverse order we set things up in: stop future work
+    // before freeing the wasm resources it was touching.
+    ticker.postMessage("stop");
+    ticker.terminate();
+    URL.revokeObjectURL(tickerUrl);
+    window.removeEventListener("pagehide", onTickerPagehide);
+    if (saveTimer) clearInterval(saveTimer);
+    if (onSavePagehide) {
+      // One last flush so we don't lose the last few seconds of dirty state.
+      try { onSavePagehide(); } catch {}
+      window.removeEventListener("pagehide", onSavePagehide);
+    }
+    window.removeEventListener("keydown", onKeyDown);
+    window.removeEventListener("keyup",   onKeyUp);
+    // Muting pending AudioBufferSourceNodes isn't possible once they're
+    // scheduled, but silencing the gain applied to future buffers stops
+    // anything that would have started after this tick.
+    audioMuted = true;
+    try { Module._file_data_delete(sramFd); }  catch {}
+    try { Module._file_data_delete(stateFd); } catch {}
+    try { Module._joypad_delete(joypadBufferPtr); } catch {}
+    try { Module._emulator_delete(e); } catch {}
+    try { Module._free(romPtr); } catch {}
+  };
 
   return {
     e, Module,
@@ -262,5 +300,6 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     romHash,
     DOMAIN_SIZE,
     setVolume,
+    dispose,
   };
 }
