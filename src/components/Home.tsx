@@ -16,7 +16,7 @@ function Blurb() {
       <h1><span class="blurb-title">Pokémon Crystal Archipelago</span><br /><em>in your browser.</em></h1>
       <p>A full multiworld client for <a href="https://github.com/gerbiljames/Archipelago-Crystal/tree/pokecrystal" target="_blank" rel="noopener">Pokémon Crystal</a>. You provide a YAML and your own vanilla Crystal ROM; generation and patching happen locally.</p>
       <ul class="blurb-list">
-        <li>Generation and ROM patching run in your tab via <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>.</li>
+        <li>Generation and ROM patching run in your browser via <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>.</li>
         <li>Your ROM never leaves this browser. It's stored locally so you don't need to re-provide it.</li>
         <li>Emulation by <a href="https://github.com/binji/binjgb" target="_blank" rel="noopener">binjgb</a>. Saves persist per seed.</li>
         <li>The multiworld can be hosted on <a href="https://archipelago.gg" target="_blank" rel="noopener">archipelago.gg</a> via a tiny proxy.</li>
@@ -129,7 +129,7 @@ function OptionsPane() {
       <ResumeList />
       <SavedYamlsList />
       <div class="home-card">
-        <div class="card-head"><span class="eyebrow">new seed</span></div>
+        <div class="card-head"><span class="eyebrow">generate or import seed</span></div>
         <Dropzone id="dz-yaml" inputId="yaml-file" accept=".yaml,.yml,.apcrystal,.apcrystalpre,.zip,text/yaml" onFile={handleYamlDrop}>
           <div class="dz-mark">◇</div>
           <div class="dz-primary">Drop YAML, <b>.apcrystal</b>, or <b>output .zip</b></div>

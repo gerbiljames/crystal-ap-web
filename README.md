@@ -2,7 +2,7 @@
 
 Pokemon Crystal Archipelago, in your browser.
 
-A full multiworld client: upload an Archipelago YAML or a generated `.apcrystal` patch, provide your own vanilla Crystal ROM, and play. Everything except the archipelago.gg room handoff runs locally in your tab — generation via [Pyodide](https://pyodide.org), emulation via [binjgb](https://github.com/binji/binjgb).
+A full multiworld client: upload an Archipelago YAML or a generated `.apcrystal` patch, provide your own vanilla Crystal ROM, and play. Everything except the archipelago.gg room handoff runs locally in your browser — generation via [Pyodide](https://pyodide.org), emulation via [binjgb](https://github.com/binji/binjgb).
 
 **Live:** https://gerbiljames.github.io/crystal-ap-web/
 
