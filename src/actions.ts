@@ -3,7 +3,7 @@
 // (state.js) and talk to the framework-agnostic lib/ modules.
 
 import { unwrap } from "solid-js/store";
-import { app, setApp, refreshSessions, refreshYamls, markIntentionalReload } from "./state.js";
+import { app, setApp, refreshSessions, refreshYamls } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, YAML_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
@@ -497,13 +497,6 @@ export async function disconnectSession() {
 // Brand-click teardown: stop the session and reload for a clean slate.
 export function teardownAndReload(ev?: Event) {
   if (ev) ev.preventDefault();
-  if (app.step === "play") {
-    const ok = window.confirm(
-      "Leave the emulator? Make sure you've saved in-game first — unsaved progress will be lost.",
-    );
-    if (!ok) return;
-  }
-  markIntentionalReload();
   try { apWorker.stopSession(); } catch {}
   window.location.reload();
 }
