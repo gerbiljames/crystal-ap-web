@@ -4,7 +4,7 @@
 
 import { unwrap } from "solid-js/store";
 import { app, setApp, refreshSessions, refreshYamls } from "./state.js";
-import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, YAML_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
+import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
 import { db, idbGet, idbPut, idbDel } from "./lib/idb.js";
@@ -67,7 +67,10 @@ export async function forgetSession(id: string) {
   if (dbc) {
     idbDel(dbc, id, ROM_STORE).catch(() => {});
     idbDel(dbc, id, ARTIFACTS_STORE).catch(() => {});
-    if (removed?.romHash) idbDel(dbc, removed.romHash, SAVE_STORE).catch(() => {});
+    if (removed?.romHash) {
+      idbDel(dbc, removed.romHash, SAVE_STORE).catch(() => {});
+      idbDel(dbc, removed.romHash, STATE_STORE).catch(() => {});
+    }
   }
 }
 

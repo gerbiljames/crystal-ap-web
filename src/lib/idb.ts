@@ -2,7 +2,7 @@
 // artifacts). Promise-wrapped get/put/delete plus a shared DB connection.
 
 import {
-  SAVE_DB_NAME, SAVE_STORE, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, YAML_STORE, DB_VERSION,
+  SAVE_DB_NAME, SAVE_STORE, STATE_STORE, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, YAML_STORE, DB_VERSION,
 } from "./constants.js";
 
 export function openSaveDb(): Promise<IDBDatabase> {
@@ -11,6 +11,7 @@ export function openSaveDb(): Promise<IDBDatabase> {
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(SAVE_STORE))      db.createObjectStore(SAVE_STORE);
+      if (!db.objectStoreNames.contains(STATE_STORE))     db.createObjectStore(STATE_STORE);
       if (!db.objectStoreNames.contains(ROM_STORE))       db.createObjectStore(ROM_STORE);
       if (!db.objectStoreNames.contains(VANILLA_STORE))   db.createObjectStore(VANILLA_STORE);
       if (!db.objectStoreNames.contains(ARTIFACTS_STORE)) db.createObjectStore(ARTIFACTS_STORE);

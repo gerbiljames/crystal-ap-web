@@ -7,6 +7,7 @@
 /* global Binjgb */
 
 import { idbGet, idbPut } from "./idb.js";
+import { STATE_STORE } from "./constants.js";
 import { log, logOk, logErr, logWarn } from "./log.js";
 import { getAudioContext } from "./audio.js";
 
@@ -133,7 +134,11 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
 
   const setVolume = (v) => { audioVolume = v; audioMuted = v === 0; };
 
-  // --- SRAM persistence ---
+  // --- SRAM + savestate persistence ---
+  // SRAM (cart battery) and the binjgb savestate (CPU/VRAM/WRAM/APU/…) are
+  // serialised separately by binjgb, so we persist both. SRAM alone lets the
+  // user download a vanilla .sav; the savestate is what actually resumes them
+  // mid-step, mid-battle, mid-dialogue.
   const extractSram = () => {
     const fd = Module._ext_ram_file_data_new(e);
     Module._emulator_write_ext_ram(e, fd);
@@ -151,10 +156,35 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     Module._emulator_read_ext_ram(e, fd);
     Module._file_data_delete(fd);
   };
+  const extractState = () => {
+    const fd = Module._state_file_data_new(e);
+    Module._emulator_write_state(e, fd);
+    const p = Module._get_file_data_ptr(fd);
+    const l = Module._get_file_data_size(fd);
+    const out = new Uint8Array(Module.HEAP8.buffer, p, l).slice();
+    Module._file_data_delete(fd);
+    return out;
+  };
+  const loadState = (bytes) => {
+    const fd = Module._state_file_data_new(e);
+    const l = Module._get_file_data_size(fd);
+    // State size is binjgb-version sensitive — mismatch means a build bump
+    // happened between sessions, so drop it rather than corrupt the emulator.
+    if (bytes.length !== l) { Module._file_data_delete(fd); logWarn("savestate size mismatch, ignoring it"); return false; }
+    new Uint8Array(Module.HEAP8.buffer, Module._get_file_data_ptr(fd), l).set(bytes);
+    Module._emulator_read_state(e, fd);
+    Module._file_data_delete(fd);
+    return true;
+  };
   if (saveDb) {
-    const existing = await idbGet<ArrayBuffer>(saveDb, romHash).catch(() => null);
-    if (existing) { loadSram(new Uint8Array(existing)); logOk(`loaded SRAM (${existing.byteLength} bytes) from prior session`); }
+    // Load SRAM first so the cart battery is populated for games that haven't
+    // yet accumulated a savestate; if a savestate exists, applying it second
+    // overwrites everything including cart RAM to the exact prior moment.
+    const existingSram = await idbGet<ArrayBuffer>(saveDb, romHash).catch(() => null);
+    if (existingSram) { loadSram(new Uint8Array(existingSram)); logOk(`loaded SRAM (${existingSram.byteLength} bytes) from prior session`); }
     else { log("fresh save slot"); }
+    const existingState = await idbGet<ArrayBuffer>(saveDb, romHash, STATE_STORE).catch(() => null);
+    if (existingState && loadState(new Uint8Array(existingState))) logOk("resumed from savestate");
   }
 
   // --- run loop ---
@@ -163,7 +193,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
   // in the background; workers aren't). Canvas paints still piggyback on
   // the natural browser repaint cadence, which is all that matters
   // visually — and audio is gated separately in pushAudio.
-  let lastTickSec = 0, leftoverTicks = 0, sramDirty = false;
+  let lastTickSec = 0, leftoverTicks = 0, sramDirty = false, stateDirty = false;
   function step() {
     const nowSec = performance.now() / 1000;
     const deltaSec = Math.max(nowSec - (lastTickSec || nowSec), 0);
@@ -177,6 +207,9 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
       if (ev & EVENT_UNTIL_TICKS) break;
     }
     if (Module._emulator_was_ext_ram_updated(e)) sramDirty = true;
+    // Savestate always reflects current emulator state, so any tick that
+    // advanced the emulator should schedule a rewrite.
+    stateDirty = true;
     leftoverTicks = (Module._emulator_get_ticks_f64(e) - until) | 0;
     lastTickSec = nowSec;
   }
@@ -194,15 +227,24 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
   window.addEventListener("pagehide", () => ticker.postMessage("stop"));
   logOk("emulator running");
 
-  // --- debounced SRAM commit ---
+  // --- debounced SRAM + savestate commit ---
   if (saveDb) {
     setInterval(async () => {
-      if (!sramDirty) return;
-      sramDirty = false;
-      try { await idbPut(saveDb, romHash, extractSram()); }
-      catch (err) { logErr("SRAM save failed: " + err); sramDirty = true; }
+      if (sramDirty) {
+        sramDirty = false;
+        try { await idbPut(saveDb, romHash, extractSram()); }
+        catch (err) { logErr("SRAM save failed: " + err); sramDirty = true; }
+      }
+      if (stateDirty) {
+        stateDirty = false;
+        try { await idbPut(saveDb, romHash, extractState(), STATE_STORE); }
+        catch (err) { logErr("savestate save failed: " + err); stateDirty = true; }
+      }
     }, 2000);
-    window.addEventListener("pagehide", () => { if (sramDirty) { try { idbPut(saveDb, romHash, extractSram()); } catch {} }});
+    window.addEventListener("pagehide", () => {
+      try { if (sramDirty)  idbPut(saveDb, romHash, extractSram()); } catch {}
+      try { if (stateDirty) idbPut(saveDb, romHash, extractState(), STATE_STORE); } catch {}
+    });
   }
 
   // --- keyboard (ignore text inputs) ---
