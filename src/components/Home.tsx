@@ -1,4 +1,5 @@
-import { For, Show, createSignal, createEffect } from "solid-js";
+import { For, Show, createSignal, createEffect, onCleanup } from "solid-js";
+import { Portal } from "solid-js/web";
 import { app, setApp, persistHostPref } from "../state.js";
 import { formatAge } from "../lib/sessions.js";
 import { isPatchName } from "../lib/zip.js";
@@ -6,8 +7,11 @@ import { db, idbGet } from "../lib/idb.js";
 import { GB_ROM_SIZE, VANILLA_STORE } from "../lib/constants.js";
 import {
   handleYamlDrop, handleRomDrop, continueToRom, resumeSession, forgetSession, resetTransient,
-  useSavedYaml, renameSavedYaml, forgetSavedYaml,
+  useSavedYaml, renameSavedYaml, forgetSavedYaml, fetchSavedYamlText,
 } from "../actions.js";
+import type { SavedYaml } from "../lib/yamls.js";
+import Prism from "prismjs";
+import "prismjs/components/prism-yaml";
 import { Dropzone } from "./Dropzone.jsx";
 
 function Blurb() {
@@ -63,6 +67,7 @@ function ResumeList() {
 function SavedYamlsList() {
   const [editing, setEditing] = createSignal<string | null>(null);
   const [draft, setDraft] = createSignal("");
+  const [preview, setPreview] = createSignal<{ entry: SavedYaml; text: string | null } | null>(null);
 
   const beginEdit = (hash: string, current: string) => {
     setEditing(hash);
@@ -73,19 +78,51 @@ function SavedYamlsList() {
     setEditing(null);
   };
 
+  const openPreview = async (y: SavedYaml) => {
+    // Render the modal immediately with null text (shows a loading line) so
+    // the UI doesn't wait on IDB before acknowledging the click.
+    setPreview({ entry: y, text: null });
+    const text = await fetchSavedYamlText(y.hash);
+    // Guard against the modal being closed / another row opened while the
+    // fetch was in flight.
+    const current = preview();
+    if (current && current.entry.hash === y.hash) setPreview({ entry: y, text: text ?? "" });
+  };
+  const closePreview = () => setPreview(null);
+
+  // Row-level click opens the preview, but only when the click landed on
+  // "free space" — any button/input or anything inside .actions handles its
+  // own behaviour and shouldn't double-fire the modal.
+  const onRowClick = (y: SavedYaml) => (ev: MouseEvent) => {
+    const t = ev.target as HTMLElement;
+    if (t.closest("button, input, .actions")) return;
+    openPreview(y);
+  };
+
+  createEffect(() => {
+    if (!preview()) return;
+    const onKey = (ev: KeyboardEvent) => { if (ev.key === "Escape") closePreview(); };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
+
+  const onBackdrop = (ev: MouseEvent) => {
+    if (ev.target === ev.currentTarget) closePreview();
+  };
+
   return (
     <Show when={app.yamls.length > 0}>
       <div class="resume-list yaml-list">
         <div class="resume-head">
           <span class="eyebrow">saved yamls</span>
           <span class="resume-head-hint">
-            <span class="hint-desktop">click name to rename</span>
-            <span class="hint-touch">tap name to rename</span>
+            <span class="hint-desktop">click row to preview · click name to rename</span>
+            <span class="hint-touch">tap row to preview · tap name to rename</span>
           </span>
         </div>
         <div>
           <For each={app.yamls}>{(y) => (
-            <div class="resume-row">
+            <div class="resume-row resume-row-clickable" onClick={onRowClick(y)} title="click to preview">
               <span class="slot">{y.slotName || "?"}</span>
               <span class="id yaml-name">
                 <Show
@@ -119,6 +156,29 @@ function SavedYamlsList() {
           )}</For>
         </div>
       </div>
+      <Show when={preview()}>
+        {(p) => (
+          <Portal>
+            <div class="modal-backdrop" onClick={onBackdrop}>
+              <div class="modal yaml-preview-modal" role="dialog" aria-modal="true" aria-label="yaml preview">
+                <div class="modal-head">
+                  <span class="modal-title">{p().entry.name}</span>
+                  <button class="modal-close" onClick={closePreview} aria-label="close">✕</button>
+                </div>
+                <div class="modal-body">
+                  <pre class="yaml-preview language-yaml"><code class="language-yaml" innerHTML={
+                  p().text === null
+                    ? `<span class="token comment">loading…</span>`
+                    : p().text === ""
+                      ? `<span class="token comment">(empty)</span>`
+                      : Prism.highlight(p().text!, Prism.languages.yaml, "yaml")
+                }></code></pre>
+                </div>
+              </div>
+            </div>
+          </Portal>
+        )}
+      </Show>
     </Show>
   );
 }

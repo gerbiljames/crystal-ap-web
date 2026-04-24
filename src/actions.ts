@@ -351,6 +351,13 @@ async function saveYamlToLibrary(text: string, filename: string, slot: string | 
   }
 }
 
+export async function fetchSavedYamlText(hash: string): Promise<string | null> {
+  const dbc = await db();
+  if (!dbc) return null;
+  const stored = await idbGet<{ text: string }>(dbc, hash, YAML_STORE).catch(() => null);
+  return stored?.text ?? null;
+}
+
 export async function useSavedYaml(hash: string) {
   const dbc = await db();
   const stored = dbc ? await idbGet<{ text: string }>(dbc, hash, YAML_STORE).catch(() => null) : null;

@@ -1476,6 +1476,46 @@
     padding: 20px;
     overflow: auto;
   }
+  .modal-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-0);
+    padding: 14px 20px;
+    align-self: center;
+    /* word-break so extremely long pasted filenames don't push the close
+       button off the right edge of the modal. */
+    word-break: break-all;
+  }
+  .yaml-preview-modal { max-width: 720px; margin: auto; }
+  .yaml-preview {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--ink-0);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  /* Prism token palette, scoped to the YAML preview so Prism's own CSS
+     isn't needed. Keeps to our four-colour palette rather than importing
+     one of Prism's themes. */
+  .yaml-preview .token.key,
+  .yaml-preview .token.atrule,
+  .yaml-preview .token.tag,
+  .yaml-preview .token.anchor,
+  .yaml-preview .token.alias       { color: var(--jade-bright); }
+  .yaml-preview .token.string,
+  .yaml-preview .token.scalar      { color: var(--ink-0); }
+  .yaml-preview .token.number      { color: var(--amber); }
+  .yaml-preview .token.boolean,
+  .yaml-preview .token.null        { color: var(--coral); }
+  .yaml-preview .token.comment     { color: var(--ink-2); font-style: italic; }
+  .yaml-preview .token.punctuation { color: var(--ink-2); }
+  .yaml-preview .token.important   { color: var(--coral); font-weight: bold; }
+  .resume-row-clickable { cursor: pointer; }
+  .resume-row-clickable:hover { background: rgba(149,123,194,0.05); }
 
   /* controller panel */
   .ctrl-pad-info {
