@@ -182,7 +182,7 @@ function OverlayPanel() {
   return (
     <div class="overlay-panel">
       <p class="panel-intro">
-        The event log overlay appears in the top-left while the emulator is fullscreen.
+        The console overlay appears in the top-left while the emulator is fullscreen.
       </p>
 
       <div class="pref-row">

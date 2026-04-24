@@ -1,8 +1,8 @@
-import { For, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { app, logLines, overlayPrefs } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
-import { connectSession, disconnectSession, disposeEmulator } from "../actions.js";
+import { connectSession, disconnectSession, disposeEmulator, ensureEmulator } from "../actions.js";
 import { db, idbGet } from "../lib/idb.js";
 import { SAVE_STORE } from "../lib/constants.js";
 import { logErr, logWarn } from "../lib/log.js";
@@ -25,6 +25,9 @@ function ScreenFrame() {
 
   // When this frame unmounts (HMR, route-like teardown), dispose the
   // emulator so its ticker/interval/listeners don't outlive the canvas.
+  // On remount, re-boot if we were already playing — this is what makes
+  // HMR self-heal instead of leaving a blank canvas.
+  onMount(() => { ensureEmulator(); });
   onCleanup(() => disposeEmulator());
 
   const FADE_SEC = 0.8;
@@ -135,7 +138,7 @@ function LogArea() {
   };
   return (
     <div class="log-area">
-      <div class="log-heading">event log</div>
+      <div class="log-heading">console</div>
       <div id="log-wrap" class="log-wrap" ref={wrapRef} onScroll={onScroll}>
         <pre id="log">
           <For each={logLines()}>{(entry) => (

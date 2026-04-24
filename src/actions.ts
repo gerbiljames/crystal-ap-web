@@ -411,6 +411,11 @@ export async function handleRomDrop(f: File) {
 // play-step boot + session connect
 // -----------------------------------------------------------------------------
 let currentEmu: EmulatorHandle | null = null;
+// True from the moment bootEmulatorAndUi enters until currentEmu is assigned
+// (or boot fails). Gates reentrant calls so concurrent triggers — e.g. a
+// canvas remount racing with a step transition — can't start a second
+// emulator while the first is still allocating.
+let bootInFlight = false;
 
 // Called on canvas unmount (e.g. HMR replacing <ScreenFrame/>) so the worker
 // ticker, save interval, keyboard listeners, and wasm allocations don't
@@ -422,59 +427,75 @@ export function disposeEmulator() {
   try { delete (window as any).ap; } catch {}
 }
 
+// Called on canvas mount. Under normal flow the step-transition code has
+// already booted the emulator, so this is a no-op; after HMR remounts
+// <ScreenFrame/> we boot a fresh one against the new canvas using the ROM
+// that's still sitting in the store.
+export async function ensureEmulator() {
+  if (currentEmu || bootInFlight) return;
+  if (app.step !== "play" || !app.patchedRom) return;
+  await bootEmulatorAndUi();
+}
+
 async function bootEmulatorAndUi() {
-  // Clear any prior instance so consecutive boots (session reset, HMR, etc.)
-  // don't leak.
-  disposeEmulator();
-  const saveDb = await db();
-  const emu = await bootEmulator({
-    canvas: $<HTMLCanvasElement>("#screen"),
-    romBuf: app.patchedRom,
-    saveDb,
-  });
-  if (!emu) return;
-  currentEmu = emu;
-  const { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash, setVolume } = emu;
+  if (bootInFlight) return;
+  bootInFlight = true;
+  try {
+    // Clear any prior instance so consecutive boots (session reset, HMR, etc.)
+    // don't leak.
+    disposeEmulator();
+    const saveDb = await db();
+    const emu = await bootEmulator({
+      canvas: $<HTMLCanvasElement>("#screen"),
+      romBuf: app.patchedRom,
+      saveDb,
+    });
+    if (!emu) return;
+    currentEmu = emu;
+    const { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash, setVolume } = emu;
 
-  if (app.seedId) {
-    const list = loadSessions();
-    const entry = list.find((s: any) => s.id === app.seedId);
-    if (entry && entry.romHash !== romHash) {
-      entry.romHash = romHash;
-      saveSessions(list);
+    if (app.seedId) {
+      const list = loadSessions();
+      const entry = list.find((s: any) => s.id === app.seedId);
+      if (entry && entry.romHash !== romHash) {
+        entry.romHash = romHash;
+        saveSessions(list);
+      }
     }
+
+    const volInput = $<HTMLInputElement>("#vol");
+    const volLabel = $<HTMLElement>("#vol-label");
+    // Restore last-used volume from localStorage (0-100). Falls back to
+    // whatever the element's default `value` attribute was.
+    const savedVol = localStorage.getItem("crystal-ap-volume");
+    if (savedVol !== null && !Number.isNaN(Number(savedVol))) {
+      volInput.value = savedVol;
+    }
+    const applyVol = () => {
+      const v = Number(volInput.value) / 100;
+      setVolume(v);
+      volLabel.classList.toggle("muted", v === 0);
+      volLabel.textContent = v === 0 ? "mute" : "vol";
+      try { localStorage.setItem("crystal-ap-volume", volInput.value); } catch {}
+    };
+    volInput.addEventListener("input", applyVol);
+    applyVol();
+
+    initPlayLayout();
+    bindGamepad($<HTMLElement>(".gamepad"), { emulator: e, module: Module });
+    bindController({ emulator: e, module: Module });
+    installBizHawkBridge(emu, apWorker);
+
+    // Seed the session form with host/slot info.
+    $<HTMLInputElement>("#sess-server").value = app.hosted ? `${app.hosted.host}:${app.hosted.port}` : "";
+    $<HTMLInputElement>("#sess-slot").value   = app.slotName || "";
+
+    // Expose for console poking.
+    window.ap = { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash, RAM, WRAM_BASE };
+    log("ready · enter session details and Connect");
+  } finally {
+    bootInFlight = false;
   }
-
-  const volInput = $<HTMLInputElement>("#vol");
-  const volLabel = $<HTMLElement>("#vol-label");
-  // Restore last-used volume from localStorage (0-100). Falls back to
-  // whatever the element's default `value` attribute was.
-  const savedVol = localStorage.getItem("crystal-ap-volume");
-  if (savedVol !== null && !Number.isNaN(Number(savedVol))) {
-    volInput.value = savedVol;
-  }
-  const applyVol = () => {
-    const v = Number(volInput.value) / 100;
-    setVolume(v);
-    volLabel.classList.toggle("muted", v === 0);
-    volLabel.textContent = v === 0 ? "mute" : "vol";
-    try { localStorage.setItem("crystal-ap-volume", volInput.value); } catch {}
-  };
-  volInput.addEventListener("input", applyVol);
-  applyVol();
-
-  initPlayLayout();
-  bindGamepad($<HTMLElement>(".gamepad"), { emulator: e, module: Module });
-  bindController({ emulator: e, module: Module });
-  installBizHawkBridge(emu, apWorker);
-
-  // Seed the session form with host/slot info.
-  $<HTMLInputElement>("#sess-server").value = app.hosted ? `${app.hosted.host}:${app.hosted.port}` : "";
-  $<HTMLInputElement>("#sess-slot").value   = app.slotName || "";
-
-  // Expose for console poking.
-  window.ap = { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash, RAM, WRAM_BASE };
-  log("ready · enter session details and Connect");
 }
 
 export async function connectSession() {
