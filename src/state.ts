@@ -64,5 +64,25 @@ export function setOverlayPrefs(next: OverlayPrefs) {
   try { localStorage.setItem(OVERLAY_KEY, JSON.stringify(next)); } catch {}
 }
 
+// ---------- controller settings ----------
+const CONTROLLER_PREFS_KEY = "crystal-ap-controller-prefs";
+export type ControllerPrefs = { background: boolean };
+const CONTROLLER_DEFAULTS: ControllerPrefs = { background: false };
+
+function loadControllerPrefs(): ControllerPrefs {
+  try {
+    const raw = localStorage.getItem(CONTROLLER_PREFS_KEY);
+    if (!raw) return { ...CONTROLLER_DEFAULTS };
+    const p = JSON.parse(raw);
+    return { background: !!p.background };
+  } catch { return { ...CONTROLLER_DEFAULTS }; }
+}
+
+export const [controllerPrefs, _setControllerPrefs] = createSignal<ControllerPrefs>(loadControllerPrefs());
+export function setControllerPrefs(next: ControllerPrefs) {
+  _setControllerPrefs(next);
+  try { localStorage.setItem(CONTROLLER_PREFS_KEY, JSON.stringify(next)); } catch {}
+}
+
 // Log buffer. Each entry is { kind, time, text?, ansi? }.
 export const [logLines, setLogLines] = createSignal([]);

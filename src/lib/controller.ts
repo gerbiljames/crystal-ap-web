@@ -4,6 +4,7 @@
 // last controller disconnects.
 
 import { log } from "./log.js";
+import { controllerPrefs } from "../state.js";
 
 export type InputName = "A" | "B" | "start" | "select" | "up" | "down" | "left" | "right";
 
@@ -61,6 +62,13 @@ export function bindController({ emulator, module }: { emulator: number; module:
 
   const poll = () => {
     rafId = requestAnimationFrame(poll);
+    // When background input is off and the document doesn't have focus,
+    // ignore pad state and release any held buttons so they don't get stuck
+    // when the user alt-tabs away mid-press.
+    if (!controllerPrefs().background && !document.hasFocus()) {
+      for (const name of Object.keys(held)) setHeld(name, false);
+      return;
+    }
     const pad = getActivePad();
     if (!pad) return;
 

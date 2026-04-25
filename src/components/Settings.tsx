@@ -1,5 +1,5 @@
 import { For, Show, createSignal, createEffect, onCleanup } from "solid-js";
-import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs } from "../state.js";
+import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs, controllerPrefs, setControllerPrefs } from "../state.js";
 import {
   DEFAULT_BINDINGS, loadBindings, saveBindings, captureNextButton, getActivePad,
   type InputName,
@@ -152,6 +152,16 @@ function ControllerPanel() {
           );
         }}</For>
       </div>
+
+      <label class="switch ctrl-bg-switch" title="When on, gamepad input is processed even while the browser tab/window doesn't have keyboard focus.">
+        <input
+          type="checkbox"
+          checked={controllerPrefs().background}
+          onChange={(ev) => setControllerPrefs({ background: ev.currentTarget.checked })}
+        />
+        <span class="switch-track"><span class="switch-knob"></span></span>
+        <span class="switch-text">accept input while unfocused</span>
+      </label>
 
       <div class="ctrl-actions">
         <button class="btn-ghost" onClick={resetDefaults}>reset defaults</button>
