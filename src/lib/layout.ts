@@ -1,7 +1,10 @@
-// Play-step layout measurement: publishes two CSS variables by sampling the
-// real DOM on resize / orientation / step change.
-//   --play-game-h : height from play-game's top to the viewport bottom
-//   --emu-max-h   : budget for the emulator canvas (cell minus chrome + gamepad)
+// Play-step layout measurement: publishes three CSS variables by sampling
+// the real DOM on resize / orientation / step change.
+//   --play-game-h     : height from play-game's top to the viewport bottom
+//   --emu-max-h       : budget for the emulator canvas (cell minus chrome + gamepad)
+//   --play-controls-h : screen-frame height in desktop mode, so the
+//                       controls column (form + console) caps to the
+//                       emulator's height instead of the viewport's
 // Also physically relocates .log-area between .play-game (mobile portrait
 // with enough vertical slack) and .play-controls (fallback) since it
 // serves different roles in each layout.
@@ -36,12 +39,26 @@ export function initPlayLayout() {
   };
 
   const doMeasure = () => {
-    // Only active when play step is live (mobile layout + visible).
-    if (playGameEl.offsetParent === null || getComputedStyle(gamepadEl).display === "none") {
+    // Only meaningful when the play step is rendered.
+    const visible = screenFrameEl.offsetParent !== null;
+    if (!visible) {
       document.documentElement.style.removeProperty("--emu-max-h");
+      document.documentElement.style.removeProperty("--play-controls-h");
       placeLog(false);
       return;
     }
+    // Desktop layout: gamepad is hidden, screen-frame sits in column 1 at
+    // its natural size. Anchor the controls column to the screen-frame's
+    // height so the console doesn't get clipped below it on short
+    // viewports — the previous viewport-based cap (100vh - 180px) shrank
+    // below the emulator's height once the window got short enough.
+    if (getComputedStyle(gamepadEl).display === "none") {
+      document.documentElement.style.removeProperty("--emu-max-h");
+      placeLog(false);
+      document.documentElement.style.setProperty("--play-controls-h", `${screenFrameEl.offsetHeight}px`);
+      return;
+    }
+    document.documentElement.style.removeProperty("--play-controls-h");
     // Prefer visualViewport — on iOS Safari window.innerHeight is the
     // "large" viewport and doesn't shrink when the URL bar is visible,
     // whereas visualViewport.height tracks the actually-visible area.
