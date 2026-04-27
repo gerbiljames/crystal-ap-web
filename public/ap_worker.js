@@ -193,6 +193,7 @@ async function sessionStart(id, server, slotName, password) {
 
 async function sessionStop(id) {
   if (!pyodide || !sessionTasks) return;
+  trackerStop();
   try {
     await pyodide.runPythonAsync(`
 import asyncio
@@ -309,6 +310,63 @@ async function hostStop(id) {
   _hostSeedId = null;
 }
 
+// --- Universal Tracker bridge ---
+// Pure data-in / data-out: caller supplies multidata bytes plus the local
+// player's checked-locations set; we hand back the in-logic location names.
+// No dependency on _host_ctx, session ctx, or websockets — multidata is the
+// authoritative source for slot_data + locations + items.
+let trackerReady = false;
+
+async function trackerInit(id, multidataBytes, slotName) {
+  await ensureInit(id);
+  const available = pyodide.globals.get("_TRACKER_AVAILABLE");
+  if (!available) {
+    return { out: { ok: false, reason: "tracker world failed to import" } };
+  }
+  pyodide.FS.writeFile("/tmp/ut_seed.archipelago", multidataBytes);
+  pyodide.globals.set("_ut_slot_name_in", String(slotName || ""));
+  const errOrEmpty = await pyodide.runPythonAsync(TRACKER_INIT_PY);
+  if (errOrEmpty) {
+    trackerReady = false;
+    return { out: { ok: false, reason: String(errOrEmpty) } };
+  }
+  trackerReady = true;
+  return { out: { ok: true } };
+}
+
+async function trackerUpdate(id, checkedLocIds) {
+  if (!pyodide || !trackerReady) return { out: { ok: false, locations: [], go: "no" } };
+  pyodide.globals.set("_ut_checked_in", pyodide.toPy(checkedLocIds || []));
+  const result = await pyodide.runPythonAsync(TRACKER_UPDATE_PY);
+  const tup = result?.toJs ? result.toJs() : result;
+  const go = (tup && typeof tup[0] === "string") ? tup[0] : "no";
+  const locations = Array.isArray(tup?.[1]) ? tup[1] : (tup?.[1] ? Array.from(tup[1]) : []);
+  if (result?.destroy) result.destroy();
+  return { out: { ok: true, locations, go } };
+}
+
+async function trackerChecks(id) {
+  if (!pyodide || !trackerReady || !sessionTasks) return { out: { checked: [] } };
+  pyodide.globals.set("_ut_ctx_q", pyodide.globals.get("ctx") ?? null);
+  const result = await pyodide.runPythonAsync(TRACKER_CHECKS_PY);
+  const arr = result?.toJs ? result.toJs() : Array.from(result || []);
+  if (result?.destroy) result.destroy();
+  return { out: { checked: arr.map((x) => Number(x)) } };
+}
+
+function trackerStop() {
+  trackerReady = false;
+  if (!pyodide) return;
+  try {
+    pyodide.runPython(`
+import builtins as _b
+for _n in ("_ut_tracker", "_ut_multidata", "_ut_slot", "_ut_slot_name", "_ut_game"):
+    try: delattr(_b, _n)
+    except Exception: pass
+`);
+  } catch {}
+}
+
 self.onmessage = async (ev) => {
   const { id, cmd } = ev.data;
   try {
@@ -356,6 +414,18 @@ except Exception: pass
       if (!sessionTasks) return;
       const text = ev.data.text || "";
       pyodide.globals.get("_cmdproc")(text);
+    } else if (cmd === "tracker-init") {
+      const { out } = await trackerInit(id, ev.data.multidata, ev.data.slotName);
+      post({ id, ok: true, out });
+    } else if (cmd === "tracker-update") {
+      const { out } = await trackerUpdate(id, ev.data.checked);
+      post({ id, ok: true, out });
+    } else if (cmd === "tracker-checks") {
+      const { out } = await trackerChecks(id);
+      post({ id, ok: true, out });
+    } else if (cmd === "tracker-stop") {
+      trackerStop();
+      post({ id, ok: true });
     } else if (cmd === "bh-res") {
       // Main-thread's response to a previously sent bizhawk request.
       pyodide.globals.get("_bh_resolve")(ev.data.reqId, ev.data.payload);
@@ -417,7 +487,7 @@ function SESSION_START_PY(server, slot, password) {
   const j = (s) => JSON.stringify(s);
   return `
 import asyncio, json
-from js import self as _js_self
+from js import self as _js_self, Object as _Js_Object
 from pyodide.ffi import create_proxy, to_js
 
 # ------------------------------------------------------------------ bizhawk
@@ -482,6 +552,19 @@ _bh_tasks["server"]  = asyncio.create_task(server_loop(ctx), name="ServerLoop")
 _bh_tasks["watcher"] = asyncio.create_task(_game_watcher(ctx), name="GameWatcher")
 _cmdproc = ctx.command_processor(ctx)
 globals()["_cmdproc"] = _cmdproc
+
+# Sync wrapper around ctx.on_package — process_server_cmd calls it without
+# awaiting, so async wrappers silently no-op. Emits a "tracker-dirty" event
+# whenever the set of checked locations or items received may have changed.
+_orig_on_package = ctx.on_package
+def _ut_on_package(cmd, args):
+    try: _orig_on_package(cmd, args)
+    finally:
+        if cmd in ("Connected", "ReceivedItems", "RoomUpdate"):
+            try: _jpost({"event": "tracker-dirty"})
+            except Exception as _e: print(f"[ut] dirty post failed: {_e}")
+ctx.on_package = _ut_on_package
+
 print("session started")
 `;
 }
@@ -493,6 +576,26 @@ const WS_SHIM_PY = `
 import asyncio, re, websockets as _ws
 from js import WebSocket as _JsWebSocket
 from pyodide.ffi import create_proxy
+
+# websockets.broadcast() reaches into private attrs (protocol.state,
+# send_in_progress, frames_sent, ...) that only exist on the upstream's real
+# Connection class. Replace it with a minimal version that just enqueues the
+# message on every still-open connection — works for both our loopback pipe
+# and the browser-WS shim, neither of which has those internals.
+def _ws_broadcast(connections, message, raise_exceptions=False):
+    sent = []
+    for conn in list(connections):
+        try:
+            if getattr(conn, "closed", False): continue
+            if isinstance(message, (bytes, bytearray)):
+                if hasattr(conn, "send_binary"): conn.send_binary(message)
+                else: sent.append(asyncio.create_task(conn.send(bytes(message))))
+            else:
+                if hasattr(conn, "send_text"): conn.send_text(message)
+                else: sent.append(asyncio.create_task(conn.send(message)))
+        except Exception:
+            if raise_exceptions: raise
+_ws.broadcast = _ws_broadcast
 
 # ---- browser WebSocket bridge (used by CommonClient at session-start) ----
 class _BrowserWS:
@@ -564,6 +667,18 @@ class _LoopbackPipe:
     def open(self): return not self._closed
     @property
     def socket(self): return self
+    @property
+    def protocol(self): return _LoopbackProto
+    def send_text(self, msg):
+        # websockets.broadcast() bypasses send() and calls .send_text /
+        # .send_binary on the underlying connection. Forward to our queue.
+        if self._closed: return
+        try: self._send_q.put_nowait(msg)
+        except Exception: pass
+    def send_binary(self, data):
+        if self._closed: return
+        try: self._send_q.put_nowait(bytes(data))
+        except Exception: pass
     async def send(self, msg):
         if self._closed: raise _ws.ConnectionClosed(None, None)
         if isinstance(msg, (bytes, bytearray)): msg = bytes(msg)
@@ -802,6 +917,15 @@ import Utils
 try: Utils.local_path.cached_path = "/ap"
 except AttributeError: pass
 
+# Disable settings.py's interactive folder picker. When a path setting points
+# at a non-existent dir, settings.py defaults to popping a tkinter dialog —
+# Pyodide has no tkinter, so the access raises ModuleNotFoundError instead of
+# returning the configured path. UT's TrackerPlayersPath("Players") triggers
+# this on first access. Setting no_gui=True makes the settings layer accept
+# the configured path as-is.
+import settings as _ap_settings
+_ap_settings.no_gui = True
+
 # Pyodide has no threads — replace concurrent.futures.ThreadPoolExecutor with
 # a synchronous impl so Main.py's pool.submit / as_completed path just runs
 # inline. Not a correctness issue; just slower-on-the-hot-path.
@@ -834,6 +958,146 @@ _cf.as_completed = lambda fs, timeout=None: iter(list(fs))
 # has both PokemonCrystalProcedurePatch classes ready (stable + prerelease).
 import worlds.pokemon_crystal.world  # noqa: F401
 import worlds.pokemon_crystal_prerelease.world  # noqa: F401
+# Universal Tracker. Imported eagerly so AutoWorldRegister picks up TrackerWorld
+# and so any incompatibility surfaces at boot, not on tab-click. The flag is
+# read back by JS to decide whether to enable the Tracker tab in the UI.
+try:
+    import worlds.tracker  # noqa: F401
+    _TRACKER_AVAILABLE = True
+except Exception as _ut_err:
+    _TRACKER_AVAILABLE = False
+    print(f"[ut] tracker world unavailable: {_ut_err}")
 from worlds.AutoWorld import AutoWorldRegister
 _ = AutoWorldRegister.world_types  # force registration
 `;
+
+// Build a TrackerCore from raw multidata bytes alone. Multidata fully
+// describes slot_data, locations, and items — everything UT needs except the
+// player's progress, which we feed in via tracker-update. Pokemon Crystal
+// supports yamlless tracking (ut_can_gen_without_yaml + staticmethod
+// interpret_slot_data) so no real Players/*.yaml is required.
+// Returns "" on success, or a traceback string.
+const TRACKER_INIT_PY = `
+import traceback
+try:
+    import os, logging
+    # Default TrackerPlayersPath("Players") is required-to-exist; without the
+    # dir, settings.py would try to browse() (no tkinter in Pyodide).
+    os.makedirs("/ap/Players", exist_ok=True)
+    import MultiServer as _ms
+    with open("/tmp/ut_seed.archipelago", "rb") as _f:
+        _multidata = _ms.Context.decompress(_f.read())
+    # connect_names: { slot_name: (team, slot, ...) }. Fall back to the only
+    # entry for solo seeds where the supplied slot_name doesn't match.
+    _slot_name = _ut_slot_name_in
+    _entry = _multidata["connect_names"].get(_slot_name)
+    if _entry is None:
+        _names = list(_multidata["connect_names"].keys())
+        if len(_names) == 1:
+            _slot_name, _entry = _names[0], _multidata["connect_names"][_names[0]]
+        else:
+            raise RuntimeError(f"slot name {_ut_slot_name_in!r} not in multidata; choices: {_names}")
+    _team, _slot = _entry[0], _entry[1]
+    _slot_data = _multidata["slot_data"].get(_slot, {}) or {}
+    _game = _multidata["slot_info"][_slot].game
+    from worlds.tracker.TrackerCore import TrackerCore
+    from worlds.AutoWorld import AutoWorldRegister
+    _world_cls = AutoWorldRegister.world_types.get(_game)
+    if _world_cls is None:
+        raise RuntimeError(f"no registered world for game {_game!r}")
+    _tracker = TrackerCore(logging.getLogger("UT"), False, False)
+    # Seed sorting_priorities BEFORE initalize_tracker_core, so any error path
+    # inside it doesn't KeyError on missing 'ut_status' priority.
+    try:
+        (_yp, _tracker.output_format, _tracker.hide_excluded, _tracker.use_split,
+         _enf_def, _tracker.enable_glitched_logic, _tracker.sorting_priorities,
+         _tracker.sorting_method) = _tracker._set_host_settings()
+        if _tracker.enforce_deferred_connections is None:
+            _tracker.enforce_deferred_connections = _enf_def
+    except Exception as _hs_e:
+        print(f"[ut] _set_host_settings failed, using defaults: {_hs_e}")
+        _tracker.sorting_priorities = {
+            "default": 0, "hinted": 1, "excluded": 2, "excluded_glitched": 3,
+            "hinted_glitched": 4, "glitched": 5, "unconnected": 6,
+            "error": -1, "other": 7, "ut_status": 8,
+        }
+        _tracker.sorting_method = "label"
+        _tracker.output_format = "Both"
+        _tracker.hide_excluded = False
+        _tracker.use_split = True
+        _tracker.enable_glitched_logic = True
+    _tracker.set_slot_params(_game, _slot, _slot_name, _team)
+    _tracker.initalize_tracker_core(_world_cls, _slot_data)
+    if _tracker.gen_error:
+        raise RuntimeError("tracker init failed:\\n" + _tracker.gen_error)
+    if _tracker.multiworld is None:
+        raise RuntimeError("tracker init produced no multiworld")
+    # Park on builtins so it survives pyodide's per-call namespaces.
+    import builtins as _b
+    _b._ut_tracker   = _tracker
+    _b._ut_multidata = _multidata
+    _b._ut_slot      = _slot
+    _b._ut_slot_name = _slot_name
+    _b._ut_game      = _game
+    _ret = ""
+except Exception:
+    _ret = traceback.format_exc()
+_ret
+`;
+
+// Read the player's currently checked-locations set off the active session
+// ctx. Tracker is gated on a live session, so we never look at _host_ctx here.
+const TRACKER_CHECKS_PY = `
+def _ut_get_checks():
+    _c = _ut_ctx_q
+    if _c is None: return []
+    try:
+        return list(getattr(_c, "checked_locations", set()) or set())
+    except Exception:
+        return []
+_ut_get_checks()
+`;
+
+// Recompute in-logic locations given the player's current set of checked
+// location IDs. items_received is derived from multidata for solo seeds.
+const TRACKER_UPDATE_PY = `
+def _ut_compute():
+    import builtins as _b
+    _t = getattr(_b, "_ut_tracker", None)
+    _md = getattr(_b, "_ut_multidata", None)
+    _slot = getattr(_b, "_ut_slot", None)
+    if _t is None or _md is None or _slot is None: return []
+    try:
+        from NetUtils import NetworkItem
+        _checked = set(int(x) for x in (_ut_checked_in or []))
+        _all_locs = _md["locations"][_slot]   # {loc_id: (item_id, recipient_slot, item_flags)}
+        _missing = set(_all_locs.keys()) - _checked
+        _items = []
+        for _lid in _checked:
+            _info = _all_locs.get(_lid)
+            if _info is None: continue
+            _iid, _recv, _flags = _info[0], _info[1], _info[2]
+            if _recv != _slot: continue   # not for us — would be sent over network
+            _items.append(NetworkItem(_iid, _lid, _slot, _flags))
+        _t.set_items_received(_items)
+        _t.set_missing_locations(_missing)
+        _state = _t.updateTracker()
+        # Go mode mirrors UT's TrackerClient: has_beaten_game on the live state
+        # ("yes"), or on the glitches_state ("glitched"), else "no".
+        _go = "no"
+        try:
+            _mw = _t.multiworld
+            _pid = _t.player_id
+            if _state.state is not None and _mw.has_beaten_game(_state.state, _pid):
+                _go = "yes"
+            elif _state.glitches_state is not None and _mw.has_beaten_game(_state.glitches_state, _pid):
+                _go = "glitched"
+        except Exception:
+            pass
+        return [_go, list(_state.in_logic_locations)]
+    except Exception:
+        import traceback; traceback.print_exc()
+        return ["no", []]
+_ut_compute()
+`;
+

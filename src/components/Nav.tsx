@@ -5,6 +5,14 @@ import { teardownAndReload } from "../actions.js";
 // source pack.sh tars into public/ap.tar, so versions stay in sync.
 import crystalManifest    from "../../vendor/archipelago/worlds/pokemon_crystal/archipelago.json";
 import prereleaseManifest from "../../vendor/archipelago-prerelease/worlds/pokemon_crystal_prerelease/archipelago.json";
+import trackerInitSource  from "../../vendor/archipelago-tracker/worlds/tracker/__init__.py?raw";
+
+// UT publishes its version as `UT_VERSION = "v0.2.30"` in worlds/tracker/__init__.py.
+// Pull it out at build time so the chip stays in sync with the bundled apworld.
+const utVersion = (() => {
+  const m = trackerInitSource.match(/UT_VERSION\s*=\s*["']([^"']+)["']/);
+  return m ? m[1] : "unknown";
+})();
 
 export function Nav() {
   const [menuOpen, setMenuOpen] = createSignal(false);
@@ -38,7 +46,7 @@ export function Nav() {
       <a class="brand" id="brand-home" href="#" onClick={teardownAndReload}>
         <span>crystal<span style="color:var(--jade-bright)">.</span>ap</span>
       </a>
-      <span class="world-version" title={`bundled Pokémon Crystal apworld versions\nstable v${crystalManifest.world_version}\nprerelease v${prereleaseManifest.pokemon_crystal_version}`}>v{crystalManifest.world_version}</span>
+      <span class="world-version" title={`bundled Pokémon Crystal apworld versions\nstable v${crystalManifest.world_version}\nprerelease v${prereleaseManifest.pokemon_crystal_version}\nuniversal tracker ${utVersion}`}>v{crystalManifest.world_version}</span>
       <div class="nav-spacer"></div>
       <button class="cog-btn" onClick={() => setSettingsOpen(true)} aria-label="settings" title="settings">
         <svg viewBox="0 0 24 24" aria-hidden="true">

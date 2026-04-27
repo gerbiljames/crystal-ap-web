@@ -9,3 +9,7 @@
 	path = vendor/archipelago-prerelease
 	url = https://github.com/gerbiljames/Archipelago-Crystal.git
 	branch = future/6.0.0
+[submodule "vendor/archipelago-tracker"]
+	path = vendor/archipelago-tracker
+	url = https://github.com/FarisTheAncient/Archipelago.git
+	branch = tracker

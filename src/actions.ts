@@ -3,7 +3,7 @@
 // (state.js) and talk to the framework-agnostic lib/ modules.
 
 import { unwrap } from "solid-js/store";
-import { app, setApp, refreshSessions, refreshYamls } from "./state.js";
+import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
@@ -517,6 +517,7 @@ async function bootEmulatorAndUi() {
     bindGamepad($<HTMLElement>(".gamepad"), { emulator: e, module: Module });
     bindController({ emulator: e, module: Module });
     installBizHawkBridge(emu, apWorker);
+    installTrackerDirtyHandler();
 
     // For loopback sessions, the in-process MultiServer is keyed off a fresh
     // URI per worker boot. Re-host now so a resumed session points at a live
@@ -578,6 +579,10 @@ export async function connectSession() {
     await apWorker.startSession(server, slot, pw);
     setSessionState("live", slot);
     logOk(`session started`);
+    trackerInited = false;
+    setTrackerInLogic([]);
+    setTrackerGoMode("no");
+    setTrackerStatus({ kind: "idle" });
     const list = loadSessions();
     const entry = list.find((s: any) => s.id === app.seedId);
     if (entry) {
@@ -603,9 +608,92 @@ export async function connectSession() {
   }
 }
 
+// Universal Tracker — pure data-in/out. Init reads the cached multidata from
+// app.artifacts; updates feed in the player's checked-locations set. No
+// dependency on a live session or in-process MultiServer.
+let trackerInited = false;
+let trackerInitInFlight: Promise<boolean> | null = null;
+
+async function ensureTrackerInited(): Promise<boolean> {
+  if (trackerInited) return true;
+  if (app.session.state !== "live") {
+    setTrackerStatus({ kind: "idle" });
+    return false;
+  }
+  if (trackerInitInFlight) return trackerInitInFlight;
+  const artifacts = app.artifacts || {};
+  const multiName = Object.keys(artifacts).find((n) => n.toLowerCase().endsWith(".archipelago"));
+  if (!multiName) {
+    setTrackerStatus({ kind: "error", reason: "no multidata cached for this seed" });
+    return false;
+  }
+  const bytes = artifacts[multiName] as Uint8Array;
+  trackerInitInFlight = (async () => {
+    try {
+      const res = await apWorker.trackerInit(bytes, app.slotName || "");
+      if (!res?.out?.ok) {
+        const reason = res?.out?.reason || "unknown";
+        logWarn("tracker unavailable: " + reason.split("\n")[0]);
+        console.error("[ut] tracker init failed:\n" + reason);
+        setTrackerStatus({ kind: "error", reason });
+        return false;
+      }
+      trackerInited = true;
+      setTrackerStatus({ kind: "ready" });
+      return true;
+    } finally { trackerInitInFlight = null; }
+  })();
+  return trackerInitInFlight;
+}
+
+async function refreshTrackerLocations() {
+  if (!await ensureTrackerInited()) return;
+  // Pull the checked-locations set from the worker's host context if running,
+  // otherwise from the live session ctx, otherwise an empty set.
+  const checked = await fetchCheckedLocations();
+  try {
+    const res = await apWorker.trackerUpdate(checked);
+    if (res?.out?.ok) {
+      setTrackerInLogic(res.out.locations || []);
+      setTrackerGoMode(res.out.go || "no");
+    }
+  } catch (e: any) {
+    logWarn("tracker update failed: " + (e?.message || e));
+  }
+}
+
+// Reads checked-location IDs from whichever Python state is live —
+// _host_ctx.location_checks when self-hosting, ctx.checked_locations when
+// remote-connected. Empty pre-host / pre-connect.
+async function fetchCheckedLocations(): Promise<number[]> {
+  try {
+    const res = await apWorker.trackerChecks();
+    return Array.isArray(res?.out?.checked) ? res.out.checked : [];
+  } catch { return []; }
+}
+
+let trackerDirtyHandlerInstalled = false;
+function installTrackerDirtyHandler() {
+  if (trackerDirtyHandlerInstalled) return;
+  trackerDirtyHandlerInstalled = true;
+  apWorker.setTrackerDirtyHandler(() => { refreshTrackerLocations().catch(() => {}); });
+}
+export async function ensureTracker() {
+  installTrackerDirtyHandler();
+  await refreshTrackerLocations();
+}
+// Kept as a no-op for the existing console-tab onClick caller; tracker is now
+// event-driven and has nothing to stop.
+export function stopTrackerPolling() {}
+
 export async function disconnectSession() {
   try { await apWorker.stopSession(); } catch {}
   setSessionState("idle", "disconnected");
+  trackerInited = false;
+  setTrackerInLogic([]);
+  setTrackerGoMode("no");
+  setTrackerStatus({ kind: "idle" });
+  stopTrackerPolling();
   logOk("session disconnected");
 }
 

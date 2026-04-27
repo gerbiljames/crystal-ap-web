@@ -137,3 +137,13 @@ export function setControllerPrefs(next: ControllerPrefs) {
 
 // Log buffer. Each entry is { kind, time, text?, ansi? }.
 export const [logLines, setLogLines] = createSignal([]);
+
+// Universal Tracker state. trackerInLogic is the list of in-logic location
+// names from UT's last update. trackerStatus drives the Tracker tab placeholder
+// when a session has no tracker (no yaml, import failed, world incompatible).
+export const [trackerInLogic, setTrackerInLogic] = createSignal<string[]>([]);
+export type TrackerGoMode = "no" | "yes" | "glitched";
+export const [trackerGoMode, setTrackerGoMode] = createSignal<TrackerGoMode>("no");
+export const [trackerStatus, setTrackerStatus] = createSignal<
+  { kind: "idle" } | { kind: "ready" } | { kind: "error"; reason: string }
+>({ kind: "idle" });

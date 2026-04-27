@@ -7,6 +7,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 AP="$HERE/vendor/archipelago"
 PRE="$HERE/vendor/archipelago-prerelease"
+UT="$HERE/vendor/archipelago-tracker"
 OUT="$HERE/public/ap.tar"
 
 if [ ! -d "$AP/worlds" ]; then
@@ -15,6 +16,10 @@ if [ ! -d "$AP/worlds" ]; then
 fi
 if [ ! -d "$PRE/worlds/pokemon_crystal_prerelease" ]; then
     echo "vendor/archipelago-prerelease is empty — run: git submodule update --init" >&2
+    exit 1
+fi
+if [ ! -d "$UT/worlds/tracker" ]; then
+    echo "vendor/archipelago-tracker is empty — run: git submodule update --init" >&2
     exit 1
 fi
 
@@ -27,6 +32,9 @@ cp -R "$AP/." "$STAGE/"
 # upstream ever ships one — the prerelease submodule is the source of truth.
 rm -rf "$STAGE/worlds/pokemon_crystal_prerelease"
 cp -R "$PRE/worlds/pokemon_crystal_prerelease" "$STAGE/worlds/pokemon_crystal_prerelease"
+# Overlay Universal Tracker's worlds/tracker on top.
+rm -rf "$STAGE/worlds/tracker"
+cp -R "$UT/worlds/tracker" "$STAGE/worlds/tracker"
 
 tar -cf "$OUT" -C "$STAGE" \
     --exclude="__pycache__" \
@@ -56,6 +64,7 @@ tar -cf "$OUT" -C "$STAGE" \
     worlds/_bizhawk \
     worlds/generic \
     worlds/pokemon_crystal \
-    worlds/pokemon_crystal_prerelease
+    worlds/pokemon_crystal_prerelease \
+    worlds/tracker
 
 ls -lh "$OUT"

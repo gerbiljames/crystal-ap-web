@@ -1,8 +1,8 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs } from "../state.js";
+import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
-import { connectSession, disconnectSession, disposeEmulator, ensureEmulator } from "../actions.js";
+import { connectSession, disconnectSession, disposeEmulator, ensureEmulator, ensureTracker, stopTrackerPolling } from "../actions.js";
 import { db, idbGet } from "../lib/idb.js";
 import { SAVE_STORE } from "../lib/constants.js";
 import { logErr, logWarn } from "../lib/log.js";
@@ -120,16 +120,56 @@ function Gamepad() {
   );
 }
 
+function TrackerPanel() {
+  const status = () => trackerStatus();
+  const placeholder = () => {
+    const s = status();
+    if (app.session.state !== "live") return "connect a session to see what's in logic";
+    if (s.kind === "error")  return "tracker unavailable: " + (s.reason || "").split("\n")[0];
+    if (s.kind === "idle")   return "waiting for tracker…";
+    if (trackerInLogic().length === 0) return "no locations in logic right now";
+    return null;
+  };
+  return (
+    <div class="tracker-panel">
+      <Show when={app.session.state === "live"}>
+        <div class="tracker-header">
+          <span>{trackerInLogic().length} in logic</span>
+          <Show when={trackerGoMode() !== "no"}>
+            <span
+              class="tracker-go"
+              data-mode={trackerGoMode()}
+              title="UT has_beaten_game on the current logic state"
+            >go mode{trackerGoMode() === "glitched" ? " (glitched)" : ""}</span>
+          </Show>
+        </div>
+      </Show>
+      <Show when={placeholder() !== null}>
+        <div class="tracker-empty">{placeholder()}</div>
+      </Show>
+      <Show when={placeholder() === null}>
+        <ul class="tracker-list">
+          <For each={trackerInLogic()}>{(name) => (
+            <li class="tracker-loc">{name}</li>
+          )}</For>
+        </ul>
+      </Show>
+    </div>
+  );
+}
+
 function LogArea() {
   let wrapRef;
   let inputRef: HTMLInputElement | undefined;
   let atBottom = true;
+  const [tab, setTab] = createSignal<"console" | "tracker">("console");
   const onScroll = () => {
     atBottom = wrapRef.scrollHeight - wrapRef.clientHeight - wrapRef.scrollTop < 16;
   };
   createEffect(() => {
     logLines();
     if (!wrapRef) return;
+    if (tab() !== "console") return;
     if (atBottom) queueMicrotask(() => { wrapRef.scrollTop = wrapRef.scrollHeight; });
   });
   const submitInput = () => {
@@ -146,40 +186,62 @@ function LogArea() {
   };
   return (
     <div class="log-area">
-      <div class="log-heading">console</div>
-      <div id="log-wrap" class="log-wrap" ref={wrapRef} onScroll={onScroll}>
-        <pre id="log">
-          <For each={logLines()}>{(entry) => (
-            <>
-              <span class="log-time">{entry.time} </span>
-              {entry.ansi !== undefined
-                ? <span class={`log-${entry.kind}`} innerHTML={ansiToHtml(entry.ansi)} />
-                : <span class={`log-${entry.kind}`}>{entry.text}</span>}
-              {"\n"}
-            </>
-          )}</For>
-        </pre>
-      </div>
-      <div class="log-input-row">
-        <input
-          ref={inputRef}
-          class="log-input"
-          type="text"
-          autocomplete="off"
-          spellcheck={false}
-          placeholder={app.session.state === "live" ? "send message or !command…" : "connect to send messages"}
-          disabled={app.session.state !== "live"}
-          onKeyDown={onKey}
-        />
+      <div class="log-tabs" role="tablist">
         <button
-          class="log-send-btn"
           type="button"
-          disabled={app.session.state !== "live"}
-          onClick={submitInput}
-          aria-label="send"
-          title="send"
-        >send</button>
+          class="log-tab"
+          role="tab"
+          aria-selected={tab() === "console"}
+          data-active={tab() === "console"}
+          onClick={() => { setTab("console"); stopTrackerPolling(); }}
+        >console</button>
+        <button
+          type="button"
+          class="log-tab"
+          role="tab"
+          aria-selected={tab() === "tracker"}
+          data-active={tab() === "tracker"}
+          onClick={() => { setTab("tracker"); ensureTracker().catch(() => {}); }}
+        >tracker</button>
       </div>
+      <Show when={tab() === "console"}>
+        <div id="log-wrap" class="log-wrap" ref={wrapRef} onScroll={onScroll}>
+          <pre id="log">
+            <For each={logLines()}>{(entry) => (
+              <>
+                <span class="log-time">{entry.time} </span>
+                {entry.ansi !== undefined
+                  ? <span class={`log-${entry.kind}`} innerHTML={ansiToHtml(entry.ansi)} />
+                  : <span class={`log-${entry.kind}`}>{entry.text}</span>}
+                {"\n"}
+              </>
+            )}</For>
+          </pre>
+        </div>
+        <div class="log-input-row">
+          <input
+            ref={inputRef}
+            class="log-input"
+            type="text"
+            autocomplete="off"
+            spellcheck={false}
+            placeholder={app.session.state === "live" ? "send message or !command…" : "connect to send messages"}
+            disabled={app.session.state !== "live"}
+            onKeyDown={onKey}
+          />
+          <button
+            class="log-send-btn"
+            type="button"
+            disabled={app.session.state !== "live"}
+            onClick={submitInput}
+            aria-label="send"
+            title="send"
+          >send</button>
+        </div>
+      </Show>
+      <Show when={tab() === "tracker"}>
+        <TrackerPanel />
+      </Show>
     </div>
   );
 }

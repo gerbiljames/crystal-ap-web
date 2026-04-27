@@ -17,13 +17,15 @@ const pending = new Map<number, { resolve: (v: CallResult) => void; reject: (e: 
 let onProgress: ProgressCb | null = null;
 let onBhReq: ((reqId: number, payload: string) => void) | null = null;
 let onPrint: ((text: string) => void) | null = null;
+let onTrackerDirty: (() => void) | null = null;
 
 function handle(ev: MessageEvent) {
   const { id, event, phase, reqId, payload, ok, error, out } = ev.data;
-  if (event === "progress")  { onProgress?.(phase); return; }
-  if (event === "bh-req")    { onBhReq?.(reqId, payload); return; }
-  if (event === "printjson") { onPrint?.(ev.data.text); return; }
-  if (event === "py-log")    { logAnsi("info", ev.data.msg); return; }
+  if (event === "progress")      { onProgress?.(phase); return; }
+  if (event === "bh-req")        { onBhReq?.(reqId, payload); return; }
+  if (event === "printjson")     { onPrint?.(ev.data.text); return; }
+  if (event === "py-log")        { logAnsi("info", ev.data.msg); return; }
+  if (event === "tracker-dirty") { onTrackerDirty?.(); return; }
   const p = pending.get(id);
   if (!p) return;
   pending.delete(id);
@@ -59,6 +61,11 @@ export const apWorker = {
   hostFlush:       ()                                                  => call("host-flush"),
   sendInput:       (text: string)                                      => fire("session-input", { text }),
   sendBhResponse:  (reqId: number, payload: string)                    => fire("bh-res", { reqId, payload }),
+  trackerInit:     (multidata: Uint8Array, slotName: string)           => call("tracker-init", { multidata: multidata.slice(), slotName }, [], null),
+  trackerUpdate:   (checked: number[])                                 => call("tracker-update", { checked }),
+  trackerChecks:   ()                                                  => call("tracker-checks"),
+  trackerStop:     ()                                                  => call("tracker-stop"),
   setBhHandler:    (fn: typeof onBhReq)                                => { onBhReq = fn; },
   setPrintHandler: (fn: typeof onPrint)                                => { onPrint = fn; },
+  setTrackerDirtyHandler: (fn: typeof onTrackerDirty)                  => { onTrackerDirty = fn; },
 };
