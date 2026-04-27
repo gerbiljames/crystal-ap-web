@@ -49,7 +49,7 @@ function ResumeList() {
                 </Show>
               </span>
               <span class="meta">
-                <em>{s.hosted ? `${s.hosted.host}:${s.hosted.port}` : "no host"}</em>
+                <em>{s.hosted?.kind === "loopback" ? "self-hosted" : (s.hosted?.host ? `${s.hosted.host}:${s.hosted.port}` : "no host")}</em>
                 {" "}{formatAge(Date.now() - s.savedAt)}
               </span>
               <span class="actions">
@@ -155,6 +155,20 @@ function SavedYamlsList() {
             </div>
           )}</For>
         </div>
+        <div class="resume-foot">
+          <label class="host-pref host-pref-inline" title="Where to run the MultiServer when you `use` one of these.">
+            <span class="host-pref-label">hosting</span>
+            <select
+              class="host-pref-select"
+              value={app.hostPref}
+              onChange={(ev) => persistHostPref(ev.currentTarget.value as any)}
+            >
+              <option value="local">in this tab (no external connections)</option>
+              <option value="remote">on archipelago.gg (public room)</option>
+              <option value="off">off (I'll host it myself)</option>
+            </select>
+          </label>
+        </div>
       </div>
       <Show when={preview()}>
         {(p) => (
@@ -194,10 +208,17 @@ function OptionsPane() {
           <div class="dz-mark">◇</div>
           <div class="dz-primary">Drop YAML, <b>.apcrystal</b>, or <b>output .zip</b></div>
         </Dropzone>
-        <label class="switch" title="Generate locally and upload to archipelago.gg so anyone with the room URL can join. When off, the multidata is produced but you'll need to host it yourself.">
-          <input type="checkbox" id="host-toggle" checked={app.hostPref} onChange={(ev) => persistHostPref(ev.target.checked)} />
-          <span class="switch-track"><span class="switch-knob"></span></span>
-          <span class="switch-text">host on <b>archipelago.gg</b></span>
+        <label class="host-pref" title="Where to run the MultiServer for this seed.">
+          <span class="host-pref-label">hosting</span>
+          <select
+            class="host-pref-select"
+            value={app.hostPref}
+            onChange={(ev) => persistHostPref(ev.currentTarget.value as any)}
+          >
+            <option value="local">in this tab (no external connections)</option>
+            <option value="remote">on archipelago.gg (public room)</option>
+            <option value="off">off (I'll host it myself)</option>
+          </select>
         </label>
         <Show when={app.yamlErr}>
           <div class="error-box" id="yaml-err">

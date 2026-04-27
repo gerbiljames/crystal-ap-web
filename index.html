@@ -444,6 +444,64 @@
     font-weight: inherit;
   }
 
+  /* ---------- host-pref dropdown ---------- */
+  .host-pref {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin: 12px 0 4px;
+    cursor: pointer;
+    align-self: flex-start;
+  }
+  .host-pref-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .host-pref-select {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-0);
+    background: var(--bg-2);
+    border: 1px solid var(--line-bright);
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: border-color 160ms;
+  }
+  .host-pref-select:hover  { border-color: var(--jade); }
+  .host-pref-select:focus  { border-color: var(--jade-bright); outline: none; }
+  /* Inline variant for the saved-yamls footer — sits flush, smaller margin. */
+  .host-pref-inline { margin: 0; }
+  .host-pref-inline .host-pref-select { padding: 2px 6px; font-size: 11px; }
+  /* Footer row at the bottom of the saved-yamls table. */
+  .resume-foot {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    padding: 8px 16px;
+    border-top: 1px solid var(--line);
+    background: var(--bg-2);
+  }
+
+  /* ---------- self-hosted badge (in session form) ---------- */
+  .self-hosted-badge {
+    display: inline-block;
+    margin-top: 4px;
+    padding: 2px 6px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--jade-bright);
+    border: 1px solid var(--jade);
+    border-radius: 3px;
+    background: rgba(149,123,194,0.10);
+    align-self: flex-start;
+  }
+
   /* ---------- buttons ---------- */
   .btn, button {
     font-family: var(--mono);

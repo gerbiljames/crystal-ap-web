@@ -1,4 +1,4 @@
-import { For, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
@@ -232,16 +232,25 @@ function SessionLinks() {
 }
 
 function PlayControls() {
+  const isLoopback = () => app.hosted?.kind === "loopback";
   return (
     <div class="play-controls">
       <div class="session-form" id="session-form">
-        <label>server<input type="text" id="sess-server" autocomplete="off" spellcheck={false} placeholder="archipelago.gg:xxxxx" /></label>
-        <label>slot<input type="text" id="sess-slot" autocomplete="off" spellcheck={false} value="Player1" /></label>
-        <label>password<input type="password" id="sess-pw" autocomplete="off" /></label>
-        <div class="session-actions">
-          <button class="btn-primary" id="btn-connect" onClick={connectSession}>connect</button>
-          <button id="btn-disconnect" onClick={disconnectSession}>disconnect</button>
-        </div>
+        <label>
+          server
+          <input type="text" id="sess-server" autocomplete="off" spellcheck={false}
+                 placeholder="archipelago.gg:xxxxx"
+                 readOnly={isLoopback()}
+                 title={isLoopback() ? "this seed is self-hosted in this tab" : undefined} />
+        </label>
+        <label>slot<input type="text" id="sess-slot" autocomplete="off" spellcheck={false} value="Player1" readOnly={app.session.state === "live"} /></label>
+        <label>password<input type="password" id="sess-pw" autocomplete="off" readOnly={app.session.state === "live"} /></label>
+        <Show when={!isLoopback()}>
+          <div class="session-actions">
+            <button class="btn-primary" id="btn-connect" onClick={connectSession}>connect</button>
+            <button id="btn-disconnect" onClick={disconnectSession}>disconnect</button>
+          </div>
+        </Show>
       </div>
       <SessionLinks />
       <LogArea />

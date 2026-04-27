@@ -16,6 +16,8 @@ let initPromise = null;
 let sessionTasks = null;           // py cancellables
 let nextBhId = 1;
 const bhPending = new Map();        // id → { resolve, reject }
+// True while an in-process MultiServer is running. Cleared on host-stop.
+let hostRunning = false;
 
 function post(msg, transfer) { self.postMessage(msg, transfer || []); }
 
@@ -67,6 +69,11 @@ await micropip.install(["pathspec", "schema", "jellyfish", "colorama", "websocke
 
     report("import-ap");
     await pyodide.runPythonAsync(SETUP_PY);
+    // Install the websockets shim once, at boot. Both the in-browser
+    // MultiServer (loopback) and the BizHawkClientContext (real wss://)
+    // share this single _ws.connect / _ws.serve patch — sessions and host
+    // setup just assume it's already in place.
+    await pyodide.runPythonAsync(WS_SHIM_PY);
     // Forward Python stdout/stderr to the main thread so we can see what the
     // session client is doing. to_js + Object.fromEntries converts the dict
     // into a plain JS object that postMessage's structured-clone can carry.
@@ -213,6 +220,85 @@ _bh_tasks.clear()
   sessionTasks = null;
 }
 
+// Persistence keyed by seedId, written directly from the worker so saves
+// don't depend on main-thread liveness around tab close. Mirror of constants
+// in src/lib/constants.ts; keep in sync if they change.
+const MHOST_DB_NAME = "crystal-ap-saves";
+const MHOST_DB_VERSION = 7;
+const MHOST_STORE = "mhostsave";
+let _mhostDbPromise = null;
+function mhostDb() {
+  if (_mhostDbPromise) return _mhostDbPromise;
+  _mhostDbPromise = new Promise((resolve) => {
+    const req = indexedDB.open(MHOST_DB_NAME, MHOST_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      // The main thread owns the schema; only create our store if it's
+      // somehow missing so we don't clobber stores added by main.
+      if (!db.objectStoreNames.contains(MHOST_STORE)) db.createObjectStore(MHOST_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => resolve(null);
+    req.onblocked = () => resolve(null);
+  });
+  return _mhostDbPromise;
+}
+function mhostGet(seedId) {
+  return mhostDb().then((db) => db && new Promise((res) => {
+    const t = db.transaction(MHOST_STORE, "readonly").objectStore(MHOST_STORE).get(seedId);
+    t.onsuccess = () => res(t.result || null);
+    t.onerror   = () => res(null);
+  }));
+}
+function mhostPut(seedId, bytes) {
+  return mhostDb().then((db) => db && new Promise((res) => {
+    const t = db.transaction(MHOST_STORE, "readwrite").objectStore(MHOST_STORE).put(bytes, seedId);
+    t.onsuccess = () => res(true);
+    t.onerror   = () => res(false);
+  }));
+}
+
+let _hostSeedId = null;
+
+async function hostStart(id, seedId, multidataBytes) {
+  await ensureInit(id);
+  // Stop any prior host so re-hosting after a regenerate doesn't pile
+  // up stale Contexts (each holds a copy of the multidata in memory).
+  if (hostRunning) await hostStop(id);
+  _hostSeedId = seedId || null;
+  pyodide.FS.writeFile("/tmp/seed.archipelago", multidataBytes);
+  // Pre-load any persisted .apsave for this seed into MEMFS at the path
+  // MultiServer.init_save expects: it does os.path.splitext on the multidata
+  // path and replaces the extension, so /tmp/seed.archipelago → /tmp/seed.apsave
+  // (NOT /tmp/seed.archipelago.apsave). See vendor/archipelago/MultiServer.py:611.
+  if (_hostSeedId) {
+    try {
+      const stored = await mhostGet(_hostSeedId);
+      if (stored && stored.byteLength) pyodide.FS.writeFile("/tmp/seed.apsave", new Uint8Array(stored));
+    } catch { /* ignore — fall through to fresh save */ }
+  }
+  // Save callback from Python's _async_saver. Writes the .apsave bytes
+  // straight to IndexedDB so the worker is self-sufficient around tab
+  // close — no main-thread round-trip required for durability.
+  self._mhostSave = (bytesView) => {
+    if (!_hostSeedId) return;
+    // Copy off Pyodide's heap before the transaction goes async.
+    const copy = new Uint8Array(bytesView).slice();
+    mhostPut(_hostSeedId, copy);
+  };
+  await pyodide.runPythonAsync(HOST_START_PY);
+  const uri = pyodide.globals.get("_host_uri");
+  hostRunning = true;
+  return { out: { ws_url: uri } };
+}
+
+async function hostStop(id) {
+  if (!pyodide || !hostRunning) return;
+  try { await pyodide.runPythonAsync(HOST_STOP_PY); } catch {}
+  hostRunning = false;
+  _hostSeedId = null;
+}
+
 self.onmessage = async (ev) => {
   const { id, cmd } = ev.data;
   try {
@@ -225,6 +311,29 @@ self.onmessage = async (ev) => {
     } else if (cmd === "generate") {
       const { out, transfer } = await generate(id, ev.data.yaml);
       post({ id, ok: true, out }, transfer);
+    } else if (cmd === "host") {
+      const { out } = await hostStart(id, ev.data.seedId, ev.data.multidata);
+      post({ id, ok: true, out });
+    } else if (cmd === "host-flush") {
+      // Synchronous flush from a pagehide/visibility-hidden handler so the
+      // very last actions before tab close persist instead of waiting for
+      // the next 5s tick that may never run.
+      if (hostRunning) {
+        try {
+          await pyodide.runPythonAsync(`
+try:
+    if getattr(_host_ctx, "saving", False):
+        _host_ctx._save()
+        _host_ctx.save_dirty = False
+        _push_apsave(_host_ctx.save_filename)
+except Exception: pass
+          `);
+        } catch {}
+      }
+      post({ id, ok: true });
+    } else if (cmd === "host-stop") {
+      await hostStop(id);
+      post({ id, ok: true });
     } else if (cmd === "session-start") {
       await sessionStart(id, ev.data.server, ev.data.slot, ev.data.password);
       post({ id, ok: true });
@@ -297,8 +406,8 @@ sys.modules["bsdiff4"] = _mod
 function SESSION_START_PY(server, slot, password) {
   const j = (s) => JSON.stringify(s);
   return `
-import asyncio, json, re
-from js import self as _js_self, WebSocket as _JsWebSocket
+import asyncio, json
+from js import self as _js_self
 from pyodide.ffi import create_proxy, to_js
 
 # ------------------------------------------------------------------ bizhawk
@@ -336,76 +445,6 @@ import builtins as _b
 _b._bh_resolve = _bh_resolve
 globals()["_bh_resolve"] = _bh_resolve
 
-# ------------------------------------------------------------------ websockets
-# Python 'websockets' can't open raw sockets in Pyodide. Replace its connect()
-# with a tiny wrapper around the browser's WebSocket.
-import websockets as _ws
-class _BrowserWS:
-    def __init__(self, url):
-        self._ws = _JsWebSocket.new(url)
-        self._open_fut = asyncio.get_event_loop().create_future()
-        self._close_fut = asyncio.get_event_loop().create_future()
-        self._queue: asyncio.Queue = asyncio.Queue()
-        self._closed = False
-        self._proxies = []
-        def on_open(ev):
-            if not self._open_fut.done(): self._open_fut.set_result(None)
-        def on_message(ev):
-            try:
-                self._queue.put_nowait(ev.data)
-            except Exception: pass
-        def on_close(ev):
-            self._closed = True
-            self._queue.put_nowait(None)
-            if not self._close_fut.done(): self._close_fut.set_result(None)
-        def on_error(ev):
-            if not self._open_fut.done():
-                self._open_fut.set_exception(ConnectionError("ws error"))
-        for evt, cb in (("open", on_open), ("message", on_message),
-                        ("close", on_close), ("error", on_error)):
-            p = create_proxy(cb); self._proxies.append(p)
-            self._ws.addEventListener(evt, p)
-    async def wait_open(self):
-        await self._open_fut
-    async def send(self, data):
-        if isinstance(data, (bytes, bytearray)):
-            data = bytes(data)
-        self._ws.send(data)
-    async def recv(self):
-        data = await self._queue.get()
-        if data is None: raise _ws.ConnectionClosed(None, None)
-        return data
-    async def close(self, code=1000, reason=""):
-        try: self._ws.close()
-        except Exception: pass
-    def __aiter__(self): return self
-    async def __anext__(self):
-        data = await self._queue.get()
-        if data is None: raise StopAsyncIteration
-        return data
-    @property
-    def closed(self): return self._closed
-    @property
-    def open(self): return not self._closed
-    @property
-    def socket(self): return self
-    async def ping(self, *a, **kw):
-        # Browser WS auto-keeps alive — return an already-resolved future.
-        fut = asyncio.get_event_loop().create_future()
-        fut.set_result(None); return fut
-    async def pong(self, *a, **kw): return None
-
-async def _ws_connect(uri, *args, **kwargs):
-    # Force wss://. The page is served over HTTPS, so mixed-content
-    # blocks any ws:// connection with a SecurityError regardless of
-    # what scheme the user / CommonClient supplied.
-    u = re.sub(r"^wss?://", "", uri)
-    u = "wss://" + u
-    ws = _BrowserWS(u)
-    await ws.wait_open()
-    return ws
-_ws.connect = _ws_connect
-
 # ------------------------------------------------------------------ bootstrap
 import logging
 # Strip handlers that prior sessions attached (Archipelago's init_logging
@@ -436,6 +475,311 @@ globals()["_cmdproc"] = _cmdproc
 print("session started")
 `;
 }
+
+// Installed once at boot. Shims `websockets.connect` (browser WS for real
+// wss://, in-process pipe for loopback://) and `websockets.serve` (registers
+// an in-process handler — no real listening socket, browsers can't have one).
+const WS_SHIM_PY = `
+import asyncio, re, websockets as _ws
+from js import WebSocket as _JsWebSocket
+from pyodide.ffi import create_proxy
+
+# ---- browser WebSocket bridge (used by CommonClient at session-start) ----
+class _BrowserWS:
+    extensions = []
+    def __init__(self, url):
+        self._ws = _JsWebSocket.new(url)
+        self._open_fut = asyncio.get_event_loop().create_future()
+        self._close_fut = asyncio.get_event_loop().create_future()
+        self._queue: asyncio.Queue = asyncio.Queue()
+        self._closed = False
+        self._proxies = []
+        def on_open(ev):
+            if not self._open_fut.done(): self._open_fut.set_result(None)
+        def on_message(ev):
+            try: self._queue.put_nowait(ev.data)
+            except Exception: pass
+        def on_close(ev):
+            self._closed = True
+            self._queue.put_nowait(None)
+            if not self._close_fut.done(): self._close_fut.set_result(None)
+        def on_error(ev):
+            if not self._open_fut.done():
+                self._open_fut.set_exception(ConnectionError("ws error"))
+        for evt, cb in (("open", on_open), ("message", on_message),
+                        ("close", on_close), ("error", on_error)):
+            p = create_proxy(cb); self._proxies.append(p)
+            self._ws.addEventListener(evt, p)
+    async def wait_open(self): await self._open_fut
+    async def send(self, data):
+        if isinstance(data, (bytes, bytearray)): data = bytes(data)
+        self._ws.send(data)
+    async def recv(self):
+        data = await self._queue.get()
+        if data is None: raise _ws.ConnectionClosed(None, None)
+        return data
+    async def close(self, code=1000, reason=""):
+        try: self._ws.close()
+        except Exception: pass
+    def __aiter__(self): return self
+    async def __anext__(self):
+        data = await self._queue.get()
+        if data is None: raise StopAsyncIteration
+        return data
+    @property
+    def closed(self): return self._closed
+    @property
+    def open(self): return not self._closed
+    @property
+    def socket(self): return self
+    async def ping(self, *a, **kw):
+        f = asyncio.get_event_loop().create_future(); f.set_result(None); return f
+    async def pong(self, *a, **kw): return None
+
+# ---- loopback pipe (used when MultiServer runs inside this same Pyodide) ----
+# Two _LoopbackPipe halves share a pair of asyncio.Queues. No real network,
+# no TLS, no port — just two coroutines reading from each other's queues.
+class _LoopbackPipe:
+    extensions = []
+    def __init__(self, send_q, recv_q, remote=("loopback", 0)):
+        self._send_q = send_q
+        self._recv_q = recv_q
+        self._closed = False
+        self._remote = remote
+    @property
+    def remote_address(self): return self._remote
+    @property
+    def closed(self): return self._closed
+    @property
+    def open(self): return not self._closed
+    @property
+    def socket(self): return self
+    async def send(self, msg):
+        if self._closed: raise _ws.ConnectionClosed(None, None)
+        if isinstance(msg, (bytes, bytearray)): msg = bytes(msg)
+        await self._send_q.put(msg)
+    async def recv(self):
+        msg = await self._recv_q.get()
+        if msg is None: raise _ws.ConnectionClosed(None, None)
+        return msg
+    async def close(self, code=1000, reason=""):
+        if self._closed: return
+        self._closed = True
+        # Sentinel both queues: peer's recv unblocks (their __aiter__ ends),
+        # AND our own recv unblocks (so a handler that's currently awaiting
+        # recv() also exits when we close from this side).
+        try: self._send_q.put_nowait(None)
+        except Exception: pass
+        try: self._recv_q.put_nowait(None)
+        except Exception: pass
+    def __aiter__(self): return self
+    async def __anext__(self):
+        msg = await self._recv_q.get()
+        if msg is None: raise StopAsyncIteration
+        return msg
+    async def ping(self, *a, **kw):
+        f = asyncio.get_event_loop().create_future(); f.set_result(None); return f
+    async def pong(self, *a, **kw): return None
+
+# Registry of loopback "servers". Key: synthetic URI; value: handler coroutine.
+_loopback_servers = {}
+_loopback_counter = [0]
+
+class _LoopbackServer:
+    """Stand-in for the awaitable websockets.serve() returns. Awaiting yields
+    a Server-shaped object; close() unregisters the handler."""
+    def __init__(self, uri, handler):
+        self.uri = uri
+        self.handler = handler
+    def __await__(self):
+        # already "listening" — just yield once for shape compatibility.
+        yield from asyncio.sleep(0).__await__()
+        return self
+    def close(self):
+        _loopback_servers.pop(self.uri, None)
+    async def wait_closed(self): pass
+
+def _serve(handler, host=None, port=None, **kwargs):
+    _loopback_counter[0] += 1
+    uri = f"loopback://room{_loopback_counter[0]}"
+    _loopback_servers[uri] = handler
+    return _LoopbackServer(uri, handler)
+_ws.serve = _serve
+
+async def _loopback_connect(uri):
+    handler = _loopback_servers.get(uri)
+    if handler is None:
+        raise ConnectionRefusedError(f"no loopback server at {uri}")
+    a = asyncio.Queue(); b = asyncio.Queue()
+    server_side = _LoopbackPipe(send_q=b, recv_q=a)
+    client_side = _LoopbackPipe(send_q=a, recv_q=b)
+    asyncio.create_task(handler(server_side, "/"), name="LoopbackHandler")
+    return client_side
+
+async def _ws_connect(uri, *args, **kwargs):
+    if uri.startswith("loopback://"):
+        return await _loopback_connect(uri)
+    # Force wss:// for real connections — the page is served over HTTPS,
+    # so mixed-content blocks ws:// regardless of caller-supplied scheme.
+    u = re.sub(r"^wss?://", "", uri)
+    u = "wss://" + u
+    ws = _BrowserWS(u)
+    await ws.wait_open()
+    return ws
+_ws.connect = _ws_connect
+`;
+
+// Builds an in-process MultiServer Context against /tmp/seed.archipelago.
+// Stubs out signal handlers (Pyodide can't add_signal_handler) and disables
+// auto-saving (no persistent FS across reloads). Stashes the loopback URI
+// in `_host_uri` and the context in `_host_ctx` for the connect path and
+// for HOST_STOP_PY to read.
+const HOST_START_PY = `
+import asyncio, signal, functools, sys, logging
+sys.path.insert(0, "/ap")
+
+# Pyodide can't take signal handlers; MultiServer.main installs SIGINT/SIGTERM
+# but we drive it programmatically and never touch main(). Make these no-ops
+# so any stray import path that adds a handler doesn't blow up.
+signal.signal = lambda *a, **kw: None
+try:
+    _loop = asyncio.get_event_loop()
+    _loop.add_signal_handler = lambda *a, **kw: None
+    _loop.remove_signal_handler = lambda *a, **kw: None
+except Exception: pass
+
+# Strip prior log handlers — Archipelago's init_logging adds a FileLog (no
+# filesystem here) and a duplicate StreamLog on each re-host.
+for _l in list(logging.Logger.manager.loggerDict.values()):
+    if isinstance(_l, logging.Logger): _l.handlers.clear()
+_flog = logging.getLogger("FileLog")
+_flog.handlers.clear()
+_flog.propagate = False
+logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
+
+import MultiServer as _ms
+
+# Context._load_game_data mutates the shared worlds.network_data_package by
+# del'ing keys (vendor/archipelago/MultiServer.py:347). Re-hosting (a second
+# Context()) would KeyError on the already-removed keys. Patch once with a
+# pop-safe variant so re-host is idempotent.
+def _safe_load_game_data(self):
+    import worlds as _w
+    self.gamespackage = _w.network_data_package["games"]
+    self.item_name_groups = {n: w.item_name_groups for n, w in _w.AutoWorldRegister.world_types.items()}
+    self.location_name_groups = {n: w.location_name_groups for n, w in _w.AutoWorldRegister.world_types.items()}
+    for n, w in _w.AutoWorldRegister.world_types.items():
+        self.non_hintable_names[n] = w.hint_blacklist
+    for game_package in self.gamespackage.values():
+        game_package.pop("item_name_groups", None)
+        game_package.pop("location_name_groups", None)
+_ms.Context._load_game_data = _safe_load_game_data
+
+# Defaults match settings.ServerOptions (vendor/archipelago/settings.py:612).
+_host_ctx = _ms.Context(
+    host="loopback",
+    port=0,
+    server_password=None,
+    password=None,
+    location_check_points=1,
+    hint_cost=10,
+    item_cheat=True,
+    release_mode="auto",
+    collect_mode="auto",
+    countdown_mode="auto",
+    remaining_mode="goal",
+    auto_shutdown=0,
+    compatibility=2,
+    log_network=False,
+)
+_host_ctx.load("/tmp/seed.archipelago", False)
+
+# MultiServer's stock _start_async_saving spins a real OS thread (line 649 of
+# vendor/archipelago/MultiServer.py). Pyodide is single-threaded, so we
+# replace it with an asyncio task that runs on the same event loop the
+# request handlers use. After each successful _save(), the freshly-written
+# .apsave bytes are read back from MEMFS and forwarded to the main thread,
+# which is responsible for persisting them to IndexedDB.
+import os
+from js import self as _js_self
+from pyodide.ffi import to_js as _to_js
+
+async def _async_saver(ctx):
+    # 5s instead of MultiServer's 60s — saves are tiny (a few KB), and a
+    # browser tab is far more likely to be closed between ticks than a
+    # long-lived server process. Lower interval = less data loss.
+    ctx.auto_save_interval = 5
+    interval = 5
+    while not ctx.exit_event.is_set():
+        try:
+            await asyncio.wait_for(ctx.exit_event.wait(), timeout=interval)
+            break
+        except asyncio.TimeoutError:
+            pass
+        if not ctx.save_dirty:
+            continue
+        try:
+            ctx._save()
+            ctx.save_dirty = False
+            _push_apsave(ctx.save_filename)
+        except Exception as e:
+            ctx.logger.exception(e)
+
+def _push_apsave(path):
+    try:
+        if not path or not os.path.exists(path): return
+        with open(path, "rb") as f:
+            data = f.read()
+        if not data: return
+        _js_self._mhostSave(_to_js(memoryview(data)))
+    except Exception: pass
+
+def _start_async_saving_shim(self, atexit_save=True):
+    if not getattr(self, "auto_saver_task", None):
+        self.auto_saver_task = asyncio.create_task(_async_saver(self), name="MhostSave")
+_ms.Context._start_async_saving = _start_async_saving_shim
+
+_host_ctx.init_save(True)
+
+_host_server = await _ws.serve(
+    functools.partial(_ms.server, ctx=_host_ctx),
+    host=None, port=None,
+)
+_host_uri = _host_server.uri
+print(f"in-browser MultiServer ready at {_host_uri}")
+`;
+
+const HOST_STOP_PY = `
+import asyncio
+# Final flush: persist any state that hasn't hit a save tick yet so the user
+# doesn't lose progress between the last 60s saver run and tab close.
+try:
+    if getattr(_host_ctx, "save_dirty", False):
+        _host_ctx._save()
+        _host_ctx.save_dirty = False
+        _push_apsave(_host_ctx.save_filename)
+except Exception: pass
+try: _host_ctx.exit_event.set()
+except Exception: pass
+try:
+    _t = getattr(_host_ctx, "auto_saver_task", None)
+    if _t is not None: _t.cancel()
+except Exception: pass
+try: _host_server.close()
+except Exception: pass
+# Best-effort: close any client sockets so MultiServer's per-client loops exit.
+try:
+    for _ep in list(getattr(_host_ctx, "endpoints", [])):
+        try: await _ep.socket.close()
+        except Exception: pass
+except Exception: pass
+try: del _host_ctx
+except Exception: pass
+try: del _host_server
+except Exception: pass
+try: del _host_uri
+except Exception: pass
+`;
 
 const SETUP_PY = `
 import sys, os

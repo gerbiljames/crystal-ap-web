@@ -4,7 +4,7 @@
 
 import { unwrap } from "solid-js/store";
 import { app, setApp, refreshSessions, refreshYamls } from "./state.js";
-import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
+import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
 import { db, idbGet, idbPut, idbDel } from "./lib/idb.js";
@@ -67,6 +67,7 @@ export async function forgetSession(id: string) {
   if (dbc) {
     idbDel(dbc, id, ROM_STORE).catch(() => {});
     idbDel(dbc, id, ARTIFACTS_STORE).catch(() => {});
+    idbDel(dbc, id, MHOST_SAVE_STORE).catch(() => {});
     if (removed?.romHash) {
       idbDel(dbc, removed.romHash, SAVE_STORE).catch(() => {});
       idbDel(dbc, removed.romHash, STATE_STORE).catch(() => {});
@@ -109,6 +110,51 @@ export async function resumeSession(id: string) {
 }
 
 // -----------------------------------------------------------------------------
+// hosting
+// -----------------------------------------------------------------------------
+// Last-ditch flush before tab close. The in-worker async saver runs every 5s,
+// but a refresh in the gap between ticks would lose the very latest activity.
+// `pagehide` fires before unload (and before the worker is killed), giving us
+// one chance to commit. The fire-and-forget postMessage will be processed by
+// the worker, which writes to IDB synchronously enough to survive unload.
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    if (app.hosted?.kind === "loopback") {
+      try { apWorker.hostFlush(); } catch {}
+    }
+  });
+}
+type Hosted =
+  | { kind: "loopback"; ws_url: string; host: null; port: null; room_url: null }
+  | { kind: "remote";   ws_url: string; host: string; port: number; room_url: string | null };
+
+// Apply the user's host preference to a freshly-produced multidata blob.
+// "local"  → run MultiServer.py inside Pyodide; returns a loopback:// URI.
+// "remote" → upload to archipelago.gg via the Cloudflare Worker.
+// "off"    → null (user hosts externally).
+async function hostMultidata(multidata: Uint8Array, status?: (label: string) => void): Promise<Hosted | null> {
+  if (app.hostPref === "off") {
+    log("hosting disabled — the multidata is downloadable from the results card");
+    return null;
+  }
+  if (app.hostPref === "local") {
+    status?.("hosting in this tab…");
+    try {
+      // .slice() so the worker can transfer ownership without detaching the
+      // copy that's still living in app.artifacts (used by download links).
+      const res = await apWorker.host(app.seedId || "", multidata.slice());
+      return { kind: "loopback", ws_url: res.out.ws_url, host: null, port: null, room_url: null };
+    } catch (err: any) {
+      logErr(`in-browser host failed: ${err?.message || err}`);
+      return null;
+    }
+  }
+  status?.("hosting on archipelago.gg…");
+  const remote = await tryHostMultidata(multidata);
+  return remote ? { kind: "remote", ...remote } : null;
+}
+
+// -----------------------------------------------------------------------------
 // generation
 // -----------------------------------------------------------------------------
 async function runGeneration(yamlText: string) {
@@ -137,18 +183,14 @@ async function runGeneration(yamlText: string) {
   logOk(`generated ${Object.keys(artifacts).length} artifacts locally`);
 
   const multiName = Object.keys(artifacts).find(n => n.endsWith(".archipelago"));
-  let hosted = null;
-  if (multiName && app.hostPref) {
-    setApp("gen", "status", "hosting on archipelago.gg…");
-    hosted = await tryHostMultidata(artifacts[multiName]);
-  } else if (!app.hostPref) {
-    log("hosting disabled — the multidata is downloadable from the results card");
-  }
+  const hosted = multiName ? await hostMultidata(artifacts[multiName], (label) => setApp("gen", "status", label)) : null;
   setApp("hosted", hosted);
 
   clearInterval(elapsedTimer);
   setApp("gen", { visible: false, status: hosted ? "ready · hosted" : "ready", done: true });
-  logOk(hosted ? `hosted on ${hosted.host}:${hosted.port}` : "no archipelago.gg room (skipped)");
+  if (hosted?.kind === "loopback") logOk(`self-hosted in this tab`);
+  else if (hosted?.kind === "remote") logOk(`hosted on ${hosted.host}:${hosted.port}`);
+  else log("no host (skipped)");
 
   // Persist artifacts + record the session now so a reload before
   // patching can still resume from the ROM step.
@@ -289,19 +331,20 @@ export async function handleYamlDrop(f: File) {
 
     const multiName = Object.keys(artifacts).find(n => n.toLowerCase().endsWith(".archipelago"));
     let hosted = null;
-    if (multiName && app.hostPref) {
+    if (multiName && app.hostPref !== "off") {
       setStep("generating");
-      setApp("gen", { visible: true, status: "hosting on archipelago.gg…", elapsed: "0.0s", error: null, done: false });
-      hosted = await tryHostMultidata(artifacts[multiName]);
+      const initialStatus = app.hostPref === "local" ? "hosting in this tab…" : "hosting on archipelago.gg…";
+      setApp("gen", { visible: true, status: initialStatus, elapsed: "0.0s", error: null, done: false });
+      hosted = await hostMultidata(artifacts[multiName], (label) => setApp("gen", "status", label));
       setApp("gen", "visible", false);
-    } else if (!multiName && app.hostPref) {
+    } else if (!multiName && app.hostPref !== "off") {
       logWarn("hosting requested but no .archipelago was found — skip to ROM");
     }
     if (!hosted && manifest.server && manifest.server.includes(":")) {
       const [h, portStr] = manifest.server.split(":");
       const p = Number(portStr);
       if (h && Number.isInteger(p)) {
-        hosted = { host: h, port: p, ws_url: `wss://${h}:${p}`, room_url: null };
+        hosted = { kind: "remote", host: h, port: p, ws_url: `wss://${h}:${p}`, room_url: null };
         log(`server from patch: ${h}:${p}`);
       }
     }
@@ -475,20 +518,57 @@ async function bootEmulatorAndUi() {
     bindController({ emulator: e, module: Module });
     installBizHawkBridge(emu, apWorker);
 
-    // Seed the session form with host/slot info.
-    $<HTMLInputElement>("#sess-server").value = app.hosted ? `${app.hosted.host}:${app.hosted.port}` : "";
+    // For loopback sessions, the in-process MultiServer is keyed off a fresh
+    // URI per worker boot. Re-host now so a resumed session points at a live
+    // server rather than a stale ws_url from a previous tab. The worker
+    // pulls any persisted .apsave from IndexedDB by seedId itself, so
+    // MultiServer restores received items / hints / data storage instead of
+    // starting from scratch.
+    if (app.hosted?.kind === "loopback") {
+      const multiName = Object.keys(app.artifacts || {}).find((n) => n.toLowerCase().endsWith(".archipelago"));
+      if (multiName && app.seedId) {
+        try {
+          const res = await apWorker.host(app.seedId, app.artifacts[multiName].slice());
+          setApp("hosted", { ...app.hosted, ws_url: res.out.ws_url });
+        } catch (err: any) {
+          logErr("re-host failed: " + (err?.message || err));
+        }
+      } else {
+        logWarn("loopback session resumed but no .archipelago in cache — drop the YAML again to re-host");
+      }
+    }
+
+    // Seed the session form with host/slot info. For loopback the input
+    // shows a friendly label ("Self Hosted") instead of the synthetic URI;
+    // connectSession reads the real ws_url from app.hosted in that case.
+    const serverDisplay = app.hosted?.kind === "loopback"
+      ? "Self Hosted"
+      : (app.hosted ? `${app.hosted.host}:${app.hosted.port}` : "");
+    $<HTMLInputElement>("#sess-server").value = serverDisplay;
     $<HTMLInputElement>("#sess-slot").value   = app.slotName || "";
 
     // Expose for console poking.
     window.ap = { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash, RAM, WRAM_BASE };
-    log("ready · enter session details and Connect");
+    if (app.hosted?.kind === "loopback") {
+      log("ready · self-hosted, auto-connecting");
+      // Defer one tick so the input fields we just populated are committed
+      // to the DOM before connectSession reads them.
+      queueMicrotask(() => { connectSession().catch(() => {}); });
+    } else {
+      log("ready · enter session details and Connect");
+    }
   } finally {
     bootInFlight = false;
   }
 }
 
 export async function connectSession() {
-  const server = $<HTMLInputElement>("#sess-server").value.trim();
+  // For loopback hosts the input shows "Self Hosted" as a label; the real
+  // URI lives on app.hosted.ws_url. Substitute it before handing to the
+  // worker so the websockets shim sees `loopback://...` and short-circuits.
+  const server = app.hosted?.kind === "loopback" && app.hosted.ws_url
+    ? app.hosted.ws_url
+    : $<HTMLInputElement>("#sess-server").value.trim();
   const slot   = $<HTMLInputElement>("#sess-slot").value.trim();
   const pw     = $<HTMLInputElement>("#sess-pw").value;
   if (!server || !slot) { logErr("server and slot are required"); return; }
@@ -502,10 +582,16 @@ export async function connectSession() {
     const entry = list.find((s: any) => s.id === app.seedId);
     if (entry) {
       entry.slot = slot;
-      const [h, portStr] = server.split(":");
-      const port = Number(portStr);
-      if (h && Number.isInteger(port)) {
-        entry.hosted = { host: h, port, ws_url: `wss://${h}:${port}`, room_url: entry.hosted?.room_url || null };
+      // Loopback URIs are keyed off the worker's in-memory registry; persist
+      // the kind so resume can re-host instead of trying a real wss:// dial.
+      if (server.startsWith("loopback://")) {
+        entry.hosted = { kind: "loopback", host: null, port: null, ws_url: server, room_url: null };
+      } else {
+        const [h, portStr] = server.split(":");
+        const port = Number(portStr);
+        if (h && Number.isInteger(port)) {
+          entry.hosted = { kind: "remote", host: h, port, ws_url: `wss://${h}:${port}`, room_url: entry.hosted?.room_url || null };
+        }
       }
       saveSessions(list);
       setApp("slotName", slot);

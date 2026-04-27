@@ -11,6 +11,22 @@ import { loadYamls } from "./lib/yamls.js";
 
 const HOST_PREF_KEY = "crystal-ap-host-pref";
 
+// Hosting modes for newly-generated seeds:
+//   "local"  — run MultiServer.py inside this tab (Pyodide loopback). Default.
+//   "remote" — upload multidata to archipelago.gg via the Cloudflare Worker.
+//   "off"    — produce artifacts only; user hosts externally.
+export type HostPref = "local" | "remote" | "off";
+
+function loadHostPref(): HostPref {
+  const raw = localStorage.getItem(HOST_PREF_KEY);
+  // Migrate the prior boolean form: "on" meant archipelago.gg; anything else
+  // (including absent) now defaults to "local" since fully-local hosting is
+  // the new zero-config path.
+  if (raw === "on")  return "remote";
+  if (raw === "local" || raw === "remote" || raw === "off") return raw;
+  return "local";
+}
+
 export const [app, setApp] = createStore({
   step: "options",                                  // options | generating | rom | patching | play
   session: { state: "idle", label: "disconnected" }, // drives data-session
@@ -18,12 +34,12 @@ export const [app, setApp] = createStore({
   seedId: null,
   slotName: "Player1",
   artifacts: null,     // {name: Uint8Array}
-  hosted: null,        // {room_url, ws_url, host, port}
+  hosted: null,        // { kind: "remote" | "loopback", ws_url, host?, port?, room_url? }
   patchedRom: null,    // ArrayBuffer
   sessions: loadSessions(),
   yamls: loadYamls(),
 
-  hostPref: localStorage.getItem(HOST_PREF_KEY) === "on",
+  hostPref: loadHostPref() as HostPref,
 
   // Transient UI state per-step.
   gen:   { visible: false, status: "queued", elapsed: "0.0s", error: null, done: false },
@@ -31,9 +47,9 @@ export const [app, setApp] = createStore({
   yamlErr: null,
 });
 
-export function persistHostPref(on) {
-  try { localStorage.setItem(HOST_PREF_KEY, on ? "on" : "off"); } catch {}
-  setApp("hostPref", on);
+export function persistHostPref(mode: HostPref) {
+  try { localStorage.setItem(HOST_PREF_KEY, mode); } catch {}
+  setApp("hostPref", mode);
 }
 
 export function refreshSessions() { setApp("sessions", loadSessions()); }

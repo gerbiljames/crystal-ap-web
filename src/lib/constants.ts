@@ -34,7 +34,8 @@ export const ROM_STORE       = "rom";       // patched ROM per seed, keyed by se
 export const VANILLA_STORE   = "vanilla";   // vanilla ROM, single key "rom"
 export const ARTIFACTS_STORE = "artifacts"; // gen artifacts per seed, keyed by seed_id
 export const YAML_STORE      = "yaml";      // saved YAML text, keyed by sha256 hex
-export const DB_VERSION      = 6;
+export const MHOST_SAVE_STORE = "mhostsave"; // in-browser MultiServer .apsave bytes per seed_id
+export const DB_VERSION      = 7;
 
 export const SESSIONS_KEY = "crystal-ap-sessions";
 export const SESSIONS_MAX = 20;
