@@ -104,10 +104,20 @@ async function patch(id, romBytes, patchBytes) {
   await ensureInit(id);
   pyodide.FS.writeFile("/tmp/vanilla.gbc", romBytes);
   pyodide.FS.writeFile("/tmp/seed.apcrystalpre", patchBytes);
+  // Dispatch by game name from the patch's archipelago.json manifest. Stable
+  // and prerelease both ship a PokemonCrystalProcedurePatch class but they
+  // live in different modules and produce binary-incompatible patches.
   await pyodide.runPythonAsync(`
-from worlds.pokemon_crystal.rom import PokemonCrystalProcedurePatch
-PokemonCrystalProcedurePatch.source_data = open("/tmp/vanilla.gbc","rb").read()
-PokemonCrystalProcedurePatch(path="/tmp/seed.apcrystalpre").patch("/tmp/patched.gbc")
+import zipfile, json
+with zipfile.ZipFile("/tmp/seed.apcrystalpre") as zf:
+    _manifest = json.loads(zf.read("archipelago.json"))
+_game = _manifest.get("game", "Pokemon Crystal")
+from worlds.Files import AutoPatchRegister
+_PatchClass = AutoPatchRegister.patch_types.get(_game)
+if _PatchClass is None:
+    raise RuntimeError(f"no patch handler for game {_game!r}")
+_PatchClass.source_data = open("/tmp/vanilla.gbc","rb").read()
+_PatchClass(path="/tmp/seed.apcrystalpre").patch("/tmp/patched.gbc")
   `);
   // slice() detaches ownership from whatever Pyodide's FS returned — otherwise
   // transferring the buffer can detach Pyodide's own heap.
@@ -819,9 +829,11 @@ class _Sync:
 _cf.ThreadPoolExecutor = _Sync
 _cf.as_completed = lambda fs, timeout=None: iter(list(fs))
 
-# Eagerly import the apworld so failures surface rather than being swallowed
-# by AutoWorldRegister.
+# Eagerly import both apworlds so failures surface rather than being swallowed
+# by AutoWorldRegister, and so the patch dispatch table in AutoPatchRegister
+# has both PokemonCrystalProcedurePatch classes ready (stable + prerelease).
 import worlds.pokemon_crystal.world  # noqa: F401
+import worlds.pokemon_crystal_prerelease.world  # noqa: F401
 from worlds.AutoWorld import AutoWorldRegister
 _ = AutoWorldRegister.world_types  # force registration
 `;

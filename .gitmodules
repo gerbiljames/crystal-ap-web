@@ -5,3 +5,7 @@
 [submodule "binjgb"]
 	path = binjgb
 	url = https://github.com/binji/binjgb.git
+[submodule "archipelago-prerelease"]
+	path = vendor/archipelago-prerelease
+	url = https://github.com/gerbiljames/Archipelago-Crystal.git
+	branch = future/6.0.0
