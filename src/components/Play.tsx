@@ -1,5 +1,5 @@
 import { For, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { app, logLines, overlayPrefs } from "../state.js";
+import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
 import { connectSession, disconnectSession, disposeEmulator, ensureEmulator } from "../actions.js";
@@ -76,8 +76,16 @@ function ScreenFrame() {
       <div class="screen-label-bottom">
         <span class="screen-keys">arrows · <kbd>Z</kbd> b · <kbd>X</kbd> a · <kbd>↵</kbd> start · <kbd>⇥</kbd> select</span>
         <label class="vol" title="volume">
-          <span class="vol-label" id="vol-label">vol</span>
-          <input type="range" id="vol" min="0" max="100" value="50" />
+          <span class="vol-label" classList={{ muted: audioPrefs().volume === 0 }}>
+            {audioPrefs().volume === 0 ? "mute" : "vol"}
+          </span>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(audioPrefs().volume * 100)}
+            onInput={(ev) => setAudioPrefs({ ...audioPrefs(), volume: Number(ev.currentTarget.value) / 100 })}
+          />
         </label>
         <button class="fs-btn" onClick={toggleFullscreen} aria-label="fullscreen" title="fullscreen">
           <svg viewBox="0 0 24 24" aria-hidden="true">

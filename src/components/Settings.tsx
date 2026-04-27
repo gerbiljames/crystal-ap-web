@@ -1,5 +1,5 @@
 import { For, Show, createSignal, createEffect, onCleanup } from "solid-js";
-import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs, controllerPrefs, setControllerPrefs } from "../state.js";
+import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs, controllerPrefs, setControllerPrefs, audioPrefs, setAudioPrefs } from "../state.js";
 import {
   DEFAULT_BINDINGS, loadBindings, saveBindings, captureNextButton, getActivePad,
   type InputName,
@@ -16,7 +16,7 @@ const INPUT_ROWS: { name: InputName; label: string }[] = [
   { name: "right",  label: "right" },
 ];
 
-type Tab = "controller" | "overlay";
+type Tab = "controller" | "audio" | "overlay";
 
 export function Settings() {
   const [tab, setTab] = createSignal<Tab>("controller");
@@ -49,6 +49,13 @@ export function Settings() {
               <button
                 class="modal-tab"
                 role="tab"
+                aria-selected={tab() === "audio"}
+                data-active={tab() === "audio"}
+                onClick={() => setTab("audio")}
+              >audio</button>
+              <button
+                class="modal-tab"
+                role="tab"
                 aria-selected={tab() === "overlay"}
                 data-active={tab() === "overlay"}
                 onClick={() => setTab("overlay")}
@@ -59,6 +66,9 @@ export function Settings() {
           <div class="modal-body">
             <Show when={tab() === "controller"}>
               <ControllerPanel />
+            </Show>
+            <Show when={tab() === "audio"}>
+              <AudioPanel />
             </Show>
             <Show when={tab() === "overlay"}>
               <OverlayPanel />
@@ -171,6 +181,46 @@ function ControllerPanel() {
         Tip: the highlighted index next to each row lights up when that button is pressed.
         Useful for figuring out which physical button is which if your pad reports a non-standard mapping.
       </p>
+    </div>
+  );
+}
+
+function AudioPanel() {
+  const onVolume = (ev: Event) => {
+    const v = Number((ev.currentTarget as HTMLInputElement).value) / 100;
+    setAudioPrefs({ ...audioPrefs(), volume: v });
+  };
+  const onBackground = (ev: Event) => {
+    setAudioPrefs({ ...audioPrefs(), background: (ev.currentTarget as HTMLInputElement).checked });
+  };
+  return (
+    <div class="audio-panel">
+      <div class="pref-row">
+        <label class="pref-label" for="aud-vol">
+          <span>volume</span>
+          <span class="pref-sub">also mirrored under the emulator</span>
+        </label>
+        <input
+          id="aud-vol"
+          class="pref-range"
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          value={Math.round(audioPrefs().volume * 100)}
+          onInput={onVolume}
+        />
+      </div>
+
+      <label class="switch audio-bg-switch" title="When on, audio keeps playing while the browser tab/window doesn't have focus.">
+        <input
+          type="checkbox"
+          checked={audioPrefs().background}
+          onChange={onBackground}
+        />
+        <span class="switch-track"><span class="switch-knob"></span></span>
+        <span class="switch-text">play audio while unfocused</span>
+      </label>
     </div>
   );
 }

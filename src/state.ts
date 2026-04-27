@@ -64,6 +64,41 @@ export function setOverlayPrefs(next: OverlayPrefs) {
   try { localStorage.setItem(OVERLAY_KEY, JSON.stringify(next)); } catch {}
 }
 
+// ---------- audio settings ----------
+const AUDIO_PREFS_KEY  = "crystal-ap-audio-prefs";
+const LEGACY_VOLUME_KEY = "crystal-ap-volume"; // 0–100 string, pre-prefs era
+export type AudioPrefs = { volume: number; background: boolean }; // volume 0–1
+const AUDIO_DEFAULTS: AudioPrefs = { volume: 0.5, background: false };
+
+function loadAudioPrefs(): AudioPrefs {
+  try {
+    const raw = localStorage.getItem(AUDIO_PREFS_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      return {
+        volume: Number.isFinite(p.volume) && p.volume >= 0 && p.volume <= 1 ? p.volume : AUDIO_DEFAULTS.volume,
+        background: !!p.background,
+      };
+    }
+    // Migrate the legacy 0–100 volume key so existing users don't see
+    // their slider snap back to 50% after upgrade.
+    const legacy = localStorage.getItem(LEGACY_VOLUME_KEY);
+    if (legacy != null) {
+      const n = Number(legacy);
+      if (Number.isFinite(n) && n >= 0 && n <= 100) {
+        return { volume: n / 100, background: AUDIO_DEFAULTS.background };
+      }
+    }
+  } catch {}
+  return { ...AUDIO_DEFAULTS };
+}
+
+export const [audioPrefs, _setAudioPrefs] = createSignal<AudioPrefs>(loadAudioPrefs());
+export function setAudioPrefs(next: AudioPrefs) {
+  _setAudioPrefs(next);
+  try { localStorage.setItem(AUDIO_PREFS_KEY, JSON.stringify(next)); } catch {}
+}
+
 // ---------- controller settings ----------
 const CONTROLLER_PREFS_KEY = "crystal-ap-controller-prefs";
 export type ControllerPrefs = { background: boolean };

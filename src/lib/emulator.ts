@@ -10,6 +10,7 @@ import { idbGet, idbPut } from "./idb.js";
 import { STATE_STORE } from "./constants.js";
 import { log, logOk, logErr, logWarn } from "./log.js";
 import { getAudioContext } from "./audio.js";
+import { audioPrefs } from "../state.js";
 
 const EVENT_NEW_FRAME = 1, EVENT_AUDIO_BUFFER_FULL = 2, EVENT_UNTIL_TICKS = 4;
 const CPU_TICKS_PER_SECOND = 4194304;
@@ -28,7 +29,6 @@ export interface EmulatorHandle {
   writeDomain: (domain: string, addr: number, bytes: Uint8Array) => void;
   romHash: string;
   DOMAIN_SIZE: Record<string, number>;
-  setVolume: (v: number) => void;
   dispose: () => void;
 }
 
@@ -105,8 +105,6 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
   const audioBufPtr  = Module._get_audio_buffer_ptr(e);
   const audioBufCap  = Module._get_audio_buffer_capacity(e);
   let audioStartSec = 0;
-  let audioVolume  = 0.5;
-  let audioMuted   = false;
 
   function pushAudio() {
     if (audioCtx.state !== "running") return;
@@ -118,7 +116,12 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     const buffer = audioCtx.createBuffer(2, AUDIO_FRAMES, audioCtx.sampleRate);
     const c0 = buffer.getChannelData(0);
     const c1 = buffer.getChannelData(1);
-    const gain = audioMuted ? 0 : audioVolume;
+    // Volume comes from the reactive audio prefs so the slider in the play
+    // UI and the one in the settings modal stay in sync. When the document
+    // isn't focused and the user hasn't opted into background audio, drop
+    // the gain to zero so future scheduled buffers play silent.
+    const prefs = audioPrefs();
+    const gain = prefs.background || document.hasFocus() ? prefs.volume : 0;
     // Binjgb outputs 8-bit unsigned stereo interleaved. Divide-by-255 (no
     // -128 centering) matches the reference demo — the DC offset is
     // inaudible.
@@ -132,8 +135,6 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     src.start(audioStartSec);
     audioStartSec += AUDIO_FRAMES / audioCtx.sampleRate;
   }
-
-  const setVolume = (v) => { audioVolume = v; audioMuted = v === 0; };
 
   // --- SRAM + savestate persistence ---
   // SRAM (cart battery) and the binjgb savestate (CPU/VRAM/WRAM/APU/…) are
@@ -282,10 +283,9 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     }
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("keyup",   onKeyUp);
-    // Muting pending AudioBufferSourceNodes isn't possible once they're
-    // scheduled, but silencing the gain applied to future buffers stops
-    // anything that would have started after this tick.
-    audioMuted = true;
+    // No future audio buffers can be scheduled once `disposed` is true —
+    // step() returns immediately, so nothing reaches pushAudio. Buffers
+    // already queued play out and stop on their own.
     try { Module._file_data_delete(sramFd); }  catch {}
     try { Module._file_data_delete(stateFd); } catch {}
     try { Module._joypad_delete(joypadBufferPtr); } catch {}
@@ -299,7 +299,6 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     readDomain, writeDomain,
     romHash,
     DOMAIN_SIZE,
-    setVolume,
     dispose,
   };
 }
