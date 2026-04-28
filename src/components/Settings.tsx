@@ -4,6 +4,9 @@ import {
   DEFAULT_BINDINGS, loadBindings, saveBindings, captureNextButton, getActivePad,
   type InputName,
 } from "../lib/controller.js";
+import {
+  DEFAULT_KEY_BINDINGS, loadKeyBindings, saveKeyBindings, captureNextKey,
+} from "../lib/keyboard.js";
 
 const INPUT_ROWS: { name: InputName; label: string }[] = [
   { name: "A",      label: "A" },
@@ -16,7 +19,7 @@ const INPUT_ROWS: { name: InputName; label: string }[] = [
   { name: "right",  label: "right" },
 ];
 
-type Tab = "controller" | "audio" | "overlay";
+type Tab = "controller" | "keyboard" | "audio" | "overlay";
 
 export function Settings() {
   const [tab, setTab] = createSignal<Tab>("controller");
@@ -49,6 +52,13 @@ export function Settings() {
               <button
                 class="modal-tab"
                 role="tab"
+                aria-selected={tab() === "keyboard"}
+                data-active={tab() === "keyboard"}
+                onClick={() => setTab("keyboard")}
+              >keyboard</button>
+              <button
+                class="modal-tab"
+                role="tab"
                 aria-selected={tab() === "audio"}
                 data-active={tab() === "audio"}
                 onClick={() => setTab("audio")}
@@ -66,6 +76,9 @@ export function Settings() {
           <div class="modal-body">
             <Show when={tab() === "controller"}>
               <ControllerPanel />
+            </Show>
+            <Show when={tab() === "keyboard"}>
+              <KeyboardPanel />
             </Show>
             <Show when={tab() === "audio"}>
               <AudioPanel />
@@ -180,6 +193,78 @@ function ControllerPanel() {
       <p class="ctrl-tip">
         Tip: the highlighted index next to each row lights up when that button is pressed.
         Useful for figuring out which physical button is which if your pad reports a non-standard mapping.
+      </p>
+    </div>
+  );
+}
+
+function formatKeyCode(code: string): string {
+  if (code.startsWith("Key")) return code.slice(3);
+  if (code.startsWith("Digit")) return code.slice(5);
+  if (code === "ArrowUp") return "↑";
+  if (code === "ArrowDown") return "↓";
+  if (code === "ArrowLeft") return "←";
+  if (code === "ArrowRight") return "→";
+  return code;
+}
+
+function KeyboardPanel() {
+  const [bindings, setBindings] = createSignal({ ...loadKeyBindings() });
+  const [capturing, setCapturing] = createSignal<InputName | null>(null);
+
+  let cancelCapture: (() => void) | null = null;
+  const stopCapture = () => {
+    if (cancelCapture) { cancelCapture(); cancelCapture = null; }
+    setCapturing(null);
+  };
+
+  const beginRebind = (name: InputName) => {
+    stopCapture();
+    setCapturing(name);
+    cancelCapture = captureNextKey((code) => {
+      const next = { ...bindings(), [name]: code };
+      setBindings(next);
+      saveKeyBindings(next);
+      setCapturing(null);
+      cancelCapture = null;
+    });
+  };
+
+  const resetDefaults = () => {
+    stopCapture();
+    const next = { ...DEFAULT_KEY_BINDINGS };
+    setBindings(next);
+    saveKeyBindings(next);
+  };
+
+  onCleanup(stopCapture);
+
+  return (
+    <div class="ctrl-panel">
+      <div class="ctrl-rows">
+        <For each={INPUT_ROWS}>{(row) => {
+          const isCapturing = () => capturing() === row.name;
+          return (
+            <div class="ctrl-row" data-capturing={isCapturing()}>
+              <span class="ctrl-label">{row.label}</span>
+              <span class="ctrl-binding">
+                {isCapturing() ? "press any key…" : formatKeyCode(bindings()[row.name])}
+              </span>
+              <button
+                class="ctrl-rebind"
+                onClick={() => (isCapturing() ? stopCapture() : beginRebind(row.name))}
+              >{isCapturing() ? "cancel" : "rebind"}</button>
+            </div>
+          );
+        }}</For>
+      </div>
+
+      <div class="ctrl-actions">
+        <button class="btn-ghost" onClick={resetDefaults}>reset defaults</button>
+      </div>
+
+      <p class="ctrl-tip">
+        Esc cancels capture. Modifier-only presses (Shift/Ctrl/Alt/Meta) are ignored.
       </p>
     </div>
   );

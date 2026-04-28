@@ -74,7 +74,6 @@ function ScreenFrame() {
         <canvas id="screen" width="160" height="144"></canvas>
       </div>
       <div class="screen-label-bottom">
-        <span class="screen-keys">arrows · <kbd>Z</kbd> b · <kbd>X</kbd> a · <kbd>↵</kbd> start · <kbd>⇥</kbd> select</span>
         <label class="vol" title="volume">
           <span class="vol-label" classList={{ muted: audioPrefs().volume === 0 }}>
             {audioPrefs().volume === 0 ? "mute" : "vol"}

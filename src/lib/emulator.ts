@@ -11,6 +11,8 @@ import { STATE_STORE } from "./constants.js";
 import { log, logOk, logErr, logWarn } from "./log.js";
 import { getAudioContext } from "./audio.js";
 import { audioPrefs } from "../state.js";
+import { getKeyBindings } from "./keyboard.js";
+import type { InputName } from "./controller.js";
 
 const EVENT_NEW_FRAME = 1, EVENT_AUDIO_BUFFER_FULL = 2, EVENT_UNTIL_TICKS = 4;
 const CPU_TICKS_PER_SECOND = 4194304;
@@ -254,15 +256,18 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
   }
 
   // --- keyboard (ignore text inputs) ---
-  const keyMap = {
-    ArrowDown: "_set_joyp_down", ArrowUp: "_set_joyp_up",
-    ArrowLeft: "_set_joyp_left", ArrowRight: "_set_joyp_right",
-    KeyZ: "_set_joyp_B", KeyX: "_set_joyp_A",
-    Enter: "_set_joyp_start", Tab: "_set_joyp_select",
-  };
+  // Bindings live in keyboard.ts; we read them per event so user rebinds in
+  // the settings panel take effect immediately.
   const isTextTarget = t => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
-  const onKeyDown = (ev: KeyboardEvent) => { if (isTextTarget(ev.target)) return; const fn = keyMap[ev.code]; if (fn) { Module[fn](e, true); ev.preventDefault(); } };
-  const onKeyUp   = (ev: KeyboardEvent) => { if (isTextTarget(ev.target)) return; const fn = keyMap[ev.code]; if (fn) { Module[fn](e, false); ev.preventDefault(); } };
+  const resolveInput = (code: string): InputName | null => {
+    const map = getKeyBindings();
+    for (const name of Object.keys(map) as InputName[]) {
+      if (map[name] === code) return name;
+    }
+    return null;
+  };
+  const onKeyDown = (ev: KeyboardEvent) => { if (isTextTarget(ev.target)) return; const name = resolveInput(ev.code); if (name) { Module[`_set_joyp_${name}`](e, true);  ev.preventDefault(); } };
+  const onKeyUp   = (ev: KeyboardEvent) => { if (isTextTarget(ev.target)) return; const name = resolveInput(ev.code); if (name) { Module[`_set_joyp_${name}`](e, false); ev.preventDefault(); } };
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup",   onKeyUp);
 
