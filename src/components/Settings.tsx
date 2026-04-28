@@ -126,7 +126,13 @@ function ControllerPanel() {
     stopCapture();
     setCapturing(name);
     cancelCapture = captureNextButton((index) => {
-      const next = { ...bindings(), [name]: index };
+      const next = { ...bindings() };
+      // Kick any other input currently using this button so a single press
+      // never fires two joypad inputs at once.
+      for (const k of Object.keys(next) as InputName[]) {
+        if (k !== name && next[k] === index) next[k] = -1;
+      }
+      next[name] = index;
       setBindings(next);
       saveBindings(next);
       setCapturing(null);
@@ -160,12 +166,12 @@ function ControllerPanel() {
         <For each={INPUT_ROWS}>{(row) => {
           const idx = () => bindings()[row.name];
           const isCapturing = () => capturing() === row.name;
-          const isPressed = () => pressed().has(idx());
+          const isPressed = () => idx() >= 0 && pressed().has(idx());
           return (
             <div class="ctrl-row" data-capturing={isCapturing()}>
               <span class="ctrl-label">{row.label}</span>
               <span class="ctrl-binding" data-pressed={isPressed()}>
-                {isCapturing() ? "press any button…" : `button ${idx()}`}
+                {isCapturing() ? "press any button…" : (idx() >= 0 ? `button ${idx()}` : "unbound")}
               </span>
               <button
                 class="ctrl-rebind"
@@ -222,7 +228,13 @@ function KeyboardPanel() {
     stopCapture();
     setCapturing(name);
     cancelCapture = captureNextKey((code) => {
-      const next = { ...bindings(), [name]: code };
+      const next = { ...bindings() };
+      // Kick any other input currently using this key off it so a single
+      // key never fires two joypad inputs at once.
+      for (const k of Object.keys(next) as InputName[]) {
+        if (k !== name && next[k] === code) next[k] = "";
+      }
+      next[name] = code;
       setBindings(next);
       saveKeyBindings(next);
       setCapturing(null);
@@ -248,7 +260,7 @@ function KeyboardPanel() {
             <div class="ctrl-row" data-capturing={isCapturing()}>
               <span class="ctrl-label">{row.label}</span>
               <span class="ctrl-binding">
-                {isCapturing() ? "press any key…" : formatKeyCode(bindings()[row.name])}
+                {isCapturing() ? "press any key…" : (bindings()[row.name] ? formatKeyCode(bindings()[row.name]) : "unbound")}
               </span>
               <button
                 class="ctrl-rebind"

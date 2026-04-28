@@ -260,6 +260,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
   // the settings panel take effect immediately.
   const isTextTarget = t => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
   const resolveInput = (code: string): InputName | null => {
+    if (!code) return null;
     const map = getKeyBindings();
     for (const name of Object.keys(map) as InputName[]) {
       if (map[name] === code) return name;

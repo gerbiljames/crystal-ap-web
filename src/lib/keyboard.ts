@@ -3,6 +3,7 @@
 // helper for the settings UI. emulator.ts reads `getKeyBindings()` on each
 // keydown/keyup so rebinds take effect without restarting the emulator.
 
+import { createSignal } from "solid-js";
 import type { InputName } from "./controller.js";
 
 export const DEFAULT_KEY_BINDINGS: Record<InputName, string> = {
@@ -12,6 +13,8 @@ export const DEFAULT_KEY_BINDINGS: Record<InputName, string> = {
 
 export const KEYBOARD_BINDINGS_KEY = "crystal-ap-keyboard-bindings";
 
+// Empty string means "unbound" — used after a key is reassigned away from
+// another input via the rebind UI.
 export function loadKeyBindings(): Record<InputName, string> {
   try {
     const raw = localStorage.getItem(KEYBOARD_BINDINGS_KEY);
@@ -19,7 +22,7 @@ export function loadKeyBindings(): Record<InputName, string> {
     const parsed = JSON.parse(raw);
     const merged = { ...DEFAULT_KEY_BINDINGS };
     for (const k of Object.keys(DEFAULT_KEY_BINDINGS) as InputName[]) {
-      if (typeof parsed[k] === "string" && parsed[k]) merged[k] = parsed[k];
+      if (typeof parsed[k] === "string") merged[k] = parsed[k];
     }
     return merged;
   } catch {
@@ -27,15 +30,23 @@ export function loadKeyBindings(): Record<InputName, string> {
   }
 }
 
-let currentKeyBindings: Record<InputName, string> = loadKeyBindings();
+// Reactive so UI elsewhere (e.g. the on-screen key hint) can subscribe.
+export const [keyBindings, _setKeyBindings] = createSignal<Record<InputName, string>>(loadKeyBindings());
 
 export function getKeyBindings(): Record<InputName, string> {
-  return currentKeyBindings;
+  return keyBindings();
 }
 
 export function saveKeyBindings(b: Record<InputName, string>) {
   try { localStorage.setItem(KEYBOARD_BINDINGS_KEY, JSON.stringify(b)); } catch {}
-  currentKeyBindings = { ...b };
+  _setKeyBindings({ ...b });
+}
+
+export function isDefaultKeyBindings(b: Record<InputName, string>): boolean {
+  for (const k of Object.keys(DEFAULT_KEY_BINDINGS) as InputName[]) {
+    if (b[k] !== DEFAULT_KEY_BINDINGS[k]) return false;
+  }
+  return true;
 }
 
 const MODIFIER_CODES = new Set([

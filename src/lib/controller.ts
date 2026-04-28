@@ -72,9 +72,11 @@ export function bindController({ emulator, module }: { emulator: number; module:
     const pad = getActivePad();
     if (!pad) return;
 
-    // Buttons via the user-configurable map.
+    // Buttons via the user-configurable map. -1 means "unbound" (left dpad
+    // or stick still drive direction inputs below).
     for (const name of Object.keys(currentBindings) as InputName[]) {
       const idx = currentBindings[name];
+      if (idx < 0) { setHeld(name, false); continue; }
       const b = pad.buttons[idx];
       setHeld(name, !!(b && b.pressed));
     }

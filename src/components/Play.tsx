@@ -7,6 +7,7 @@ import { db, idbGet } from "../lib/idb.js";
 import { SAVE_STORE } from "../lib/constants.js";
 import { logErr, logWarn } from "../lib/log.js";
 import { apWorker } from "../lib/ap-worker.js";
+import { keyBindings, isDefaultKeyBindings } from "../lib/keyboard.js";
 
 function ScreenFrame() {
   let frameRef!: HTMLDivElement;
@@ -74,6 +75,9 @@ function ScreenFrame() {
         <canvas id="screen" width="160" height="144"></canvas>
       </div>
       <div class="screen-label-bottom">
+        <Show when={isDefaultKeyBindings(keyBindings())}>
+          <span class="screen-keys">arrows · <kbd>Z</kbd> b · <kbd>X</kbd> a · <kbd>↵</kbd> start · <kbd>⇥</kbd> select</span>
+        </Show>
         <label class="vol" title="volume">
           <span class="vol-label" classList={{ muted: audioPrefs().volume === 0 }}>
             {audioPrefs().volume === 0 ? "mute" : "vol"}
