@@ -580,6 +580,7 @@ export async function connectSession() {
     setSessionState("live", slot);
     logOk(`session started`);
     trackerInited = false;
+    trackerUnavailable = false;
     setTrackerInLogic([]);
     setTrackerGoMode("no");
     setTrackerStatus({ kind: "idle" });
@@ -613,9 +614,14 @@ export async function connectSession() {
 // dependency on a live session or in-process MultiServer.
 let trackerInited = false;
 let trackerInitInFlight: Promise<boolean> | null = null;
+// Latched once we've decided this seed can't run the tracker (e.g. patch-only
+// upload with no .archipelago). Prevents the dirty handler from re-emitting
+// the same warning on every Connected/ReceivedItems/RoomUpdate.
+let trackerUnavailable = false;
 
 async function ensureTrackerInited(): Promise<boolean> {
   if (trackerInited) return true;
+  if (trackerUnavailable) return false;
   if (app.session.state !== "live") {
     setTrackerStatus({ kind: "idle" });
     return false;
@@ -624,7 +630,8 @@ async function ensureTrackerInited(): Promise<boolean> {
   const artifacts = app.artifacts || {};
   const multiName = Object.keys(artifacts).find((n) => n.toLowerCase().endsWith(".archipelago"));
   if (!multiName) {
-    setTrackerStatus({ kind: "error", reason: "no multidata cached for this seed" });
+    trackerUnavailable = true;
+    setTrackerStatus({ kind: "error", reason: "tracker needs the .archipelago multidata — only a patch was uploaded" });
     return false;
   }
   const bytes = artifacts[multiName] as Uint8Array;
@@ -636,6 +643,7 @@ async function ensureTrackerInited(): Promise<boolean> {
         logWarn("tracker unavailable: " + reason.split("\n")[0]);
         console.error("[ut] tracker init failed:\n" + reason);
         setTrackerStatus({ kind: "error", reason });
+        trackerUnavailable = true;
         return false;
       }
       trackerInited = true;
@@ -690,6 +698,7 @@ export async function disconnectSession() {
   try { await apWorker.stopSession(); } catch {}
   setSessionState("idle", "disconnected");
   trackerInited = false;
+  trackerUnavailable = false;
   setTrackerInLogic([]);
   setTrackerGoMode("no");
   setTrackerStatus({ kind: "idle" });
