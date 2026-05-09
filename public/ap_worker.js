@@ -323,12 +323,29 @@ async function trackerInit(id, multidataBytes, slotName) {
   if (!available) {
     return { out: { ok: false, reason: "tracker world failed to import" } };
   }
-  pyodide.FS.writeFile("/tmp/ut_seed.archipelago", multidataBytes);
-  pyodide.globals.set("_ut_slot_name_in", String(slotName || ""));
-  const errOrEmpty = await pyodide.runPythonAsync(TRACKER_INIT_PY);
+  if (multidataBytes) {
+    pyodide.FS.writeFile("/tmp/ut_seed.archipelago", multidataBytes);
+    pyodide.globals.set("_ut_slot_name_in", String(slotName || ""));
+    const errOrEmpty = await pyodide.runPythonAsync(TRACKER_INIT_PY);
+    if (errOrEmpty) {
+      trackerReady = false;
+      return { out: { ok: false, reason: String(errOrEmpty) } };
+    }
+    trackerReady = true;
+    return { out: { ok: true } };
+  }
+  // Patch-only flow: no cached multidata, fall back to ctx-driven init using
+  // slot_data from the live Connected package. Returns wait=true if the
+  // session hasn't finished connecting yet — caller should retry on the next
+  // tracker-dirty event (Connected) instead of latching unavailable.
+  const errOrEmpty = await pyodide.runPythonAsync(TRACKER_INIT_FROM_CTX_PY);
   if (errOrEmpty) {
     trackerReady = false;
-    return { out: { ok: false, reason: String(errOrEmpty) } };
+    const reason = String(errOrEmpty);
+    if (reason === "__WAIT__") {
+      return { out: { ok: false, wait: true, reason: "waiting for server connection" } };
+    }
+    return { out: { ok: false, reason } };
   }
   trackerReady = true;
   return { out: { ok: true } };
@@ -360,7 +377,7 @@ function trackerStop() {
   try {
     pyodide.runPython(`
 import builtins as _b
-for _n in ("_ut_tracker", "_ut_multidata", "_ut_slot", "_ut_slot_name", "_ut_game"):
+for _n in ("_ut_tracker", "_ut_multidata", "_ut_slot", "_ut_slot_name", "_ut_game", "_ut_mode"):
     try: delattr(_b, _n)
     except Exception: pass
 `);
@@ -1049,7 +1066,71 @@ try:
     _b._ut_slot      = _slot
     _b._ut_slot_name = _slot_name
     _b._ut_game      = _game
+    _b._ut_mode      = "multidata"
     _ret = ""
+except Exception:
+    _ret = traceback.format_exc()
+_ret
+`;
+
+// Patch-only fallback: build a TrackerCore from the live session ctx.
+// BizHawkClientContext.on_package stashes slot_data on Connected, so once the
+// session is up we have everything UT needs. Returns "__WAIT__" if the ctx
+// hasn't finished connecting yet, "" on success, or a traceback.
+const TRACKER_INIT_FROM_CTX_PY = `
+import traceback
+try:
+    import os, logging, builtins as _b
+    os.makedirs("/ap/Players", exist_ok=True)
+    _ctx = globals().get("ctx", None)
+    if (_ctx is None or getattr(_ctx, "slot", None) is None
+            or not getattr(_ctx, "slot_info", None)
+            or getattr(_ctx, "slot_data", None) is None):
+        _ret = "__WAIT__"
+    else:
+        _slot = _ctx.slot
+        _team = _ctx.team or 0
+        _info = _ctx.slot_info[_slot]
+        _game = _info.game
+        _slot_name = _info.name
+        _slot_data = _ctx.slot_data or {}
+        from worlds.tracker.TrackerCore import TrackerCore
+        from worlds.AutoWorld import AutoWorldRegister
+        _world_cls = AutoWorldRegister.world_types.get(_game)
+        if _world_cls is None:
+            raise RuntimeError(f"no registered world for game {_game!r}")
+        _tracker = TrackerCore(logging.getLogger("UT"), False, False)
+        try:
+            (_yp, _tracker.output_format, _tracker.hide_excluded, _tracker.use_split,
+             _enf_def, _tracker.enable_glitched_logic, _tracker.sorting_priorities,
+             _tracker.sorting_method) = _tracker._set_host_settings()
+            if _tracker.enforce_deferred_connections is None:
+                _tracker.enforce_deferred_connections = _enf_def
+        except Exception as _hs_e:
+            print(f"[ut] _set_host_settings failed, using defaults: {_hs_e}")
+            _tracker.sorting_priorities = {
+                "default": 0, "hinted": 1, "excluded": 2, "excluded_glitched": 3,
+                "hinted_glitched": 4, "glitched": 5, "unconnected": 6,
+                "error": -1, "other": 7, "ut_status": 8,
+            }
+            _tracker.sorting_method = "label"
+            _tracker.output_format = "Both"
+            _tracker.hide_excluded = False
+            _tracker.use_split = True
+            _tracker.enable_glitched_logic = True
+        _tracker.set_slot_params(_game, _slot, _slot_name, _team)
+        _tracker.initalize_tracker_core(_world_cls, _slot_data)
+        if _tracker.gen_error:
+            raise RuntimeError("tracker init failed:\\n" + _tracker.gen_error)
+        if _tracker.multiworld is None:
+            raise RuntimeError("tracker init produced no multiworld")
+        _b._ut_tracker   = _tracker
+        _b._ut_multidata = None
+        _b._ut_slot      = _slot
+        _b._ut_slot_name = _slot_name
+        _b._ut_game      = _game
+        _b._ut_mode      = "ctx"
+        _ret = ""
 except Exception:
     _ret = traceback.format_exc()
 _ret
@@ -1074,21 +1155,32 @@ const TRACKER_UPDATE_PY = `
 def _ut_compute():
     import builtins as _b
     _t = getattr(_b, "_ut_tracker", None)
-    _md = getattr(_b, "_ut_multidata", None)
     _slot = getattr(_b, "_ut_slot", None)
-    if _t is None or _md is None or _slot is None: return []
+    _mode = getattr(_b, "_ut_mode", "multidata")
+    if _t is None or _slot is None: return ["no", []]
     try:
         from NetUtils import NetworkItem
-        _checked = set(int(x) for x in (_ut_checked_in or []))
-        _all_locs = _md["locations"][_slot]   # {loc_id: (item_id, recipient_slot, item_flags)}
-        _missing = set(_all_locs.keys()) - _checked
-        _items = []
-        for _lid in _checked:
-            _info = _all_locs.get(_lid)
-            if _info is None: continue
-            _iid, _recv, _flags = _info[0], _info[1], _info[2]
-            if _recv != _slot: continue   # not for us — would be sent over network
-            _items.append(NetworkItem(_iid, _lid, _slot, _flags))
+        if _mode == "ctx":
+            # Driven entirely by the live session ctx — what TrackerClient does
+            # in stock UT. items_received is the authoritative network list;
+            # missing/checked come straight off ctx.
+            _ctx = globals().get("ctx", None)
+            if _ctx is None: return ["no", []]
+            _missing = set(int(x) for x in (getattr(_ctx, "missing_locations", None) or set()))
+            _items = list(getattr(_ctx, "items_received", None) or [])
+        else:
+            _md = getattr(_b, "_ut_multidata", None)
+            if _md is None: return ["no", []]
+            _checked = set(int(x) for x in (_ut_checked_in or []))
+            _all_locs = _md["locations"][_slot]   # {loc_id: (item_id, recipient_slot, item_flags)}
+            _missing = set(_all_locs.keys()) - _checked
+            _items = []
+            for _lid in _checked:
+                _info = _all_locs.get(_lid)
+                if _info is None: continue
+                _iid, _recv, _flags = _info[0], _info[1], _info[2]
+                if _recv != _slot: continue   # not for us — would be sent over network
+                _items.append(NetworkItem(_iid, _lid, _slot, _flags))
         _t.set_items_received(_items)
         _t.set_missing_locations(_missing)
         _state = _t.updateTracker()

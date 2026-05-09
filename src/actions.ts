@@ -629,16 +629,19 @@ async function ensureTrackerInited(): Promise<boolean> {
   if (trackerInitInFlight) return trackerInitInFlight;
   const artifacts = app.artifacts || {};
   const multiName = Object.keys(artifacts).find((n) => n.toLowerCase().endsWith(".archipelago"));
-  if (!multiName) {
-    trackerUnavailable = true;
-    setTrackerStatus({ kind: "error", reason: "tracker needs the .archipelago multidata — only a patch was uploaded" });
-    return false;
-  }
-  const bytes = artifacts[multiName] as Uint8Array;
+  // Patch-only flow: no cached multidata, fall back to driving UT off the
+  // live session ctx (slot_data from Connected). The dirty handler retries
+  // on Connected/RoomUpdate, so don't latch unavailable when we're just
+  // waiting on the websocket handshake.
+  const bytes = multiName ? (artifacts[multiName] as Uint8Array) : null;
   trackerInitInFlight = (async () => {
     try {
       const res = await apWorker.trackerInit(bytes, app.slotName || "");
       if (!res?.out?.ok) {
+        if (res?.out?.wait) {
+          setTrackerStatus({ kind: "idle" });
+          return false;
+        }
         const reason = res?.out?.reason || "unknown";
         logWarn("tracker unavailable: " + reason.split("\n")[0]);
         console.error("[ut] tracker init failed:\n" + reason);
