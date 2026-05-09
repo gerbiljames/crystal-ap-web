@@ -24,7 +24,6 @@ function Blurb() {
         <li>Your ROM never leaves this browser. It's stored locally so you don't need to re-provide it.</li>
         <li>Emulation by <a href="https://github.com/binji/binjgb" target="_blank" rel="noopener">binjgb</a>. Saves persist per seed.</li>
         <li>The multiworld can be hosted on <a href="https://archipelago.gg" target="_blank" rel="noopener">archipelago.gg</a> via a tiny proxy.</li>
-        <li>You can generate a YAML on <a href="https://ap-lobby.bananium.fr/options/pokemon_crystal" target="_blank" rel="noopener">Bananium</a>.</li>
       </ul>
     </aside>
   );
