@@ -744,10 +744,20 @@ async def _loopback_connect(uri):
 async def _ws_connect(uri, *args, **kwargs):
     if uri.startswith("loopback://"):
         return await _loopback_connect(uri)
-    # Force wss:// for real connections — the page is served over HTTPS,
-    # so mixed-content blocks ws:// regardless of caller-supplied scheme.
-    u = re.sub(r"^wss?://", "", uri)
-    u = "wss://" + u
+    # Respect the caller-supplied scheme — forcing wss:// breaks ws:// to a
+    # local multiserver. Only upgrade ws→wss when the page is HTTPS and the
+    # browser would mixed-content-block ws:// anyway. (Localhost gets a pass
+    # since browsers treat it as a secure context for ws://.)
+    try:
+        from js import location as _loc
+        _page_https = str(_loc.protocol) == "https:"
+    except Exception:
+        _page_https = False
+    u = uri
+    if _page_https and u.startswith("ws://"):
+        _host = u[len("ws://"):].split("/", 1)[0].split(":", 1)[0]
+        if _host not in ("localhost", "127.0.0.1", "[::1]"):
+            u = "wss://" + u[len("ws://"):]
     ws = _BrowserWS(u)
     await ws.wait_open()
     return ws
