@@ -1,4 +1,4 @@
-import { For, Show, createSignal, createMemo, createEffect, onCleanup, untrack } from "solid-js";
+import { For, Index, Show, createSignal, createMemo, createEffect, onCleanup, untrack } from "solid-js";
 import Prism from "prismjs";
 import "prismjs/components/prism-yaml";
 import { yamlCreatorOpen, setYamlCreatorOpen, yamlEditTarget, setYamlEditTarget } from "../state.js";
@@ -323,19 +323,27 @@ function WeightedEditor(props: { opt: OptionDef; value: WeightedValue; setValue:
 
   return (
     <div class="yc-weighted">
-      <For each={props.value.entries}>{(e, i) => (
+      <Index each={props.value.entries}>{(entry, i) => (
         <div class="yc-weighted-row">
-          {valueInput(i(), e)}
+          {valueInput(i, entry())}
           <input
             class="yc-weight"
             type="number"
             min="0"
-            value={e.weight}
-            onInput={ev => update(i(), { weight: Number(ev.currentTarget.value) || 0 })}
+            value={entry().weight}
+            onInput={ev => {
+              const raw = ev.currentTarget.value;
+              if (raw === "") return;
+              const n = Number(raw);
+              if (Number.isFinite(n)) update(i, { weight: Math.max(0, Math.floor(n)) });
+            }}
+            onBlur={ev => {
+              if (ev.currentTarget.value === "") update(i, { weight: 0 });
+            }}
           />
-          <button class="yc-btn yc-btn-x" type="button" onClick={() => remove(i())} aria-label="remove">×</button>
+          <button class="yc-btn yc-btn-x" type="button" onClick={() => remove(i)} aria-label="remove">×</button>
         </div>
-      )}</For>
+      )}</Index>
       <button class="yc-btn" type="button" onClick={add}>+ row</button>
     </div>
   );
