@@ -56,6 +56,13 @@ export function refreshSessions() { setApp("sessions", loadSessions()); }
 export function refreshYamls()    { setApp("yamls", loadYamls()); }
 
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
+export const [yamlCreatorOpen, setYamlCreatorOpen] = createSignal(false);
+
+// When set, the YAML creator opens in raw-text edit mode pre-populated with
+// this saved YAML. Save will replace the original entry (the hash changes
+// whenever the text changes, so we forget the old one).
+export type YamlEditTarget = { hash: string; text: string; displayName: string };
+export const [yamlEditTarget, setYamlEditTarget] = createSignal<YamlEditTarget | null>(null);
 
 // ---------- overlay settings ----------
 const OVERLAY_KEY = "crystal-ap-overlay";

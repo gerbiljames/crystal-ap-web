@@ -1,17 +1,14 @@
-import { For, Show, createSignal, createEffect, onCleanup } from "solid-js";
-import { Portal } from "solid-js/web";
-import { app, setApp, persistHostPref } from "../state.js";
+import { For, Show, createSignal, createEffect } from "solid-js";
+import { app, setApp, persistHostPref, setYamlCreatorOpen } from "../state.js";
 import { formatAge } from "../lib/sessions.js";
 import { isPatchName } from "../lib/zip.js";
 import { db, idbGet } from "../lib/idb.js";
 import { GB_ROM_SIZE, VANILLA_STORE } from "../lib/constants.js";
 import {
   handleYamlDrop, handleRomDrop, continueToRom, resumeSession, forgetSession, resetTransient,
-  useSavedYaml, renameSavedYaml, forgetSavedYaml, fetchSavedYamlText,
+  useSavedYaml, renameSavedYaml, forgetSavedYaml, openYamlForEdit,
 } from "../actions.js";
 import type { SavedYaml } from "../lib/yamls.js";
-import Prism from "prismjs";
-import "prismjs/components/prism-yaml";
 import { Dropzone } from "./Dropzone.jsx";
 
 function Blurb() {
@@ -66,8 +63,6 @@ function ResumeList() {
 function SavedYamlsList() {
   const [editing, setEditing] = createSignal<string | null>(null);
   const [draft, setDraft] = createSignal("");
-  const [preview, setPreview] = createSignal<{ entry: SavedYaml; text: string | null } | null>(null);
-
   const beginEdit = (hash: string, current: string) => {
     setEditing(hash);
     setDraft(current);
@@ -77,36 +72,13 @@ function SavedYamlsList() {
     setEditing(null);
   };
 
-  const openPreview = async (y: SavedYaml) => {
-    // Render the modal immediately with null text (shows a loading line) so
-    // the UI doesn't wait on IDB before acknowledging the click.
-    setPreview({ entry: y, text: null });
-    const text = await fetchSavedYamlText(y.hash);
-    // Guard against the modal being closed / another row opened while the
-    // fetch was in flight.
-    const current = preview();
-    if (current && current.entry.hash === y.hash) setPreview({ entry: y, text: text ?? "" });
-  };
-  const closePreview = () => setPreview(null);
-
-  // Row-level click opens the preview, but only when the click landed on
-  // "free space" — any button/input or anything inside .actions handles its
-  // own behaviour and shouldn't double-fire the modal.
+  // Row-level click opens the YAML in the creator (raw-edit mode), but only
+  // when the click landed on "free space" — buttons/inputs/.actions handle
+  // their own behaviour and shouldn't double-fire.
   const onRowClick = (y: SavedYaml) => (ev: MouseEvent) => {
     const t = ev.target as HTMLElement;
     if (t.closest("button, input, .actions")) return;
-    openPreview(y);
-  };
-
-  createEffect(() => {
-    if (!preview()) return;
-    const onKey = (ev: KeyboardEvent) => { if (ev.key === "Escape") closePreview(); };
-    window.addEventListener("keydown", onKey);
-    onCleanup(() => window.removeEventListener("keydown", onKey));
-  });
-
-  const onBackdrop = (ev: MouseEvent) => {
-    if (ev.target === ev.currentTarget) closePreview();
+    openYamlForEdit(y.hash);
   };
 
   return (
@@ -115,13 +87,13 @@ function SavedYamlsList() {
         <div class="resume-head">
           <span class="eyebrow">saved yamls</span>
           <span class="resume-head-hint">
-            <span class="hint-desktop">click row to preview · click name to rename</span>
-            <span class="hint-touch">tap row to preview · tap name to rename</span>
+            <span class="hint-desktop">click row to edit · click name to rename</span>
+            <span class="hint-touch">tap row to edit · tap name to rename</span>
           </span>
         </div>
         <div>
           <For each={app.yamls}>{(y) => (
-            <div class="resume-row resume-row-clickable" onClick={onRowClick(y)} title="click to preview">
+            <div class="resume-row resume-row-clickable" onClick={onRowClick(y)} title="click to edit">
               <span class="slot">{y.slotName || "?"}</span>
               <span class="id yaml-name">
                 <Show
@@ -169,29 +141,6 @@ function SavedYamlsList() {
           </label>
         </div>
       </div>
-      <Show when={preview()}>
-        {(p) => (
-          <Portal>
-            <div class="modal-backdrop" onClick={onBackdrop}>
-              <div class="modal yaml-preview-modal" role="dialog" aria-modal="true" aria-label="yaml preview">
-                <div class="modal-head">
-                  <span class="modal-title">{p().entry.name}</span>
-                  <button class="modal-close" onClick={closePreview} aria-label="close">✕</button>
-                </div>
-                <div class="modal-body">
-                  <pre class="yaml-preview language-yaml"><code class="language-yaml" innerHTML={
-                  p().text === null
-                    ? `<span class="token comment">loading…</span>`
-                    : p().text === ""
-                      ? `<span class="token comment">(empty)</span>`
-                      : Prism.highlight(p().text!, Prism.languages.yaml, "yaml")
-                }></code></pre>
-                </div>
-              </div>
-            </div>
-          </Portal>
-        )}
-      </Show>
     </Show>
   );
 }
@@ -202,7 +151,10 @@ function OptionsPane() {
       <ResumeList />
       <SavedYamlsList />
       <div class="home-card">
-        <div class="card-head"><span class="eyebrow">generate or import seed</span></div>
+        <div class="card-head">
+          <span class="eyebrow">generate or import seed</span>
+          <button class="btn-primary yc-open-btn" onClick={() => setYamlCreatorOpen(true)} title="Build a YAML in the browser">Create YAML</button>
+        </div>
         <Dropzone id="dz-yaml" inputId="yaml-file" accept=".yaml,.yml,.apcrystal,.apcrystalpre,.zip,text/yaml" onFile={handleYamlDrop}>
           <div class="dz-mark">◇</div>
           <div class="dz-primary">Drop YAML, <b>.apcrystal</b>, or <b>output .zip</b></div>

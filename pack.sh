@@ -22,6 +22,10 @@ if [ ! -d "$UT/worlds/tracker" ]; then
     echo "vendor/archipelago-tracker is empty — run: git submodule update --init" >&2
     exit 1
 fi
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 is required to regenerate src/generated/yaml-schema.json" >&2
+    exit 1
+fi
 
 # Stage everything under one root so a single tar carries both the stable
 # AP source tree and the prerelease apworld layered on top.
@@ -35,6 +39,11 @@ cp -R "$PRE/worlds/pokemon_crystal_prerelease" "$STAGE/worlds/pokemon_crystal_pr
 # Overlay Universal Tracker's worlds/tracker on top.
 rm -rf "$STAGE/worlds/tracker"
 cp -R "$UT/worlds/tracker" "$STAGE/worlds/tracker"
+
+# Dump option metadata for the YAML creator UI. Runs against the same staged
+# tree the tarball is built from, so the form stays in lockstep with the
+# vendor submodules.
+python3 "$HERE/scripts/dump-yaml-schema.py" "$STAGE" "$HERE/src/generated/yaml-schema.json"
 
 tar -cf "$OUT" -C "$STAGE" \
     --exclude="__pycache__" \

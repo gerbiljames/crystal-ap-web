@@ -17,6 +17,8 @@
     "vite": "^8.0.10"
   },
   "dependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "js-yaml": "^4.1.1",
     "prismjs": "^1.30.0",
     "solid-js": "^1.9.12",
     "vite-plugin-solid": "^2.11.12"

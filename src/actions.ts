@@ -3,7 +3,7 @@
 // (state.js) and talk to the framework-agnostic lib/ modules.
 
 import { unwrap } from "solid-js/store";
-import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus } from "./state.js";
+import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setYamlCreatorOpen, setYamlEditTarget } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
@@ -415,6 +415,45 @@ export async function useSavedYaml(hash: string) {
   if (slot) { setApp("slotName", slot); log(`parsed slot name: ${slot}`); }
   setStep("generating");
   runGeneration(stored.text);
+}
+
+// Save a YAML built by the in-app creation UI. Returns the content hash so
+// callers can immediately hand it to `useSavedYaml`.
+export async function saveCreatedYaml(text: string, displayName: string): Promise<string> {
+  setApp("yamlErr", null);
+  const slot = extractSlotNameFromYaml(text);
+  await saveYamlToLibrary(text, displayName, slot);
+  return sha256Hex(text);
+}
+
+export async function createAndUseYaml(text: string, displayName: string) {
+  const hash = await saveCreatedYaml(text, displayName);
+  await useSavedYaml(hash);
+}
+
+// Open the YAML creator in raw-edit mode with the saved YAML loaded.
+export async function openYamlForEdit(hash: string) {
+  const text = await fetchSavedYamlText(hash);
+  if (text == null) {
+    logErr("YAML text missing from storage");
+    return;
+  }
+  const entry = loadYamls().find(y => y.hash === hash);
+  setYamlEditTarget({ hash, text, displayName: entry?.name ?? "edited.yaml" });
+  setYamlCreatorOpen(true);
+}
+
+// Save an edited YAML. If the text changed (different hash) the old entry is
+// forgotten so the library doesn't pile up versions.
+export async function saveEditedYaml(text: string, displayName: string, oldHash: string): Promise<string> {
+  setApp("yamlErr", null);
+  const slot = extractSlotNameFromYaml(text);
+  await saveYamlToLibrary(text, displayName, slot);
+  const newHash = await sha256Hex(text);
+  if (newHash !== oldHash) {
+    await forgetSavedYaml(oldHash);
+  }
+  return newHash;
 }
 
 export function renameSavedYaml(hash: string, newName: string) {
