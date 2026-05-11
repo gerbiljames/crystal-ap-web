@@ -1277,16 +1277,12 @@
   }
   .gp-b:active, .gp-b[data-held="1"] { background: var(--jade); color: var(--bg-0); }
 
-  /* Touch-only mobile layout: on-screen gamepad, vertically reserved
-     play-game height, fluid canvas, log relocated into the game column.
-     Gated on `(any-hover: none) and (any-pointer: coarse)` so a desktop
-     user resizing their browser narrow keeps the desktop 2-col layout
-     (screen + console side-by-side at natural sizes) instead of inheriting
-     touch reserves they can't use anyway. `any-*` (vs plain `hover` /
-     `pointer`) is what catches devices like the Galaxy S24 Ultra, where
-     the S Pen is the *primary* pointer and reports as fine/hovering — the
-     finger is still a coarse pointer, just not the primary one. */
-  @media (max-width: 900px) and (any-hover: none) and (any-pointer: coarse) {
+  /* Touch-only mobile layout: on-screen gamepad, reserved play-game
+     height, fluid canvas, log relocated into the game column. Gated on
+     `any-pointer: coarse` (not plain `pointer: coarse`, not paired with
+     `any-hover: none`) so stylus phones like the S24 Ultra — where the
+     S Pen is the primary pointer and hovers — still qualify. */
+  @media (max-width: 900px) and (any-pointer: coarse) {
     .gamepad { display: flex; }
     .screen-keys { display: none; }
     /* Canvas becomes fluid once we're on a touch-y viewport — desktop
@@ -1354,7 +1350,7 @@
      emulator. Split the gamepad around the emulator — dpad left, and
      A/B stacked over start/select on the right — so the emulator gets
      the full vertical height. Log is hidden; no room for it. */
-  @media (max-width: 1100px) and (max-height: 600px) and (orientation: landscape) and (any-hover: none) and (any-pointer: coarse) {
+  @media (max-width: 1100px) and (max-height: 600px) and (orientation: landscape) and (any-pointer: coarse) {
     .play-game {
       display: grid;
       grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1814,7 +1810,7 @@
   /* Swap the hint copy on touch-primary devices so it says "tap" instead
      of "click". Falls back to desktop text if the media query is unsupported. */
   .hint-touch { display: none; }
-  @media (any-hover: none) and (any-pointer: coarse) {
+  @media (any-pointer: coarse) {
     .hint-desktop { display: none; }
     .hint-touch   { display: inline; }
   }
