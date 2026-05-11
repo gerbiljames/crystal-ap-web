@@ -39,6 +39,16 @@ export function idbPut(db: IDBDatabase, k: IDBValidKey, v: any, store: string = 
   });
 }
 
+// Presence check that doesn't materialise the value (count is O(1) on an
+// indexed-key range vs. reading the whole ArrayBuffer back into JS).
+export function idbHas(db: IDBDatabase, k: IDBValidKey, store: string = SAVE_STORE): Promise<boolean> {
+  return new Promise((res, rej) => {
+    const t = db.transaction(store, "readonly").objectStore(store).count(k);
+    t.onsuccess = () => res((t.result as number) > 0);
+    t.onerror   = () => rej(t.error);
+  });
+}
+
 export function idbDel(db: IDBDatabase, k: IDBValidKey, store: string = SAVE_STORE): Promise<void> {
   return new Promise((res, rej) => {
     const t = db.transaction(store, "readwrite").objectStore(store).delete(k);

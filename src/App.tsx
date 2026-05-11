@@ -17,6 +17,13 @@ export function App() {
     const onPop = () => teardownAndReload();
     window.addEventListener("popstate", onPop);
     onCleanup(() => window.removeEventListener("popstate", onPop));
+
+    // Ask the browser to make our IndexedDB storage persistent. Without this,
+    // Chrome (especially on Android) evicts under pressure and the patched
+    // ROM + gen artifacts disappear silently, breaking resume. The promise
+    // resolves with the eventual decision — Chrome grants it based on
+    // engagement heuristics, no permission prompt is shown.
+    navigator.storage?.persist?.().catch(() => {});
   });
   return (
     <div class="app" data-step={app.step} data-session={app.session.state}>

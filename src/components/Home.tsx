@@ -2,8 +2,8 @@ import { For, Show, createSignal, createEffect } from "solid-js";
 import { app, setApp, persistHostPref, setYamlCreatorOpen } from "../state.js";
 import { formatAge } from "../lib/sessions.js";
 import { isPatchName } from "../lib/zip.js";
-import { db, idbGet } from "../lib/idb.js";
-import { GB_ROM_SIZE, VANILLA_STORE } from "../lib/constants.js";
+import { db, idbGet, idbHas } from "../lib/idb.js";
+import { GB_ROM_SIZE, VANILLA_STORE, ROM_STORE, ARTIFACTS_STORE } from "../lib/constants.js";
 import {
   handleYamlDrop, handleRomDrop, continueToRom, resumeSession, forgetSession, resetTransient,
   useSavedYaml, renameSavedYaml, forgetSavedYaml, openYamlForEdit,
@@ -27,6 +27,26 @@ function Blurb() {
 }
 
 function ResumeList() {
+  // Sessions live in localStorage, but the data they reference (patched ROM,
+  // generation artifacts) lives in IndexedDB — which mobile browsers happily
+  // evict under storage pressure. Probe each session on mount so the row
+  // reflects current resumability instead of pretending it'll work.
+  const [evicted, setEvicted] = createSignal<Set<string>>(new Set());
+  createEffect(async () => {
+    const ids = app.sessions.map((s: any) => s.id);
+    const dbc = await db();
+    if (!dbc) return;
+    const dead = new Set<string>();
+    await Promise.all(ids.map(async (id: string) => {
+      const [hasRom, hasArt] = await Promise.all([
+        idbHas(dbc, id, ROM_STORE).catch(() => false),
+        idbHas(dbc, id, ARTIFACTS_STORE).catch(() => false),
+      ]);
+      if (!hasRom && !hasArt) dead.add(id);
+    }));
+    setEvicted(dead);
+  });
+
   return (
     <Show when={app.sessions.length > 0}>
       <div class="resume-list" id="resume-list">
@@ -35,25 +55,46 @@ function ResumeList() {
           <span class="resume-head-hint">saved locally · ROM cached</span>
         </div>
         <div id="resume-list-inner">
-          <For each={app.sessions}>{(s) => (
-            <div class="resume-row">
-              <span class="slot">{s.slot || "?"}</span>
-              <span class="id">
-                {s.id}
-                <Show when={s.romCached}>
-                  <span class="rom-cached" title="patched ROM cached locally">ROM</span>
-                </Show>
-              </span>
-              <span class="meta">
-                <em>{s.hosted?.kind === "loopback" ? "self-hosted" : (s.hosted?.host ? `${s.hosted.host}:${s.hosted.port}` : "no host")}</em>
-                {" "}{formatAge(Date.now() - s.savedAt)}
-              </span>
-              <span class="actions">
-                <button class="btn-primary resume" onClick={() => resumeSession(s.id)}>resume</button>
-                <button class="forget" title="remove from this device" onClick={() => forgetSession(s.id)}>forget</button>
-              </span>
-            </div>
-          )}</For>
+          <For each={app.sessions}>{(s) => {
+            const dead = () => evicted().has(s.id);
+            const remoteRoom = () => s.hosted?.kind === "remote" ? s.hosted.room_url : null;
+            return (
+              <div class="resume-row" data-evicted={dead() ? "true" : undefined}>
+                <span class="slot">{s.slot || "?"}</span>
+                <span class="id">
+                  {s.id}
+                  <Show when={s.romCached && !dead()}>
+                    <span class="rom-cached" title="patched ROM cached locally">ROM</span>
+                  </Show>
+                  <Show when={dead()}>
+                    <span class="rom-evicted" title="browser cleared the cached files for this seed">cache cleared</span>
+                  </Show>
+                </span>
+                <span class="meta">
+                  <em>{s.hosted?.kind === "loopback" ? "self-hosted" : (s.hosted?.host ? `${s.hosted.host}:${s.hosted.port}` : "no host")}</em>
+                  {" "}{formatAge(Date.now() - s.savedAt)}
+                </span>
+                <span class="actions">
+                  <Show
+                    when={!dead()}
+                    fallback={
+                      <Show
+                        when={remoteRoom()}
+                        fallback={
+                          <span class="resume-dead-hint" title="drop the YAML on the dropzone below to roll a new seed">drop YAML to re-roll</span>
+                        }
+                      >
+                        <a class="btn-primary resume" href={remoteRoom()!} target="_blank" rel="noopener" title="open the archipelago.gg room — multidata still lives there">open room ↗</a>
+                      </Show>
+                    }
+                  >
+                    <button class="btn-primary resume" onClick={() => resumeSession(s.id)}>resume</button>
+                  </Show>
+                  <button class="forget" title="remove from this device" onClick={() => forgetSession(s.id)}>forget</button>
+                </span>
+              </div>
+            );
+          }}</For>
         </div>
       </div>
     </Show>

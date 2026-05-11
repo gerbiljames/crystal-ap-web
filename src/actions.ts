@@ -106,7 +106,9 @@ export async function resumeSession(id: string) {
     await continueToRom();
     return;
   }
-  logErr(`no cached artifacts for ${id} — drop your YAML again to regenerate`);
+  const msg = `couldn't resume ${id} — the browser cleared this seed's cached files. Drop the YAML again to roll a new seed.`;
+  setApp("yamlErr", msg);
+  logErr(msg);
 }
 
 // -----------------------------------------------------------------------------

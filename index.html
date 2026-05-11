@@ -651,6 +651,25 @@
     padding: 1px 5px;
     border-radius: 2px;
   }
+  .resume-row .rom-evicted {
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    color: var(--coral);
+    background: rgba(235,59,121,0.06);
+    border: 1px solid var(--coral-deep);
+    padding: 1px 5px;
+    border-radius: 2px;
+    text-transform: uppercase;
+  }
+  .resume-row[data-evicted="true"] { opacity: 0.72; }
+  .resume-row .resume-dead-hint {
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--ink-2);
+    text-transform: uppercase;
+    text-align: center;
+    padding: 0 4px;
+  }
   .resume-row .meta {
     color: var(--ink-1);
     font-size: 11px;
