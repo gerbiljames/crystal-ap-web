@@ -18,6 +18,11 @@ const EVENT_NEW_FRAME = 1, EVENT_AUDIO_BUFFER_FULL = 2, EVENT_UNTIL_TICKS = 4;
 const CPU_TICKS_PER_SECOND = 4194304;
 const MAX_UPDATE_SEC = 5 / 60;
 const AUDIO_LATENCY_SEC = 0.1;
+// On underrun (mobile scroll jank, GC pause, …) we re-anchor closer to "now"
+// rather than re-introducing the full bootstrap latency budget — otherwise
+// each stall permanently shifts audio ~100ms behind the video that step()
+// just painted, and the lag never recovers.
+const AUDIO_RECOVERY_SEC = 0.02;
 const AUDIO_FRAMES = 4096;
 const CGB_COLOR_CURVE = 2;
 
@@ -114,7 +119,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     const now = audioCtx.currentTime;
     const nowPlusLatency = now + AUDIO_LATENCY_SEC;
     audioStartSec = audioStartSec || nowPlusLatency;
-    if (audioStartSec < now) audioStartSec = nowPlusLatency;
+    if (audioStartSec < now) audioStartSec = now + AUDIO_RECOVERY_SEC;
     const buffer = audioCtx.createBuffer(2, AUDIO_FRAMES, audioCtx.sampleRate);
     const c0 = buffer.getChannelData(0);
     const c1 = buffer.getChannelData(1);
