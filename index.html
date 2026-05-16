@@ -860,19 +860,33 @@
   .fs-btn:hover { background: transparent; border-color: transparent; color: var(--jade-bright); }
   .fs-btn svg { width: 16px; height: 16px; display: block; }
 
-  /* When the screen-frame is the fullscreen element, blow the canvas up
-     to fill while preserving the 160:144 aspect. The label bar stays as
-     a thin overlay at the bottom so volume + exit are still reachable. */
-  .screen-frame:fullscreen {
-    width: 100vw; height: 100vh;
+  /* Fullscreen targets .play-game (not just .screen-frame) so the on-screen
+     gamepad rides into the top-layer alongside the canvas on touch devices.
+     Desktop has .gamepad { display: none } so the layout collapses to just
+     the screen-frame filling the viewport. */
+  .play-game:fullscreen {
+    width: 100vw; height: 100vh; height: 100dvh;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 0;
+  }
+  .play-game:fullscreen > .screen-frame {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
     padding: 0; gap: 0;
     background: #000;
     border: none;
     justify-content: center;
+    align-self: stretch;
+    justify-self: stretch;
+    max-width: none;
   }
-  .screen-frame:fullscreen::before,
-  .screen-frame:fullscreen::after { display: none; }
-  .screen-frame:fullscreen .screen-wrap {
+  .play-game:fullscreen .screen-frame::before,
+  .play-game:fullscreen .screen-frame::after { display: none; }
+  .play-game:fullscreen .screen-wrap {
     flex: 1 1 auto;
     /* Override the default flex min-height:auto so the wrap can shrink
        below the canvas's intrinsic 144px when needed. */
@@ -888,21 +902,109 @@
     justify-content: center;
     overflow: hidden;
   }
-  .screen-frame:fullscreen #screen {
+  .play-game:fullscreen #screen {
     width: 100%;
     height: 100%;
+    max-width: 100%;
+    max-height: 100%;
     object-fit: contain;
+    aspect-ratio: 160 / 144;
   }
-  .screen-frame:fullscreen .screen-label-bottom {
+  .play-game:fullscreen .screen-label-bottom {
     flex: 0 0 auto;
     padding: 8px 16px;
     background: rgba(0,0,0,0.6);
+  }
+  .play-game:fullscreen > .gamepad { flex: 0 0 auto; margin-top: 0; }
+  /* On mobile, JS relocates .log-area into .play-game between the canvas
+     and the gamepad — hide it in fullscreen so the canvas gets the slack. */
+  .play-game:fullscreen > .log-area { display: none; }
+  /* Hide the keyboard-bindings hint whenever there's an on-screen gamepad
+     visible alongside the canvas (fullscreen on a touch device). */
+  @media (any-pointer: coarse) {
+    .play-game:fullscreen .screen-keys { display: none; }
+  }
+
+  /* Portrait touch: pin the canvas to the top of the fullscreen viewport
+     and let the gamepad sit against the bottom, so the slack between them
+     scales with viewport height instead of inflating the canvas. */
+  @media (orientation: portrait) and (any-pointer: coarse) {
+    .play-game:fullscreen > .screen-frame { flex: 0 0 auto; }
+    .play-game:fullscreen .screen-wrap { flex: 0 0 auto; }
+    .play-game:fullscreen #screen {
+      width: 100%;
+      height: auto;
+      object-fit: contain;
+    }
+    /* Auto margins on both sides center the gamepad in the slack between
+       the pinned canvas and the viewport bottom. */
+    .play-game:fullscreen > .gamepad {
+      margin-top: auto;
+      margin-bottom: auto;
+    }
+  }
+
+  /* Landscape touch: split the gamepad around the canvas — dpad left,
+     A/B + start/select right — mirroring the non-fullscreen landscape
+     layout so there's vertical room for the canvas. */
+  @media (orientation: landscape) and (any-pointer: coarse) {
+    .play-game:fullscreen {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-rows: 1fr auto auto 1fr;
+      column-gap: 12px;
+      row-gap: 16px;
+      padding: 8px;
+    }
+    .play-game:fullscreen > .screen-frame {
+      grid-column: 2;
+      grid-row: 1 / -1;
+      align-self: stretch;
+      justify-self: stretch;
+      min-width: 0; min-height: 0;
+      max-width: 100%;
+      max-height: 100dvh;
+      height: 100%;
+    }
+    .play-game:fullscreen > .screen-frame .screen-wrap {
+      height: 100%;
+      min-height: 0;
+    }
+    /* Drop the aspect-ratio from the canvas so its box can fill the frame
+       and `object-fit: contain` letterboxes the rendered image to fit
+       whichever dimension is tighter (height in landscape). */
+    .play-game:fullscreen #screen {
+      aspect-ratio: auto;
+    }
+    .play-game:fullscreen > .gamepad,
+    .play-game:fullscreen > .gamepad > .gamepad-row:not(.gp-ss) {
+      display: contents;
+    }
+    .play-game:fullscreen .gp-dpad {
+      grid-column: 1;
+      grid-row: 1 / -1;
+      align-self: center;
+    }
+    .play-game:fullscreen .gp-ab {
+      grid-column: 3;
+      grid-row: 2;
+    }
+    .play-stack .play-game:fullscreen .gp-ss {
+      grid-column: 3;
+      grid-row: 3;
+      transform: translateY(56px);
+      flex-direction: column;
+      gap: 6px;
+      align-items: stretch;
+      justify-content: flex-start;
+    }
+    .play-game:fullscreen .gp-ss .gp-btn { min-width: 0; }
   }
 
   /* Event log overlay: only visible in fullscreen, anchored top-left,
      does not intercept pointer events so the canvas still gets input. */
   .fs-log-overlay { display: none; }
-  .screen-frame:fullscreen .fs-log-overlay {
+  .play-game:fullscreen .fs-log-overlay {
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -1417,7 +1519,7 @@
       /* Nudge start/select further from A/B without moving A/B — grid
          auto rows would otherwise re-center the pair if we changed the
          row-gap. */
-      transform: translateY(24px);
+      transform: translateY(56px);
       flex-direction: column;
       gap: 6px;
       align-items: stretch;

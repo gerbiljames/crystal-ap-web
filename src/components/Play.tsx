@@ -15,7 +15,10 @@ function ScreenFrame() {
     if (document.fullscreenElement) {
       document.exitFullscreen?.();
     } else {
-      frameRef.requestFullscreen?.();
+      // Fullscreen the parent .play-game so the on-screen gamepad (sibling
+      // of .screen-frame) rides into the top-layer too on touch devices.
+      const target = (frameRef.closest(".play-game") as HTMLElement | null) ?? frameRef;
+      target.requestFullscreen?.();
     }
   };
   // Tick every second so age-based expiry re-evaluates while fullscreen.
