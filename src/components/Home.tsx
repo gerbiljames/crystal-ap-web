@@ -196,7 +196,7 @@ function OptionsPane() {
           <span class="eyebrow">generate or import seed</span>
           <button class="btn-primary yc-open-btn" onClick={() => setYamlCreatorOpen(true)} title="Build a YAML in the browser">Create YAML</button>
         </div>
-        <Dropzone id="dz-yaml" inputId="yaml-file" accept=".yaml,.yml,.apcrystal,.apcrystalpre,.zip,text/yaml" onFile={handleYamlDrop}>
+        <Dropzone id="dz-yaml" inputId="yaml-file" accept=".yaml,.yml,.apcrystal,.apcrystalpre,.zip,text/yaml,application/octet-stream" onFile={handleYamlDrop}>
           <div class="dz-mark">◇</div>
           <div class="dz-primary">Drop YAML, <b>.apcrystal</b>, or <b>output .zip</b></div>
         </Dropzone>
