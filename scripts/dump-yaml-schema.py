@@ -265,6 +265,17 @@ def parse_options_module(path: Path) -> tuple[dict, list, list]:
         if not cls.get("kind"):
             cls["kind"] = resolve_kind(name, set()) or "other"
 
+    # Options that don't declare their own `default =` inherit one from their
+    # base class (e.g. Choice/Toggle inherit NumericOption's `default = 0`,
+    # DefaultOnToggle has `default = 1`). The AST only sees attributes in the
+    # class body, so fill in these inherited scalar defaults by kind. Without
+    # this a choice like LockKantoGyms serializes to an empty string, which
+    # fails generation with `Could not find option "" for ...`.
+    DEFAULT_BY_KIND = {"choice": 0, "toggle": 0, "toggle_on": 1}
+    for cls in classes.values():
+        if cls.get("default") is None and cls.get("kind") in DEFAULT_BY_KIND:
+            cls["default"] = DEFAULT_BY_KIND[cls["kind"]]
+
     # Pass 2: find OPTION_GROUPS = [OptionGroup(...), ...]
     for node in tree.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 \

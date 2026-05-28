@@ -113,8 +113,13 @@ function defaultLiteral(opt: OptionDef): string {
     // AP's YAML uses 0/1 weights here, but a bare scalar works too.
     return emitScalar(d === 1 || d === true);
   }
-  if (opt.kind === "choice" && opt.choices && typeof d === "number" && opt.choices[d as number] !== undefined) {
-    return emitScalar(opt.choices[d as number]);
+  if (opt.kind === "choice" && opt.choices && opt.choices.length) {
+    // Choice options inherit AP's `default = 0` from NumericOption when they
+    // don't declare one explicitly, so the schema may record `default: null`
+    // (e.g. LockKantoGyms). Fall back to the first choice rather than emitting
+    // an empty string, which fails generation with `Could not find option ""`.
+    const idx = typeof d === "number" && opt.choices[d] !== undefined ? d : 0;
+    return emitScalar(opt.choices[idx]);
   }
   if (opt.kind === "named_range" && opt.special_range_names) {
     for (const [name, val] of Object.entries(opt.special_range_names)) {
