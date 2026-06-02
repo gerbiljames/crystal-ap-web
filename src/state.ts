@@ -58,6 +58,18 @@ export function refreshYamls()    { setApp("yamls", loadYamls()); }
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 export const [yamlCreatorOpen, setYamlCreatorOpen] = createSignal(false);
 
+// On mobile the connection form lives in a popup opened from the session chip
+// rather than below the fold. `connectOpen` toggles that overlay; `isMobile`
+// tracks the same breakpoint the touch play layout uses so the chip only acts
+// as a trigger when the popup presentation is actually in effect.
+export const [connectOpen, setConnectOpen] = createSignal(false);
+
+const mobileMedia = typeof window !== "undefined" && window.matchMedia
+  ? window.matchMedia("(max-width: 900px) and (any-pointer: coarse)")
+  : null;
+export const [isMobile, setIsMobile] = createSignal(mobileMedia?.matches ?? false);
+mobileMedia?.addEventListener("change", (e) => setIsMobile(e.matches));
+
 // When set, the YAML creator opens in raw-text edit mode pre-populated with
 // this saved YAML. Save will replace the original entry (the hash changes
 // whenever the text changes, so we forget the old one).

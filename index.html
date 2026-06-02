@@ -130,7 +130,14 @@
     letter-spacing: 0.2em;
     text-transform: uppercase;
     color: var(--ink-1);
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: default;
   }
+  /* On touch viewports the chip doubles as the trigger for the connection
+     popup — give it a pressable affordance only then. */
+  .session-chip[data-tappable="true"] { cursor: pointer; }
+  .session-chip[data-tappable="true"]:active { transform: scale(0.97); }
   .session-chip .dot {
     width: 8px; height: 8px;
     background: var(--ink-2);
@@ -797,6 +804,16 @@
        Falls back to the old viewport cap until the helper has measured. */
     max-height: var(--play-controls-h, calc(100vh - 180px));
   }
+  /* Connection form + session links. On desktop this is a plain flow block
+     in the controls column; on touch viewports it detaches into a popup
+     anchored from the nav session chip (see the mobile media query). */
+  .connect-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .connect-backdrop { display: none; }
+  .connect-panel-head { display: none; }
   .log-area {
     display: flex;
     flex-direction: column;
@@ -1465,6 +1482,81 @@
     /* Post-gen artifact chips stack at mobile widths to avoid the
        filename titles forcing horizontal overflow. */
     .result-grid { grid-template-columns: 1fr; }
+
+    /* The connection form moves out of the below-the-fold controls column
+       and into a popup anchored from the nav session chip. Hidden until the
+       chip toggles data-connect-open on .play-controls. Kept mounted (not
+       removed) so boot prefill / connectSession can still reach #sess-*. */
+    .connect-panel {
+      display: none;
+      position: fixed;
+      top: 58px;
+      left: 0;
+      right: 0;
+      width: calc(100% - 20px);
+      max-width: 440px;
+      margin: 0 auto;
+      z-index: 901;
+      gap: 12px;
+      padding: 16px;
+      background: linear-gradient(to bottom, var(--bg-1), var(--bg-0));
+      border: 1px solid var(--line-bright);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      max-height: calc(100dvh - 72px);
+      overflow: auto;
+    }
+    .connect-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .connect-panel-title {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--ink-1);
+    }
+    .connect-panel-close {
+      appearance: none; -webkit-appearance: none;
+      background: none; border: none;
+      color: var(--ink-2);
+      font-size: 16px; line-height: 1;
+      padding: 4px; cursor: pointer;
+    }
+    .connect-panel-close:hover { color: var(--coral); }
+
+    .play-controls[data-connect-open="true"] .connect-backdrop {
+      display: block;
+      position: fixed; inset: 0;
+      background: rgba(4, 6, 12, 0.72);
+      backdrop-filter: blur(4px);
+      z-index: 900;
+      animation: modal-fade 160ms ease-out;
+    }
+    /* Float the nav above the backdrop while the popup is open so the chip
+       stays tappable — its onClick toggles the popup closed. */
+    .app[data-step="play"] .nav { position: relative; z-index: 902; }
+    .play-controls[data-connect-open="true"] .connect-panel {
+      display: flex;
+      animation: connect-drop 180ms ease-out;
+    }
+
+    /* When the log is relocated inside .play-game, .play-controls is empty
+       and .play-game already fills to the viewport bottom — collapse the
+       play-stack gap and step bottom-padding so there's no dead scroll
+       region underneath. When the log stays below (short viewports) these
+       are left intact so it remains reachable. */
+    html[data-log-inside="true"] .play-stack { gap: 0; }
+    html[data-log-inside="true"] .step[data-step="play"] {
+      min-height: 0;
+      padding-bottom: 0;
+    }
+  }
+
+  @keyframes connect-drop {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
 
   /* Landscape phones: there's no vertical room to stack gamepad under

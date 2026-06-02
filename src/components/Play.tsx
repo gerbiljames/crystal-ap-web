@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus } from "../state.js";
+import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, connectOpen, setConnectOpen, isMobile } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
 import { connectSession, disconnectSession, disposeEmulator, ensureEmulator, ensureTracker, stopTrackerPolling } from "../actions.js";
@@ -301,26 +301,50 @@ function SessionLinks() {
 
 function PlayControls() {
   const isLoopback = () => app.hosted?.kind === "loopback";
+  const closePopup = () => setConnectOpen(false);
+
+  // Esc closes the mobile connection popup while it's open. PlayStep stays
+  // mounted across steps (CSS-toggled), so guard on the play step too.
+  createEffect(() => {
+    if (app.step !== "play" || !connectOpen()) return;
+    const onKey = (ev: KeyboardEvent) => { if (ev.key === "Escape") closePopup(); };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
+
+  // Once a session goes live there's nothing left to fill in — dismiss the
+  // popup so the player drops straight back to the emulator.
+  createEffect(() => {
+    if (app.step === "play" && app.session.state === "live") setConnectOpen(false);
+  });
+
   return (
-    <div class="play-controls">
-      <div class="session-form" id="session-form">
-        <label>
-          server
-          <input type="text" id="sess-server" autocomplete="off" spellcheck={false}
-                 placeholder="archipelago.gg:xxxxx"
-                 readOnly={isLoopback()}
-                 title={isLoopback() ? "this seed is self-hosted in this tab" : undefined} />
-        </label>
-        <label>slot<input type="text" id="sess-slot" autocomplete="off" spellcheck={false} value="Player1" readOnly={app.session.state === "live"} /></label>
-        <label>password<input type="password" id="sess-pw" autocomplete="off" readOnly={app.session.state === "live"} /></label>
-        <Show when={!isLoopback()}>
-          <div class="session-actions">
-            <button class="btn-primary" id="btn-connect" onClick={connectSession}>connect</button>
-            <button id="btn-disconnect" onClick={disconnectSession}>disconnect</button>
-          </div>
-        </Show>
+    <div class="play-controls" data-connect-open={connectOpen() ? "true" : undefined}>
+      <div class="connect-backdrop" onClick={closePopup}></div>
+      <div class="connect-panel" role={isMobile() ? "dialog" : undefined} aria-modal={isMobile() ? "true" : undefined} aria-label="connection">
+        <div class="connect-panel-head">
+          <span class="connect-panel-title">connection</span>
+          <button class="connect-panel-close" onClick={closePopup} aria-label="close">✕</button>
+        </div>
+        <div class="session-form" id="session-form">
+          <label>
+            server
+            <input type="text" id="sess-server" autocomplete="off" spellcheck={false}
+                   placeholder="archipelago.gg:xxxxx"
+                   readOnly={isLoopback()}
+                   title={isLoopback() ? "this seed is self-hosted in this tab" : undefined} />
+          </label>
+          <label>slot<input type="text" id="sess-slot" autocomplete="off" spellcheck={false} value="Player1" readOnly={app.session.state === "live"} /></label>
+          <label>password<input type="password" id="sess-pw" autocomplete="off" readOnly={app.session.state === "live"} /></label>
+          <Show when={!isLoopback()}>
+            <div class="session-actions">
+              <button class="btn-primary" id="btn-connect" onClick={connectSession}>connect</button>
+              <button id="btn-disconnect" onClick={disconnectSession}>disconnect</button>
+            </div>
+          </Show>
+        </div>
+        <SessionLinks />
       </div>
-      <SessionLinks />
       <LogArea />
     </div>
   );

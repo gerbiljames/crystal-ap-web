@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
-import { app, setSettingsOpen } from "../state.js";
+import { app, setSettingsOpen, setConnectOpen, isMobile } from "../state.js";
 import { teardownAndReload } from "../actions.js";
 // Bundled at build time from the pokecrystal apworld submodule — same
 // source pack.sh tars into public/ap.tar, so versions stay in sync.
@@ -82,9 +82,17 @@ export function Nav() {
           </div>
         </Show>
       </div>
-      <div class="session-chip" id="session-chip" data-state={app.session.state}>
+      <button
+        type="button"
+        class="session-chip"
+        id="session-chip"
+        data-state={app.session.state}
+        data-tappable={isMobile() && app.step === "play" ? "true" : undefined}
+        aria-label={isMobile() && app.step === "play" ? "connection details" : undefined}
+        onClick={() => { if (isMobile() && app.step === "play") setConnectOpen(o => !o); }}
+      >
         <span class="dot"></span><span class="label">{app.session.label}</span>
-      </div>
+      </button>
     </header>
   );
 }

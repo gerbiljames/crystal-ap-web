@@ -3,7 +3,7 @@
 // (state.js) and talk to the framework-agnostic lib/ modules.
 
 import { unwrap } from "solid-js/store";
-import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setYamlCreatorOpen, setYamlEditTarget } from "./state.js";
+import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
@@ -26,6 +26,10 @@ export type Step = "options" | "generating" | "rom" | "patching" | "play";
 let _historyPushed = false;
 export function setStep(step: Step) {
   setApp("step", step);
+  // The connection popup only belongs to the play step; clear it on any
+  // transition so a lingering open state can't leak onto another step
+  // (PlayStep stays mounted — steps toggle via CSS, not unmount).
+  if (step !== "play") setConnectOpen(false);
   if (window.__updateEmuMaxH) window.__updateEmuMaxH();
   if (step !== "options" && !_historyPushed) {
     history.pushState({ inApp: true }, "");

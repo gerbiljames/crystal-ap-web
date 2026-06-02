@@ -27,6 +27,11 @@ export function initPlayLayout() {
 
   const placeLog = (inside: boolean) => {
     if (!logAreaEl || !playControlsEl) return;
+    // Flag the relocation so CSS can drop the trailing play-stack gap and
+    // step bottom-padding when the log lives inside .play-game — otherwise
+    // .play-controls is empty on mobile and that slack becomes a dead
+    // scroll region the height of the nav below the emulator.
+    document.documentElement.dataset.logInside = inside ? "true" : "false";
     if (inside) {
       if (logAreaEl.parentElement !== playGameEl) {
         playGameEl.insertBefore(logAreaEl, gamepadEl);
