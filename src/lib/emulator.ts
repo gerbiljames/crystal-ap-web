@@ -36,6 +36,7 @@ export interface EmulatorHandle {
   writeDomain: (domain: string, addr: number, bytes: Uint8Array) => void;
   romHash: string;
   DOMAIN_SIZE: Record<string, number>;
+  sramSize: number;
   dispose: () => void;
 }
 
@@ -310,6 +311,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     readDomain, writeDomain,
     romHash,
     DOMAIN_SIZE,
+    sramSize: Module._get_file_data_size(sramFd),
     dispose,
   };
 }

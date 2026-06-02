@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, connectOpen, setConnectOpen, isMobile } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
-import { connectSession, disconnectSession, disposeEmulator, ensureEmulator, ensureTracker, stopTrackerPolling } from "../actions.js";
+import { connectSession, disconnectSession, disposeEmulator, ensureEmulator, ensureTracker, importSaveFile, stopTrackerPolling } from "../actions.js";
 import { db, idbGet } from "../lib/idb.js";
 import { SAVE_STORE } from "../lib/constants.js";
 import { logErr, logWarn } from "../lib/log.js";
@@ -285,6 +285,15 @@ function SessionLinks() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
+  let importInput!: HTMLInputElement;
+  const onImportPicked = async (ev: Event) => {
+    const input = ev.currentTarget as HTMLInputElement;
+    const f = input.files?.[0];
+    // Reset first so picking the same file again still fires onChange.
+    input.value = "";
+    if (f) await importSaveFile(f);
+  };
+
   return (
     <div class="session-links" id="session-links">
       <For each={items()}>{(l) => (
@@ -295,6 +304,9 @@ function SessionLinks() {
         </a>
       )}</For>
       <a href="#" data-kind="download" onClick={(ev) => { ev.preventDefault(); downloadSave(); }}>save file</a>
+      <a href="#" data-kind="upload" onClick={(ev) => { ev.preventDefault(); importInput.click(); }}>import save</a>
+      <input ref={importInput} type="file" accept=".sav,.saveRAM,application/octet-stream"
+             style="display:none" onChange={onImportPicked} />
     </div>
   );
 }

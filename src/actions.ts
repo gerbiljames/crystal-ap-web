@@ -511,6 +511,10 @@ let currentEmu: EmulatorHandle | null = null;
 // canvas remount racing with a step transition — can't start a second
 // emulator while the first is still allocating.
 let bootInFlight = false;
+// True while importSaveFile is mid-swap (emulator disposed, IDB being
+// rewritten, not yet rebooted). Blocks ensureEmulator from racing a boot into
+// that window, where currentEmu is null but the import isn't done yet.
+let swapInFlight = false;
 
 // Called on canvas unmount (e.g. HMR replacing <ScreenFrame/>) so the worker
 // ticker, save interval, keyboard listeners, and wasm allocations don't
@@ -527,7 +531,7 @@ export function disposeEmulator() {
 // <ScreenFrame/> we boot a fresh one against the new canvas using the ROM
 // that's still sitting in the store.
 export async function ensureEmulator() {
-  if (currentEmu || bootInFlight) return;
+  if (currentEmu || bootInFlight || swapInFlight) return;
   if (app.step !== "play" || !app.patchedRom) return;
   await bootEmulatorAndUi();
 }
@@ -605,6 +609,58 @@ async function bootEmulatorAndUi() {
     }
   } finally {
     bootInFlight = false;
+  }
+}
+
+// Replace this seed's SRAM with an imported .sav / .saveRAM file. binjgb has
+// no soft reset, and Crystal only reads SRAM into WRAM at the title screen, so
+// the only way an import takes effect is to reboot the emulator from the ROM.
+// The existing savestate (which on boot overwrites cart RAM, line ~192) must be
+// dropped too, or the next boot would clobber the import. Ordering matters:
+// dispose first — its final flush writes the OLD save — then overwrite IDB,
+// then boot, which reloads the imported SRAM and lands on the title screen.
+export async function importSaveFile(file: File) {
+  // Test-and-set swapInFlight synchronously, and snapshot romHash/sramSize off
+  // currentEmu before the first await — otherwise two concurrent imports could
+  // both pass the guard, and a dispose during the awaits (canvas unmount/HMR)
+  // could null currentEmu out from under a later `.sramSize` read.
+  if (swapInFlight) { logWarn("a save import is already in progress"); return; }
+  if (!currentEmu) { logErr("no running emulator — can't import a save"); return; }
+  const romHash = currentEmu.romHash;
+  const expected = currentEmu.sramSize;
+  if (!romHash) { logErr("no running emulator — can't import a save"); return; }
+
+  // Hold swapInFlight for the WHOLE import — including our own bootEmulatorAndUi
+  // call. It blocks ensureEmulator (canvas remount/HMR) from racing a boot into
+  // the dispose→reboot window, and rejects a second importSaveFile at the guard
+  // above while this one (boot included) is still running, so two imports can
+  // never overlap. No self-deadlock: we call bootEmulatorAndUi directly, not
+  // ensureEmulator, and boot gates on bootInFlight, not swapInFlight. Cleared
+  // exactly once, in finally, covering every early-return and error path.
+  swapInFlight = true;
+  try {
+    const dbc = await db();
+    if (!dbc) { logErr("IDB unavailable — can't store the imported save"); return; }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (bytes.length !== expected) {
+      logErr(`save size mismatch — got ${bytes.length} bytes, expected ${expected}; not a Crystal save`);
+      return;
+    }
+    if (!confirm("Replace this seed's save with the imported file? Current progress in this slot will be overwritten.")) return;
+
+    disposeEmulator();
+    let writeOk = true;
+    try {
+      await idbPut(dbc, romHash, bytes, SAVE_STORE);
+      await idbDel(dbc, romHash, STATE_STORE);
+    } catch (err: any) {
+      writeOk = false;
+      logErr("import failed: " + (err?.message || err));
+    }
+    await bootEmulatorAndUi();
+    if (writeOk) logOk("save imported — reset to title; choose Continue to load it");
+  } finally {
+    swapInFlight = false;
   }
 }
 
