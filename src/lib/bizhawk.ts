@@ -48,10 +48,21 @@ export function installBizHawkBridge(emu, apWorker) {
     } else {
       try {
         const reqs = JSON.parse(payload);
-        const reses = reqs.map(r => {
-          try { return serviceRequest(r); }
-          catch (err) { return { type: "ERROR", err: String(err) }; }
-        });
+        // Match connector_bizhawk_generic.lua: process requests in order and,
+        // once any GUARD fails, skip every remaining request (echoing the
+        // failed GUARD_RESPONSE) instead of executing it. Without this the
+        // WRITEs in a guarded_write run unconditionally, so a stale write
+        // clobbers memory the game changed between the client's read and write.
+        const reses: any[] = [];
+        let failedGuard: any = null;
+        for (const r of reqs) {
+          if (failedGuard !== null) { reses.push(failedGuard); continue; }
+          let res;
+          try { res = serviceRequest(r); }
+          catch (err) { res = { type: "ERROR", err: String(err) }; }
+          reses.push(res);
+          if (res.type === "GUARD_RESPONSE" && !res.value) failedGuard = res;
+        }
         responseJson = JSON.stringify(reses);
       } catch (err) {
         responseJson = JSON.stringify([{ type: "ERROR", err: String(err) }]);

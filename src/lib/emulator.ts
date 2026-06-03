@@ -87,13 +87,25 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
   // --- domain helpers (for BizHawk protocol) ---
   const romBytes = new Uint8Array(romBuf.slice(0)); // stable copy for ROM domain reads
   const DOMAIN_SIZE = { WRAM: 32768, HRAM: 127, ROM: romBytes.length };
+  // The WRAM/HRAM pointers index into the shared 16MB wasm heap, so an
+  // out-of-range address would read/write adjacent emulator state instead of
+  // throwing. Enforce the domain bounds so a bad request fails loudly (surfaced
+  // as an ERROR response) rather than silently corrupting memory.
+  const checkBounds = (domain, addr, sz) => {
+    const size = DOMAIN_SIZE[domain];
+    if (size === undefined) throw new Error("unsupported domain: " + domain);
+    if (addr < 0 || sz < 0 || addr + sz > size)
+      throw new Error(`out-of-bounds ${domain} access: addr=${addr} size=${sz} (domain size ${size})`);
+  };
   const readDomain = (domain, addr, sz) => {
+    checkBounds(domain, addr, sz);
     if (domain === "ROM")  return romBytes.slice(addr, addr + sz);
     if (domain === "WRAM") { const p = Module._emulator_get_wram_ptr(e); return new Uint8Array(Module.HEAP8.buffer, p + addr, sz).slice(); }
     if (domain === "HRAM") { const p = Module._emulator_get_hram_ptr(e); return new Uint8Array(Module.HEAP8.buffer, p + addr, sz).slice(); }
     throw new Error("unsupported domain: " + domain);
   };
   const writeDomain = (domain, addr, bytes) => {
+    checkBounds(domain, addr, bytes.length);
     if (domain === "WRAM") { const p = Module._emulator_get_wram_ptr(e); new Uint8Array(Module.HEAP8.buffer, p + addr, bytes.length).set(bytes); return; }
     if (domain === "HRAM") { const p = Module._emulator_get_hram_ptr(e); new Uint8Array(Module.HEAP8.buffer, p + addr, bytes.length).set(bytes); return; }
     throw new Error("unsupported write domain: " + domain);
