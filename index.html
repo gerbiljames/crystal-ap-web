@@ -668,7 +668,9 @@
     border-radius: 2px;
     text-transform: uppercase;
   }
-  .resume-row[data-evicted="true"] { opacity: 0.72; }
+  /* Dim the identity cells of an evicted row, but not .actions — the forget
+     button (and the open-room link) still work and shouldn't read as disabled. */
+  .resume-row[data-evicted="true"] > :not(.actions) { opacity: 0.72; }
   .resume-row .resume-dead-hint {
     font-size: 10px;
     letter-spacing: 0.12em;

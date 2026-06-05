@@ -38,11 +38,15 @@ function ResumeList() {
     if (!dbc) return;
     const dead = new Set<string>();
     await Promise.all(ids.map(async (id: string) => {
+      // A probe *error* is not evidence of eviction — Chrome's IDB fails
+      // transiently (backing-store errors, disk pressure), and flagging a
+      // healthy session as dead hides its resume button. Only trust a
+      // successful "not there" answer from both stores.
       const [hasRom, hasArt] = await Promise.all([
-        idbHas(dbc, id, ROM_STORE).catch(() => false),
-        idbHas(dbc, id, ARTIFACTS_STORE).catch(() => false),
+        idbHas(dbc, id, ROM_STORE).catch(() => null),
+        idbHas(dbc, id, ARTIFACTS_STORE).catch(() => null),
       ]);
-      if (!hasRom && !hasArt) dead.add(id);
+      if (hasRom === false && hasArt === false) dead.add(id);
     }));
     setEvicted(dead);
   });
