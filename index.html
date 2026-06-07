@@ -1335,6 +1335,9 @@
        initiate a scroll gesture. */
     touch-action: pan-y;
   }
+  /* "never show on-screen controls" (settings → ui) — outranks the
+     touch-device media query below that turns the gamepad on. */
+  .gamepad[data-user-hidden="true"] { display: none; }
   .gamepad-row {
     display: flex;
     justify-content: space-between;
@@ -1852,8 +1855,13 @@
     display: flex; align-items: stretch; justify-content: space-between;
     border-bottom: 1px solid var(--line);
   }
-  .modal-tabs { display: flex; }
+  /* Five tabs no longer fit a narrow viewport — let the strip scroll
+     sideways instead of spilling out of the modal. */
+  .modal-tabs { display: flex; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .modal-tabs::-webkit-scrollbar { display: none; }
   .modal-tab {
+    flex-shrink: 0;
+    white-space: nowrap;
     font-family: var(--mono);
     font-size: 11px;
     letter-spacing: 0.18em;
@@ -1870,7 +1878,7 @@
   .modal-tab[data-active="true"] { color: var(--jade-bright); border-bottom-color: var(--jade-bright); }
   .modal-close {
     background: transparent; border: none; color: var(--ink-2);
-    font-size: 16px; width: 44px; cursor: pointer;
+    font-size: 16px; width: 44px; flex-shrink: 0; cursor: pointer;
     transition: color 120ms;
   }
   .modal-close:hover { color: var(--coral); }
@@ -2172,6 +2180,8 @@
 
   /* overlay panel */
   .overlay-panel { display: flex; flex-direction: column; gap: 14px; }
+  /* ui panel */
+  .ui-panel { display: flex; flex-direction: column; gap: 14px; }
   .panel-intro {
     margin: 0 0 4px;
     font-size: 12px;

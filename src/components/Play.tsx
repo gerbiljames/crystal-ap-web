@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, connectOpen, setConnectOpen, isMobile } from "../state.js";
+import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, connectOpen, setConnectOpen, isMobile, uiPrefs } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
 import { connectSession, disconnectSession, disposeEmulator, ensureEmulator, ensureTracker, importSaveFile, stopTrackerPolling } from "../actions.js";
@@ -104,8 +104,10 @@ function ScreenFrame() {
 }
 
 function Gamepad() {
+  // Hidden via data attribute rather than unmounting so bindGamepad's
+  // listeners survive the user toggling the setting mid-session.
   return (
-    <div class="gamepad" aria-hidden="true">
+    <div class="gamepad" aria-hidden="true" data-user-hidden={uiPrefs().hideGamepad}>
       <div class="gamepad-row">
         <div class="gp-dpad">
           <button class="gp-btn gp-up"    data-input="up"    aria-label="up">▲</button>

@@ -154,6 +154,26 @@ export function setControllerPrefs(next: ControllerPrefs) {
   try { localStorage.setItem(CONTROLLER_PREFS_KEY, JSON.stringify(next)); } catch {}
 }
 
+// ---------- ui settings ----------
+const UI_PREFS_KEY = "crystal-ap-ui-prefs";
+export type UiPrefs = { hideGamepad: boolean };
+const UI_DEFAULTS: UiPrefs = { hideGamepad: false };
+
+function loadUiPrefs(): UiPrefs {
+  try {
+    const raw = localStorage.getItem(UI_PREFS_KEY);
+    if (!raw) return { ...UI_DEFAULTS };
+    const p = JSON.parse(raw);
+    return { hideGamepad: !!p.hideGamepad };
+  } catch { return { ...UI_DEFAULTS }; }
+}
+
+export const [uiPrefs, _setUiPrefs] = createSignal<UiPrefs>(loadUiPrefs());
+export function setUiPrefs(next: UiPrefs) {
+  _setUiPrefs(next);
+  try { localStorage.setItem(UI_PREFS_KEY, JSON.stringify(next)); } catch {}
+}
+
 // Log buffer. Each entry is { kind, time, text?, ansi? }.
 export const [logLines, setLogLines] = createSignal([]);
 

@@ -1,5 +1,5 @@
 import { For, Show, createSignal, createEffect, onCleanup } from "solid-js";
-import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs, controllerPrefs, setControllerPrefs, audioPrefs, setAudioPrefs } from "../state.js";
+import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs, controllerPrefs, setControllerPrefs, audioPrefs, setAudioPrefs, uiPrefs, setUiPrefs } from "../state.js";
 import {
   DEFAULT_BINDINGS, loadBindings, saveBindings, captureNextButton, getActivePad,
   type InputName,
@@ -19,7 +19,7 @@ const INPUT_ROWS: { name: InputName; label: string }[] = [
   { name: "right",  label: "right" },
 ];
 
-type Tab = "controller" | "keyboard" | "audio" | "overlay";
+type Tab = "controller" | "keyboard" | "audio" | "overlay" | "ui";
 
 export function Settings() {
   const [tab, setTab] = createSignal<Tab>("controller");
@@ -70,6 +70,13 @@ export function Settings() {
                 data-active={tab() === "overlay"}
                 onClick={() => setTab("overlay")}
               >overlay</button>
+              <button
+                class="modal-tab"
+                role="tab"
+                aria-selected={tab() === "ui"}
+                data-active={tab() === "ui"}
+                onClick={() => setTab("ui")}
+              >ui</button>
             </div>
             <button class="modal-close" onClick={() => setSettingsOpen(false)} aria-label="close">✕</button>
           </div>
@@ -85,6 +92,9 @@ export function Settings() {
             </Show>
             <Show when={tab() === "overlay"}>
               <OverlayPanel />
+            </Show>
+            <Show when={tab() === "ui"}>
+              <UiPanel />
             </Show>
           </div>
         </div>
@@ -317,6 +327,22 @@ function AudioPanel() {
         />
         <span class="switch-track"><span class="switch-knob"></span></span>
         <span class="switch-text">play audio while unfocused</span>
+      </label>
+    </div>
+  );
+}
+
+function UiPanel() {
+  return (
+    <div class="ui-panel">
+      <label class="switch" title="When on, the touch gamepad under the emulator is never shown, even on touch devices.">
+        <input
+          type="checkbox"
+          checked={uiPrefs().hideGamepad}
+          onChange={(ev) => setUiPrefs({ ...uiPrefs(), hideGamepad: ev.currentTarget.checked })}
+        />
+        <span class="switch-track"><span class="switch-knob"></span></span>
+        <span class="switch-text">never show on-screen controls</span>
       </label>
     </div>
   );
