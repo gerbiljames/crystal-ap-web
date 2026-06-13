@@ -953,6 +953,22 @@ except AttributeError: pass
 import settings as _ap_settings
 _ap_settings.no_gui = True
 
+# Seed a host.yaml so settings.get_settings() finds a file on first access.
+# With no settings file present, get_settings() falls into its "create a new
+# one" branch and calls Settings.save(), whose fsync/rename against Pyodide's
+# MEMFS can raise. UT's _set_host_settings() then swallows that and falls back
+# to a hardcoded label/Both sort, changing tracker row order vs the standard UT
+# client (which reads its configured apworld/Location sort). Pre-seeding the
+# file keeps us on the configured path and matches the standard client defaults.
+_HOST_YAML = """universal_tracker:
+  include_region_name: false
+  include_location_name: true
+  sorting_method: "apworld"
+"""
+if not os.path.exists("/ap/host.yaml"):
+    with open("/ap/host.yaml", "w", encoding="utf-8") as _hy:
+        _hy.write(_HOST_YAML)
+
 # Pyodide has no threads — replace concurrent.futures.ThreadPoolExecutor with
 # a synchronous impl so Main.py's pool.submit / as_completed path just runs
 # inline. Not a correctness issue; just slower-on-the-hot-path.
