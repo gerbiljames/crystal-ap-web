@@ -186,3 +186,31 @@ export const [trackerGoMode, setTrackerGoMode] = createSignal<TrackerGoMode>("no
 export const [trackerStatus, setTrackerStatus] = createSignal<
   { kind: "idle" } | { kind: "ready" } | { kind: "error"; reason: string }
 >({ kind: "idle" });
+
+// Hints relevant to the local player, mirrored from the live session's
+// _read_hints data-storage key. `forYou` is true when we receive the hinted
+// item; otherwise the item is on one of our locations for another player.
+// `hints` is null until the server has replied with the hint list.
+export type HintRow = {
+  receiving: string;
+  finding: string;
+  item: string;
+  location: string;
+  entrance: string;
+  found: boolean;
+  status: string;
+  forYou: boolean;
+  itemFlags: number;
+};
+export const [hints, setHints] = createSignal<HintRow[] | null>(null);
+export const [hintsStatus, setHintsStatus] = createSignal<
+  { kind: "idle" } | { kind: "ready" } | { kind: "error"; reason: string }
+>({ kind: "idle" });
+// Own-game item names (and item-name groups) for hint-box autocomplete. Static
+// per game, so fetched once per session.
+export const [hintItemNames, setHintItemNames] = createSignal<string[]>([]);
+// Transient feedback shown in the hints tab right after a !hint request, so the
+// server's response (success text or an error) is visible without switching to
+// the console. Captured from the server log for a short window post-request.
+export type HintFeedback = { text: string; kind: "info" | "ok" | "err" };
+export const [hintFeedback, setHintFeedback] = createSignal<HintFeedback | null>(null);

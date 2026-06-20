@@ -13,19 +13,22 @@ type ProgressCb = (phase: string) => void;
 
 let worker: Worker | null = null;
 let nextId = 1;
-const pending = new Map<number, { resolve: (v: CallResult) => void; reject: (e: Error) => void }>();
-let onProgress: ProgressCb | null = null;
+const pending = new Map<number, { resolve: (v: CallResult) => void; reject: (e: Error) => void; onProgress: ProgressCb | null }>();
 let onBhReq: ((reqId: number, payload: string) => void) | null = null;
 let onPrint: ((text: string) => void) | null = null;
 let onTrackerDirty: (() => void) | null = null;
+let onHintsDirty: (() => void) | null = null;
+let onHintMsg: ((text: string, kind: string) => void) | null = null;
 
 function handle(ev: MessageEvent) {
   const { id, event, phase, reqId, payload, ok, error, out } = ev.data;
-  if (event === "progress")      { onProgress?.(phase); return; }
+  if (event === "progress")      { pending.get(id)?.onProgress?.(phase); return; }
   if (event === "bh-req")        { onBhReq?.(reqId, payload); return; }
   if (event === "printjson")     { onPrint?.(ev.data.text); return; }
   if (event === "py-log")        { logAnsi("info", ev.data.msg); return; }
+  if (event === "hint-msg")      { onHintMsg?.(ev.data.text, ev.data.kind); return; }
   if (event === "tracker-dirty") { onTrackerDirty?.(); return; }
+  if (event === "hints-dirty")   { onHintsDirty?.(); return; }
   const p = pending.get(id);
   if (!p) return;
   pending.delete(id);
@@ -42,10 +45,18 @@ function spawn(): Worker {
 }
 
 function call(cmd: string, payload: Record<string, any> = {}, transfer: Transferable[] = [], cb: ProgressCb | null = null): Promise<CallResult> {
-  onProgress = cb;
   const id = nextId++;
+  // pending.set runs synchronously inside the Promise executor, so the entry
+  // exists before postMessage — no reply (progress or result) can race ahead of
+  // it. Progress events carry this id and route back to cb via pending.get(id).
+  //
+  // Note: Pyodide boot is memoized in the worker, so its boot-phase progress is
+  // stamped with the id of the *first* call to touch the worker. That first call
+  // must be one that passes a cb (today: patch/generate, both do) or those boot
+  // phases route to a null callback and are silently dropped.
+  const p = new Promise<CallResult>((resolve, reject) => pending.set(id, { resolve, reject, onProgress: cb }));
   spawn().postMessage({ id, cmd, ...payload }, transfer);
-  return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+  return p;
 }
 
 function fire(cmd: string, payload: Record<string, any> = {}) { spawn().postMessage({ cmd, ...payload }); }
@@ -65,7 +76,11 @@ export const apWorker = {
   trackerUpdate:   (checked: number[])                                 => call("tracker-update", { checked }),
   trackerChecks:   ()                                                  => call("tracker-checks"),
   trackerStop:     ()                                                  => call("tracker-stop"),
+  hintsGet:        ()                                                  => call("hints-get"),
+  hintItems:       ()                                                  => call("hint-items"),
   setBhHandler:    (fn: typeof onBhReq)                                => { onBhReq = fn; },
   setPrintHandler: (fn: typeof onPrint)                                => { onPrint = fn; },
   setTrackerDirtyHandler: (fn: typeof onTrackerDirty)                  => { onTrackerDirty = fn; },
+  setHintsDirtyHandler:   (fn: typeof onHintsDirty)                    => { onHintsDirty = fn; },
+  setHintMsgHandler:      (fn: typeof onHintMsg)                       => { onHintMsg = fn; },
 };

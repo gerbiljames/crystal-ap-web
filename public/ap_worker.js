@@ -371,6 +371,32 @@ async function trackerChecks(id) {
   return { out: { checked: arr.map((x) => Number(x)) } };
 }
 
+// Read the hints relevant to the local player off the live session ctx. The
+// CommonClient subscribes to _read_hints_{team}_{slot} on Connected, so the
+// server-filtered list (hints where we're the receiver or finder) lands in
+// ctx.stored_data. Returns { hints: null } until that key is populated.
+async function hintsGet(id) {
+  if (!pyodide || !sessionTasks) return { out: { ok: false, hints: null } };
+  const result = await pyodide.runPythonAsync(HINTS_GET_PY);
+  if (result === undefined || result === null) return { out: { ok: true, hints: null } };
+  const arr = result.toJs ? result.toJs({ dict_converter: Object.fromEntries }) : result;
+  if (result?.destroy) result.destroy();
+  return { out: { ok: true, hints: arr } };
+}
+
+// Item names (plus item-name groups) for the player's own game, for hint-box
+// autocomplete. The id->name table lives in ctx.item_names[game]; group names
+// (valid !hint targets like "Badges") arrive in stored_data on Connected.
+// Returns { items: null } until ctx.game is known.
+async function hintItems(id) {
+  if (!pyodide || !sessionTasks) return { out: { ok: false, items: null } };
+  const result = await pyodide.runPythonAsync(HINT_ITEMS_PY);
+  if (result === undefined || result === null) return { out: { ok: true, items: null } };
+  const arr = result.toJs ? result.toJs() : result;
+  if (result?.destroy) result.destroy();
+  return { out: { ok: true, items: arr } };
+}
+
 function trackerStop() {
   trackerReady = false;
   if (!pyodide) return;
@@ -443,6 +469,12 @@ except Exception: pass
     } else if (cmd === "tracker-stop") {
       trackerStop();
       post({ id, ok: true });
+    } else if (cmd === "hints-get") {
+      const { out } = await hintsGet(id);
+      post({ id, ok: true, out });
+    } else if (cmd === "hint-items") {
+      const { out } = await hintItems(id);
+      post({ id, ok: true, out });
     } else if (cmd === "bh-res") {
       // Main-thread's response to a previously sent bizhawk request.
       pyodide.globals.get("_bh_resolve")(ev.data.reqId, ev.data.payload);
@@ -580,7 +612,35 @@ def _ut_on_package(cmd, args):
         if cmd in ("Connected", "ReceivedItems", "RoomUpdate"):
             try: _jpost({"event": "tracker-dirty"})
             except Exception as _e: print(f"[ut] dirty post failed: {_e}")
+        # Hints arrive via the Get/SetNotify reply (Retrieved) and change live
+        # via SetReply on the watched _read_hints key. Connected/RoomUpdate also
+        # carry fresh hint_points, so refresh the Hints tab on all four.
+        if cmd in ("Connected", "Retrieved", "SetReply", "RoomUpdate"):
+            try: _jpost({"event": "hints-dirty"})
+            except Exception as _e: print(f"[ut] hints dirty post failed: {_e}")
 ctx.on_package = _ut_on_package
+
+# Tap server PrintJSON so the Hints tab can show the response to a !hint request
+# without the user switching to the console. Only "Hint" (a created/echoed hint)
+# and "CommandResult" (command output, e.g. !hint errors / cost messages — sent
+# only to the requesting client) are forwarded; high-traffic types like ItemSend
+# and Chat are ignored. rawjsontotextparser yields plain text (no ANSI).
+import copy as _copy
+_orig_on_print_json = ctx.on_print_json
+def _ut_on_print_json(args):
+    try: _orig_on_print_json(args)
+    finally:
+        try:
+            _typ = args.get("type")
+            if _typ in ("Hint", "CommandResult"):
+                # deepcopy parity with the stock handler: rawjsontotextparser
+                # mutates nodes in place (sets text/color), so never hand it the
+                # live packet data.
+                _txt = ctx.rawjsontotextparser(_copy.deepcopy(args.get("data", [])))
+                _jpost({"event": "hint-msg", "text": _txt, "kind": _typ})
+        except Exception as _e:
+            print(f"[hints] print tap failed: {_e}")
+ctx.on_print_json = _ut_on_print_json
 
 print("session started")
 `;
@@ -1163,6 +1223,85 @@ def _ut_get_checks():
     except Exception:
         return []
 _ut_get_checks()
+`;
+
+// Collect the player's own-game item names plus item-name group names for the
+// hint-box autocomplete. ctx.item_names[game] is a ChainMap of id->name; the
+// KeyedDefaultDict default never materializes on .values() iteration, so only
+// real items are returned. Group names come from the watched data-storage key.
+const HINT_ITEMS_PY = `
+def _hint_items():
+    _ctx = globals().get("ctx", None)
+    if _ctx is None or getattr(_ctx, "game", None) is None:
+        return None
+    _game = _ctx.game
+    _names = set()
+    try:
+        _store = _ctx.item_names[_game]
+        for _m in _store.maps:
+            for _v in _m.values():
+                if isinstance(_v, str):
+                    _names.add(_v)
+    except Exception:
+        pass
+    try:
+        _groups = (getattr(_ctx, "stored_data", None) or {}).get(f"_read_item_name_groups_{_game}", None)
+        if isinstance(_groups, dict):
+            for _g in _groups.keys():
+                if isinstance(_g, str) and _g != "Everything":
+                    _names.add(_g)
+    except Exception:
+        pass
+    return sorted(_names)
+_hint_items()
+`;
+
+// Resolve the player-relevant hints off the live session ctx into display rows.
+// Each stored hint is a dict (NetUtils._scan_for_TypedTuples turns the Hint
+// NamedTuple into {receiving_player, finding_player, location, item, found,
+// entrance, item_flags, status, class}); older/positional encodings fall back
+// to index access. Names come from ctx's own lookup tables. Returns None when
+// the _read_hints key hasn't been retrieved yet (caller shows "waiting").
+const HINTS_GET_PY = `
+def _hints_get():
+    _ctx = globals().get("ctx", None)
+    if _ctx is None or getattr(_ctx, "slot", None) is None:
+        return None
+    _team = _ctx.team or 0
+    _slot = _ctx.slot
+    _raw = (getattr(_ctx, "stored_data", None) or {}).get(f"_read_hints_{_team}_{_slot}", None)
+    if _raw is None:
+        return None
+    _status_labels = {0: "unspecified", 10: "no priority", 20: "avoid", 30: "priority", 40: "found"}
+    _out = []
+    for _h in _raw:
+        if isinstance(_h, dict):
+            recv = _h.get("receiving_player"); find = _h.get("finding_player")
+            item = _h.get("item"); loc = _h.get("location")
+            found = bool(_h.get("found")); entrance = _h.get("entrance") or ""
+            flags = _h.get("item_flags") or 0; status = _h.get("status")
+        else:
+            recv, find, loc, item = _h[0], _h[1], _h[2], _h[3]
+            found = bool(_h[4]) if len(_h) > 4 else False
+            entrance = _h[5] if len(_h) > 5 else ""
+            flags = _h[6] if len(_h) > 6 else 0
+            status = _h[7] if len(_h) > 7 else 0
+        try: _item_name = _ctx.item_names.lookup_in_slot(item, recv)
+        except Exception: _item_name = str(item)
+        try: _loc_name = _ctx.location_names.lookup_in_slot(loc, find)
+        except Exception: _loc_name = str(loc)
+        _recv_name = _ctx.player_names.get(recv, str(recv))
+        _find_name = _ctx.player_names.get(find, str(find))
+        _status_label = "found" if found else _status_labels.get(int(status) if status is not None else 0, "unspecified")
+        _out.append({
+            "receiving": _recv_name, "finding": _find_name,
+            "item": _item_name, "location": _loc_name,
+            "entrance": entrance, "found": found,
+            "status": _status_label, "forYou": (recv == _slot),
+            "itemFlags": int(flags) if flags else 0,
+        })
+    return _out
+_hints_get()
 `;
 
 // Recompute in-logic locations given the player's current set of checked

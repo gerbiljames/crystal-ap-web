@@ -3,7 +3,7 @@
 // (state.js) and talk to the framework-agnostic lib/ modules.
 
 import { unwrap } from "solid-js/store";
-import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen } from "./state.js";
+import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setHints, setHintsStatus, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
@@ -685,6 +685,12 @@ export async function connectSession() {
     setTrackerInLogic([]);
     setTrackerGoMode("no");
     setTrackerStatus({ kind: "idle" });
+    setHints(null);
+    setHintsStatus({ kind: "idle" });
+    setHintItemNames([]);
+    setHintFeedback(null);
+    hintCaptureUntil = 0;
+    hintCaptureSeq++;
     const list = loadSessions();
     const entry = list.find((s: any) => s.id === app.seedId);
     if (entry) {
@@ -798,6 +804,117 @@ export async function ensureTracker() {
 // event-driven and has nothing to stop.
 export function stopTrackerPolling() {}
 
+// --- Hints ---
+// Pulls the player-relevant hints off the live session ctx. Like the tracker,
+// it's event-driven: the worker fires "hints-dirty" whenever the watched
+// _read_hints data-storage key changes (Retrieved / SetReply / RoomUpdate).
+async function refreshHints() {
+  if (app.session.state !== "live") {
+    setHints(null);
+    setHintsStatus({ kind: "idle" });
+    return;
+  }
+  try {
+    const res = await apWorker.hintsGet();
+    if (res?.out?.ok) {
+      setHints(res.out.hints ?? null);
+      setHintsStatus({ kind: "ready" });
+    }
+  } catch (e: any) {
+    setHintsStatus({ kind: "error", reason: e?.message || String(e) });
+  }
+}
+
+// Item names for the hint-box autocomplete. Static per game, so fetch once and
+// keep retrying (via the dirty handler) until ctx.game is known post-connect.
+async function refreshHintItems() {
+  if (app.session.state !== "live") return;
+  if (hintItemNames().length) return;
+  try {
+    const res = await apWorker.hintItems();
+    if (res?.out?.ok && Array.isArray(res.out.items)) setHintItemNames(res.out.items);
+  } catch { /* leave empty; retried on next dirty event */ }
+}
+
+let hintsDirtyHandlerInstalled = false;
+function installHintsDirtyHandler() {
+  if (hintsDirtyHandlerInstalled) return;
+  hintsDirtyHandlerInstalled = true;
+  apWorker.setHintsDirtyHandler(() => {
+    refreshHints().catch(() => {});
+    refreshHintItems().catch(() => {});
+  });
+}
+export async function ensureHints() {
+  installHintsDirtyHandler();
+  installHintMsgHandler();
+  await refreshHints();
+  await refreshHintItems();
+}
+
+// Hint requests are dispatched through the same command processor as the console
+// and the server replies via PrintJSON — invisible if you're on the hints tab.
+// The worker forwards only the relevant PrintJSON (a created "Hint", or a
+// "CommandResult" carrying !hint errors/cost text, which the server sends only
+// to the requesting client) as "hint-msg" events. We surface those into
+// hintFeedback for a short window after a request, ignoring anything else.
+const HINT_ERR_RE = /not found|no such|invalid|couldn'?t|cannot|can'?t|unknown|ambiguous|did you mean|already|not enough|afford|no hint/i;
+const HINT_CAPTURE_MS = 8000;
+let hintCaptureUntil = 0;
+let hintCaptureLines: string[] = [];
+// Bumped per request (and on connect/disconnect) so a previous request's expiry
+// timer can't overwrite the current feedback or fire after teardown.
+let hintCaptureSeq = 0;
+let hintMsgHandlerInstalled = false;
+function installHintMsgHandler() {
+  if (hintMsgHandlerInstalled) return;
+  hintMsgHandlerInstalled = true;
+  apWorker.setHintMsgHandler((text: string, kind: string) => {
+    if (performance.now() > hintCaptureUntil) return;
+    const line = (text || "").trim();
+    if (!line) return;
+    hintCaptureLines.push(line);
+    const joined = hintCaptureLines.join("\n");
+    // A "Hint" reply is the success case; "CommandResult" is usually an error
+    // or cost notice, but a few are informational — fall back to the regex.
+    const isErr = hintCaptureLines.some((l) => HINT_ERR_RE.test(l));
+    setHintFeedback({ text: joined, kind: isErr ? "err" : kind === "Hint" ? "ok" : "info" });
+  });
+}
+
+// Returns true if the request was dispatched. A bare item name is wrapped in
+// !hint; text starting with ! is sent verbatim (e.g. !hint_location). A
+// /-prefix is rejected: those are local client commands that produce no server
+// response, so the feedback line would hang on "requesting…".
+export function requestHint(raw: string): boolean {
+  const text = raw.trim();
+  if (!text) return false;
+  if (app.session.state !== "live") {
+    setHintFeedback({ text: "not connected — can't request a hint", kind: "err" });
+    return false;
+  }
+  installHintMsgHandler();
+  const cmd = /^!/.test(text) ? text : "!hint " + text;
+  const seq = ++hintCaptureSeq;
+  hintCaptureLines = [];
+  hintCaptureUntil = performance.now() + HINT_CAPTURE_MS;
+  setHintFeedback({ text: "requesting…", kind: "info" });
+  try {
+    apWorker.sendInput(cmd);
+    // Don't leave the box stuck on "requesting…" if the server never answers.
+    setTimeout(() => {
+      if (seq === hintCaptureSeq && hintCaptureLines.length === 0) {
+        setHintFeedback({ text: "no response from server", kind: "err" });
+      }
+    }, HINT_CAPTURE_MS);
+    return true;
+  } catch (err: any) {
+    hintCaptureUntil = 0;
+    setHintFeedback({ text: "request failed: " + (err?.message || err), kind: "err" });
+    return false;
+  }
+}
+
 export async function disconnectSession() {
   try { await apWorker.stopSession(); } catch {}
   setSessionState("idle", "disconnected");
@@ -806,6 +923,12 @@ export async function disconnectSession() {
   setTrackerInLogic([]);
   setTrackerGoMode("no");
   setTrackerStatus({ kind: "idle" });
+  setHints(null);
+  setHintsStatus({ kind: "idle" });
+  setHintItemNames([]);
+  setHintFeedback(null);
+  hintCaptureUntil = 0;
+  hintCaptureSeq++;
   stopTrackerPolling();
   logOk("session disconnected");
 }

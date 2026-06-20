@@ -1,8 +1,8 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, connectOpen, setConnectOpen, isMobile, uiPrefs } from "../state.js";
+import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, hints, hintsStatus, hintItemNames, hintFeedback, connectOpen, setConnectOpen, isMobile, uiPrefs } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
-import { connectSession, disconnectSession, disposeEmulator, ensureEmulator, ensureTracker, importSaveFile, stopTrackerPolling } from "../actions.js";
+import { connectSession, disconnectSession, disposeEmulator, ensureEmulator, ensureTracker, ensureHints, requestHint, importSaveFile, stopTrackerPolling } from "../actions.js";
 import { db, idbGet } from "../lib/idb.js";
 import { SAVE_STORE } from "../lib/constants.js";
 import { logErr, logWarn } from "../lib/log.js";
@@ -166,11 +166,93 @@ function TrackerPanel() {
   );
 }
 
+function HintsPanel() {
+  let inputRef: HTMLInputElement | undefined;
+  const status = () => hintsStatus();
+  const list = () => hints() || [];
+  const placeholder = () => {
+    const s = status();
+    if (app.session.state !== "live") return "connect a session to see your hints";
+    if (s.kind === "error") return "hints unavailable: " + (s.reason || "").split("\n")[0];
+    if (hints() === null)   return "waiting for hints…";
+    if (list().length === 0) return "no hints yet — request one below";
+    return null;
+  };
+  const outstanding = () => list().filter((h) => !h.found).length;
+  // Type an item name to request a hint. requestHint wraps a bare name in !hint,
+  // sends it, and mirrors the server's response into hintFeedback (below) so the
+  // outcome is visible without switching to the console.
+  const submitHint = () => {
+    if (!inputRef) return;
+    if (requestHint(inputRef.value)) inputRef.value = "";
+  };
+  const onKey = (ev: KeyboardEvent) => {
+    if (ev.key === "Enter") { ev.preventDefault(); submitHint(); }
+  };
+  return (
+    <div class="tracker-panel">
+      <Show when={app.session.state === "live" && hints() !== null}>
+        <div class="tracker-header">
+          <span>{list().length} hint{list().length === 1 ? "" : "s"}</span>
+          <Show when={outstanding() > 0}>
+            <span class="tracker-go" title="hints not yet found">{outstanding()} outstanding</span>
+          </Show>
+        </div>
+      </Show>
+      <Show when={placeholder() !== null}>
+        <div class="tracker-empty">{placeholder()}</div>
+      </Show>
+      <Show when={placeholder() === null}>
+        <ul class="tracker-list">
+          <For each={list()}>{(h) => (
+            <li class="hint-row" data-found={h.found}>
+              <span class="hint-item">{h.item}</span>
+              <span class="hint-sep"> is at </span>
+              <span class="hint-loc">{h.location}</span>
+              <span class="hint-who">
+                {h.forYou ? ` (${h.finding})` : ` — for ${h.receiving}`}
+              </span>
+              <span class="hint-status" data-status={h.status}>{h.status}</span>
+            </li>
+          )}</For>
+        </ul>
+      </Show>
+      <Show when={hintFeedback()}>
+        <div class="hint-feedback" data-kind={hintFeedback()!.kind}>{hintFeedback()!.text}</div>
+      </Show>
+      <div class="log-input-row">
+        <input
+          ref={inputRef}
+          class="log-input"
+          type="text"
+          list="hint-item-list"
+          autocomplete="off"
+          spellcheck={false}
+          placeholder={app.session.state === "live" ? "item to hint… (sends !hint)" : "connect to request hints"}
+          disabled={app.session.state !== "live"}
+          onKeyDown={onKey}
+        />
+        <datalist id="hint-item-list">
+          <For each={hintItemNames()}>{(name) => <option value={name} />}</For>
+        </datalist>
+        <button
+          class="log-send-btn"
+          type="button"
+          disabled={app.session.state !== "live"}
+          onClick={submitHint}
+          aria-label="request hint"
+          title="request hint"
+        >hint</button>
+      </div>
+    </div>
+  );
+}
+
 function LogArea() {
   let wrapRef;
   let inputRef: HTMLInputElement | undefined;
   let atBottom = true;
-  const [tab, setTab] = createSignal<"console" | "tracker">("console");
+  const [tab, setTab] = createSignal<"console" | "tracker" | "hints">("console");
   const onScroll = () => {
     atBottom = wrapRef.scrollHeight - wrapRef.clientHeight - wrapRef.scrollTop < 16;
   };
@@ -211,6 +293,14 @@ function LogArea() {
           data-active={tab() === "tracker"}
           onClick={() => { setTab("tracker"); ensureTracker().catch(() => {}); }}
         >tracker</button>
+        <button
+          type="button"
+          class="log-tab"
+          role="tab"
+          aria-selected={tab() === "hints"}
+          data-active={tab() === "hints"}
+          onClick={() => { setTab("hints"); stopTrackerPolling(); ensureHints().catch(() => {}); }}
+        >hints</button>
       </div>
       <Show when={tab() === "console"}>
         <div id="log-wrap" class="log-wrap" ref={wrapRef} onScroll={onScroll}>
@@ -249,6 +339,9 @@ function LogArea() {
       </Show>
       <Show when={tab() === "tracker"}>
         <TrackerPanel />
+      </Show>
+      <Show when={tab() === "hints"}>
+        <HintsPanel />
       </Show>
     </div>
   );
