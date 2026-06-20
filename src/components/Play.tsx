@@ -178,7 +178,12 @@ function HintsPanel() {
     if (list().length === 0) return "no hints yet — request one below";
     return null;
   };
-  const outstanding = () => list().filter((h) => !h.found).length;
+  // Show outstanding (not-yet-found) hints first; stable within each group so
+  // the server's ordering is otherwise preserved.
+  const sorted = () => list()
+    .map((h, i) => [h, i] as const)
+    .sort((a, b) => (Number(a[0].found) - Number(b[0].found)) || (a[1] - b[1]))
+    .map(([h]) => h);
   // Type an item name to request a hint. requestHint wraps a bare name in !hint,
   // sends it, and mirrors the server's response into hintFeedback (below) so the
   // outcome is visible without switching to the console.
@@ -194,9 +199,6 @@ function HintsPanel() {
       <Show when={app.session.state === "live" && hints() !== null}>
         <div class="tracker-header">
           <span>{list().length} hint{list().length === 1 ? "" : "s"}</span>
-          <Show when={outstanding() > 0}>
-            <span class="tracker-go" title="hints not yet found">{outstanding()} outstanding</span>
-          </Show>
         </div>
       </Show>
       <Show when={placeholder() !== null}>
@@ -204,7 +206,7 @@ function HintsPanel() {
       </Show>
       <Show when={placeholder() === null}>
         <ul class="tracker-list">
-          <For each={list()}>{(h) => (
+          <For each={sorted()}>{(h) => (
             <li class="hint-row" data-found={h.found}>
               <span class="hint-item">{h.item}</span>
               <span class="hint-sep"> is at </span>
