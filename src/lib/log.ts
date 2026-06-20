@@ -5,8 +5,8 @@
 
 import { setLogLines } from "../state.js";
 
-const LOG_MAX = 5000;
-const LOG_TRIM_TO = 4500;
+const LOG_MAX = 500;
+const LOG_TRIM_TO = 450;
 
 function timeString() {
   const now = new Date();
