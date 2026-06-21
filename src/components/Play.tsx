@@ -184,6 +184,14 @@ function HintsPanel() {
     .map((h, i) => [h, i] as const)
     .sort((a, b) => (Number(a[0].found) - Number(b[0].found)) || (a[1] - b[1]))
     .map(([h]) => h);
+  // Index of the first found hint — used to drop a divider between the
+  // outstanding group and the found group. -1 when one group is empty (no
+  // boundary to mark).
+  const dividerAt = () => {
+    const s = sorted();
+    const idx = s.findIndex((h) => h.found);
+    return idx > 0 ? idx : -1;
+  };
   // Type an item name to request a hint. requestHint wraps a bare name in !hint,
   // sends it, and mirrors the server's response into hintFeedback (below) so the
   // outcome is visible without switching to the console.
@@ -206,7 +214,11 @@ function HintsPanel() {
       </Show>
       <Show when={placeholder() === null}>
         <ul class="tracker-list">
-          <For each={sorted()}>{(h) => (
+          <For each={sorted()}>{(h, i) => (
+            <>
+            <Show when={i() === dividerAt()}>
+              <li class="hint-divider" aria-hidden="true"><span>found</span></li>
+            </Show>
             <li class="hint-row" data-found={h.found}>
               <span class="hint-item">{h.item}</span>
               <span class="hint-sep"> is at </span>
@@ -216,6 +228,7 @@ function HintsPanel() {
               </span>
               <span class="hint-status" data-status={h.status}>{h.status}</span>
             </li>
+            </>
           )}</For>
         </ul>
       </Show>

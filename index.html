@@ -21,14 +21,14 @@
     --bg-3: #2d304c;
     --ink-0: #f0e8d0;   /* logo cream */
     --ink-1: #b2a4d0;   /* lavender-tinted body */
-    --ink-2: #8b82a8;
+    --ink-2: #9a90bb;   /* muted — lifted from #8b82a8 to clear AA on bg-2 panels */
     --ink-3: #3b3752;
     --jade: #957bc2;          /* was jade — now lavender primary */
     --jade-deep: #5d4b8a;
     --jade-bright: #c7aff0;
-    --coral: #eb3b79;         /* Crystal pink */
+    --coral: #f25c8f;         /* Crystal pink — lifted from #eb3b79 so small text clears AA */
     --coral-deep: #a8205a;
-    --amber: #e8d5a0;         /* logo cream/gold for warnings */
+    --amber: #e0c060;         /* gold for warnings — pushed off the cream --ink-0 so warn != info */
     --line: #2c2b44;
     --line-bright: #3a3857;
     --mono: ui-monospace, "SF Mono", "IBM Plex Mono", "Monaco", "Menlo", "Consolas", monospace;
@@ -1050,6 +1050,11 @@
   .fs-log-line.log-err  { border-left-color: var(--coral); }
   .fs-log-line.log-warn { border-left-color: var(--amber); }
   .fs-log-line.log-ok   { border-left-color: var(--jade-bright); }
+  /* Glyph cue alongside the border colour so severity survives both the
+     transient fade and colour-vision deficiency. */
+  .fs-log-line.log-warn .fs-log-time::after { content: ' !'; color: var(--amber); font-weight: 700; }
+  .fs-log-line.log-err  .fs-log-time::after { content: ' \00d7'; color: var(--coral); font-weight: 700; }
+  .fs-log-line.log-ok   .fs-log-time::after { content: ' \2713'; color: var(--jade-bright); }
   @keyframes fs-line-fade {
     from { opacity: 1; }
     to   { opacity: 0; }
@@ -1115,7 +1120,7 @@
     font-size: 11px;
     letter-spacing: 0.22em;
     text-transform: uppercase;
-    color: var(--jade-deep);
+    color: var(--jade);
     border: 1px solid var(--ink-3);
   }
 
@@ -1191,7 +1196,7 @@
     transition: border-color 140ms, color 140ms;
   }
   .session-links a:hover { color: var(--ink-0); border-color: var(--jade); }
-  .session-links a::after { content: '↗'; color: var(--jade-deep); font-size: 10px; }
+  .session-links a::after { content: '↗'; color: var(--jade); font-size: 10px; }
   .session-links a[data-kind="download"]::after { content: '↓'; }
   .session-links a[data-kind="upload"]::after { content: '↑'; }
 
@@ -1271,7 +1276,25 @@
   }
   .tracker-loc { padding: 1px 0; }
   .hint-row { padding: 3px 0; }
-  .hint-row[data-found="true"] { opacity: 0.5; }
+  /* Separator between the outstanding group and the found group. A centred
+     "found" label flanked by rules. */
+  .hint-divider {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0 2px;
+    color: var(--ink-2);
+    font-size: 9px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+  }
+  .hint-divider::before,
+  .hint-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+  }
   .hint-item { color: var(--jade-bright); }
   .hint-loc { color: var(--ink-0); }
   .hint-sep, .hint-who { color: var(--ink-2); }
@@ -1317,6 +1340,11 @@
   #log .log-err  { color: var(--coral); }
   #log .log-ok   { color: var(--jade-bright); }
   #log .log-chat { color: var(--ink-0); background: rgba(149,123,194,0.05); padding: 0 2px; }
+  /* Redundant non-color cue for log severity so warn/err/ok don't rely on
+     hue alone (colorblind users + warn/info being close in lightness). */
+  #log .log-warn::before { content: '! '; font-weight: 700; }
+  #log .log-err::before  { content: '\00d7 '; font-weight: 700; }
+  #log .log-ok::before   { content: '\2713 '; }
 
   .log-input-row {
     display: flex;
