@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, hints, hintsStatus, hintItemNames, hintFeedback, connectOpen, setConnectOpen, isMobile, uiPrefs } from "../state.js";
+import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, hints, hintsStatus, hintPoints, hintItemNames, hintFeedback, connectOpen, setConnectOpen, isMobile, uiPrefs } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
 import { connectSession, disconnectSession, disposeEmulator, ensureEmulator, ensureTracker, ensureHints, requestHint, importSaveFile, stopTrackerPolling } from "../actions.js";
@@ -202,11 +202,30 @@ function HintsPanel() {
   const onKey = (ev: KeyboardEvent) => {
     if (ev.key === "Enter") { ev.preventDefault(); submitHint(); }
   };
+  // Right-hand point readout. Free hints (cost 0) say so; otherwise show how many
+  // hints the balance affords, with the raw points and per-hint price on hover.
+  const pts = () => hintPoints();
+  const pointsLabel = () => {
+    const p = pts();
+    if (!p) return null;
+    if (!p.costPoints) return "hints free";
+    if (p.available === null) return null;
+    return `${p.available} hint${p.available === 1 ? "" : "s"} available`;
+  };
+  const pointsTitle = () => {
+    const p = pts();
+    if (!p || !p.costPoints) return undefined;
+    const bal = p.points === null ? "?" : p.points;
+    return `${bal} points · ${p.costPoints} per hint`;
+  };
   return (
     <div class="tracker-panel">
-      <Show when={app.session.state === "live" && hints() !== null}>
+      <Show when={app.session.state === "live" && (hints() !== null || pointsLabel() !== null)}>
         <div class="tracker-header">
           <span>{list().length} hint{list().length === 1 ? "" : "s"}</span>
+          <Show when={pointsLabel() !== null}>
+            <span class="hint-points" title={pointsTitle()}>{pointsLabel()}</span>
+          </Show>
         </div>
       </Show>
       <Show when={placeholder() !== null}>

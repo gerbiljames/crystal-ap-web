@@ -379,9 +379,16 @@ async function hintsGet(id) {
   if (!pyodide || !sessionTasks) return { out: { ok: false, hints: null } };
   const result = await pyodide.runPythonAsync(HINTS_GET_PY);
   if (result === undefined || result === null) return { out: { ok: true, hints: null } };
-  const arr = result.toJs ? result.toJs({ dict_converter: Object.fromEntries }) : result;
+  const obj = result.toJs ? result.toJs({ dict_converter: Object.fromEntries }) : result;
   if (result?.destroy) result.destroy();
-  return { out: { ok: true, hints: arr } };
+  return { out: {
+    ok: true,
+    hints: obj.hints ?? null,
+    points: obj.points ?? null,
+    costPercent: obj.costPercent ?? null,
+    costPoints: obj.costPoints ?? null,
+    available: obj.available ?? null,
+  } };
 }
 
 // Item names (plus item-name groups) for the player's own game, for hint-box
@@ -1269,9 +1276,22 @@ def _hints_get():
         return None
     _team = _ctx.team or 0
     _slot = _ctx.slot
+    # Hint-point readout. hint_cost is a percentage of this slot's total location
+    # count; the server charges that many points per hint (min 1 unless hints are
+    # free). available = how many hints the current balance affords. Any of these
+    # can be None pre-connect / before total_locations is known — the UI hides the
+    # readout until they resolve.
+    _points = getattr(_ctx, "hint_points", None)
+    _cost_pct = getattr(_ctx, "hint_cost", None)
+    try: _total = _ctx.total_locations
+    except Exception: _total = None
+    _cost_points = max(1, int(_cost_pct * 0.01 * _total)) if _cost_pct and _total else 0
+    _available = (_points // _cost_points) if (_cost_points and _points is not None) else None
+    _meta = {"points": _points, "costPercent": _cost_pct,
+             "costPoints": _cost_points, "available": _available}
     _raw = (getattr(_ctx, "stored_data", None) or {}).get(f"_read_hints_{_team}_{_slot}", None)
     if _raw is None:
-        return None
+        return {"hints": None, **_meta}
     _status_labels = {0: "unspecified", 10: "no priority", 20: "avoid", 30: "priority", 40: "found"}
     _out = []
     for _h in _raw:
@@ -1300,7 +1320,7 @@ def _hints_get():
             "status": _status_label, "forYou": (recv == _slot),
             "itemFlags": int(flags) if flags else 0,
         })
-    return _out
+    return {"hints": _out, **_meta}
 _hints_get()
 `;
 

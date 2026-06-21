@@ -3,7 +3,7 @@
 // (state.js) and talk to the framework-agnostic lib/ modules.
 
 import { unwrap } from "solid-js/store";
-import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setHints, setHintsStatus, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen } from "./state.js";
+import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setHints, setHintsStatus, setHintPoints, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
@@ -686,6 +686,7 @@ export async function connectSession() {
     setTrackerGoMode("no");
     setTrackerStatus({ kind: "idle" });
     setHints(null);
+    setHintPoints(null);
     setHintsStatus({ kind: "idle" });
     setHintItemNames([]);
     setHintFeedback(null);
@@ -811,6 +812,7 @@ export function stopTrackerPolling() {}
 async function refreshHints() {
   if (app.session.state !== "live") {
     setHints(null);
+    setHintPoints(null);
     setHintsStatus({ kind: "idle" });
     return;
   }
@@ -818,6 +820,13 @@ async function refreshHints() {
     const res = await apWorker.hintsGet();
     if (res?.out?.ok) {
       setHints(res.out.hints ?? null);
+      const pts = res.out.points, cost = res.out.costPoints;
+      setHintPoints(pts == null && cost == null ? null : {
+        points: pts ?? null,
+        costPercent: res.out.costPercent ?? null,
+        costPoints: cost ?? 0,
+        available: res.out.available ?? null,
+      });
       setHintsStatus({ kind: "ready" });
     }
   } catch (e: any) {
@@ -924,6 +933,7 @@ export async function disconnectSession() {
   setTrackerGoMode("no");
   setTrackerStatus({ kind: "idle" });
   setHints(null);
+  setHintPoints(null);
   setHintsStatus({ kind: "idle" });
   setHintItemNames([]);
   setHintFeedback(null);

@@ -206,6 +206,18 @@ export const [hints, setHints] = createSignal<HintRow[] | null>(null);
 export const [hintsStatus, setHintsStatus] = createSignal<
   { kind: "idle" } | { kind: "ready" } | { kind: "error"; reason: string }
 >({ kind: "idle" });
+// Hint-point readout for the Hints tab. The server grants points per checked
+// location and charges `costPoints` (derived from the `costPercent`-of-total
+// hint cost) per hint; `available` is how many hints the current `points`
+// balance affords. `available` is null when hints are free (cost 0) or the
+// balance/total isn't known yet. Null until the session reports any of it.
+export type HintPoints = {
+  points: number | null;
+  costPercent: number | null;
+  costPoints: number;
+  available: number | null;
+};
+export const [hintPoints, setHintPoints] = createSignal<HintPoints | null>(null);
 // Own-game item names (and item-name groups) for hint-box autocomplete. Static
 // per game, so fetched once per session.
 export const [hintItemNames, setHintItemNames] = createSignal<string[]>([]);
