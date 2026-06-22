@@ -3,9 +3,11 @@
 // (state.js) and talk to the framework-agnostic lib/ modules.
 
 import { unwrap } from "solid-js/store";
-import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setHints, setHintsStatus, setHintPoints, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen } from "./state.js";
+import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setHints, setHintsStatus, setHintPoints, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen, romOverridePrefs } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
+import { bundledApworldVersion } from "./lib/apworld.js";
+import { buildOverrides, overridesHash } from "./lib/overrides.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
 import { db, idbGet, idbPut, idbDel } from "./lib/idb.js";
 import { loadSessions, saveSessions, recordSession as recordSessionPure, removeSession } from "./lib/sessions.js";
@@ -89,7 +91,25 @@ export async function resumeSession(id: string) {
   const dbc = await db();
   const cachedRom = dbc ? await idbGet<ArrayBuffer>(dbc, id, ROM_STORE).catch(() => null) : null;
   const savedArtifacts = dbc ? await idbGet<Record<string, Uint8Array>>(dbc, id, ARTIFACTS_STORE).catch((err) => { logWarn(`read artifacts failed: ${err}`); return null; }) : null;
-  if (cachedRom && cachedRom.byteLength === GB_ROM_SIZE) {
+  // The cached ROM was patched by whatever apworld shipped at the time. If the
+  // bundled apworld has since changed, the cache is stale — fall through to the
+  // re-patch path instead of serving an outdated ROM. A missing recorded
+  // version (pre-tagging caches) or unknown game also forces a re-patch.
+  const bundledVersion = bundledApworldVersion(session.game);
+  const apworldStale = !session.apworldVersion || session.apworldVersion !== bundledVersion;
+  // The cached ROM was patched with whatever overrides were set at the time
+  // (tagged via overridesHash). If the current overrides differ, re-patch so
+  // resume reflects the latest choices rather than serving a stale ROM.
+  const currentOvHash = overridesHash(buildOverrides(romOverridePrefs()));
+  const overridesStale = (session.overridesHash || "") !== currentOvHash;
+  const stale = apworldStale || overridesStale;
+  if (cachedRom && cachedRom.byteLength === GB_ROM_SIZE && stale) {
+    if (apworldStale)
+      log(`apworld changed since this seed was patched (${session.apworldVersion || "untagged"} → ${bundledVersion ?? "unknown"}) — re-patching`);
+    else
+      log(`option overrides changed since this seed was patched — re-patching`);
+  }
+  if (cachedRom && cachedRom.byteLength === GB_ROM_SIZE && !stale) {
     setApp("patchedRom", cachedRom);
     if (savedArtifacts && Object.keys(savedArtifacts).length > 0) {
       setApp("artifacts", savedArtifacts);
@@ -101,13 +121,23 @@ export async function resumeSession(id: string) {
     await bootEmulatorAndUi();
     return;
   }
-  // No patched ROM yet — if we still have the generation artifacts, drop
-  // the user back into the ROM-upload step (or straight to patching if the
-  // vanilla ROM is already cached).
+  // No usable patched ROM yet (none cached, or it's stale) — if we still have
+  // the generation artifacts, re-patch: drop the user back into the ROM-upload
+  // step (or straight to patching if the vanilla ROM is already cached).
   if (savedArtifacts && Object.keys(savedArtifacts).length > 0) {
     setApp("artifacts", savedArtifacts);
     logOk(`resumed ${id} — need ROM to patch`);
     await continueToRom();
+    return;
+  }
+  // Re-patch isn't possible without the artifacts, but if the (stale) cached
+  // ROM is still here it's better to play that than to throw the seed away.
+  // This only happens on the stale path — a fresh cache was served above.
+  if (cachedRom && cachedRom.byteLength === GB_ROM_SIZE) {
+    setApp("patchedRom", cachedRom);
+    logWarn(`couldn't re-patch ${id} (generation files were cleared) — playing the previously patched ROM as-is; ${overridesStale ? "new option overrides" : "the apworld update"} won't apply`);
+    setStep("play");
+    await bootEmulatorAndUi();
     return;
   }
   const msg = `couldn't resume ${id} — the browser cleared this seed's cached files. Drop the YAML again to roll a new seed.`;
@@ -247,8 +277,22 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
   const patchBytes = app.artifacts[patchName].slice();
   const vanillaBuf = romBytes.slice().buffer;
 
+  // Tag the cached ROM with the apworld that produced it so resume can re-patch
+  // after an apworld update instead of serving a stale ROM (see resumeSession).
+  let patchGame: string | undefined;
+  try { patchGame = (await readPatchManifest(app.artifacts[patchName])).game; }
+  catch (e) { logWarn(`couldn't read patch game for cache tagging: ${e.message || e}`); }
+  const apworldVersion = bundledApworldVersion(patchGame);
+
+  // Patch-time option overrides (applied to this player's ROM only). Tag the
+  // cached ROM with their hash too, so changing an override forces a re-patch
+  // on resume rather than serving a ROM patched with the old overrides.
+  const overrides = buildOverrides(romOverridePrefs());
+  const ovHash = overridesHash(overrides);
+  if (Object.keys(overrides).length > 0) log(`applying ${Object.keys(overrides).length} option override(s)`);
+
   try {
-    const { out } = await apWorker.patch(romBytes, patchBytes, (phase) => {
+    const { out } = await apWorker.patch(romBytes, patchBytes, overrides, (phase) => {
       setApp("rom", "progressText", PHASE_LABELS[phase] || phase);
       log("patcher: " + phase);
     });
@@ -267,6 +311,9 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
       slot: app.slotName,
       hosted: app.hosted,
       romCached: true,
+      game: patchGame,
+      apworldVersion,
+      overridesHash: ovHash,
     });
     refreshSessions();
     const dbc = await db();

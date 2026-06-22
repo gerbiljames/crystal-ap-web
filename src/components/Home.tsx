@@ -310,7 +310,6 @@ function RomPane() {
         <Dropzone id="dz-rom" inputId="rom-file" accept=".gbc,.gb,application/octet-stream" onFile={handleRomDrop}>
           <div class="dz-mark">▱</div>
           <div class="dz-primary">Drop vanilla Pokémon Crystal ROM</div>
-          <div class="dz-meta">your file · your machine</div>
         </Dropzone>
         <Show when={app.rom.progressText}>
           <div class="rom-progress" id="rom-progress">

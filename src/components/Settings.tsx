@@ -1,5 +1,6 @@
 import { For, Show, createSignal, createEffect, onCleanup } from "solid-js";
-import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs, controllerPrefs, setControllerPrefs, audioPrefs, setAudioPrefs, uiPrefs, setUiPrefs } from "../state.js";
+import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs, controllerPrefs, setControllerPrefs, audioPrefs, setAudioPrefs, uiPrefs, setUiPrefs, romOverridePrefs, setRomOverridePrefs } from "../state.js";
+import { TOP_LEVEL_FIELDS, GAME_OPTION_FIELDS, type OverrideField } from "../lib/overrides.js";
 import {
   DEFAULT_BINDINGS, loadBindings, saveBindings, captureNextButton, getActivePad,
   type InputName,
@@ -19,7 +20,7 @@ const INPUT_ROWS: { name: InputName; label: string }[] = [
   { name: "right",  label: "right" },
 ];
 
-type Tab = "controller" | "keyboard" | "audio" | "overlay" | "ui";
+type Tab = "controller" | "keyboard" | "audio" | "overlay" | "ui" | "overrides";
 
 export function Settings() {
   const [tab, setTab] = createSignal<Tab>("controller");
@@ -77,6 +78,13 @@ export function Settings() {
                 data-active={tab() === "ui"}
                 onClick={() => setTab("ui")}
               >ui</button>
+              <button
+                class="modal-tab"
+                role="tab"
+                aria-selected={tab() === "overrides"}
+                data-active={tab() === "overrides"}
+                onClick={() => setTab("overrides")}
+              >overrides</button>
             </div>
             <button class="modal-close" onClick={() => setSettingsOpen(false)} aria-label="close">✕</button>
           </div>
@@ -95,6 +103,9 @@ export function Settings() {
             </Show>
             <Show when={tab() === "ui"}>
               <UiPanel />
+            </Show>
+            <Show when={tab() === "overrides"}>
+              <OverridesPanel />
             </Show>
           </div>
         </div>
@@ -344,6 +355,108 @@ function UiPanel() {
         <span class="switch-track"><span class="switch-knob"></span></span>
         <span class="switch-text">never show on-screen controls</span>
       </label>
+    </div>
+  );
+}
+
+function OverrideField(props: { field: OverrideField; prefKey: string }) {
+  const f = props.field;
+  const value = () => romOverridePrefs()[props.prefKey] ?? "";
+
+  const set = (v: string) => {
+    const next = { ...romOverridePrefs() };
+    if (v === "") delete next[props.prefKey];
+    else next[props.prefKey] = v;
+    setRomOverridePrefs(next);
+  };
+
+  const onNumber = (ev: Event) => {
+    const el = ev.currentTarget as HTMLInputElement;
+    if (el.value === "") return set("");
+    let n = Math.floor(Number(el.value));
+    if (!Number.isFinite(n)) return;
+    if (f.min != null) n = Math.max(f.min, n);
+    if (f.max != null) n = Math.min(f.max, n);
+    set(String(n));
+  };
+
+  return (
+    <div class="pref-row">
+      <label class="pref-label" for={`ov-${props.prefKey}`}>
+        <span>{f.label}</span>
+        <Show when={f.help}><span class="pref-sub">{f.help}</span></Show>
+      </label>
+      <Show when={f.kind === "toggle" || f.kind === "choice"}>
+        <select
+          id={`ov-${props.prefKey}`}
+          class="pref-input"
+          value={value()}
+          onChange={(ev) => set(ev.currentTarget.value)}
+        >
+          <option value="">default</option>
+          <For each={f.choices}>{(c) => <option value={c}>{c}</option>}</For>
+        </select>
+      </Show>
+      <Show when={f.kind === "number"}>
+        <input
+          id={`ov-${props.prefKey}`}
+          class="pref-input"
+          type="number"
+          min={f.min}
+          max={f.max}
+          step="1"
+          placeholder="default"
+          value={value()}
+          onInput={onNumber}
+        />
+      </Show>
+      <Show when={f.kind === "text"}>
+        <input
+          id={`ov-${props.prefKey}`}
+          class="pref-input"
+          type="text"
+          maxLength={f.maxLen}
+          placeholder="default"
+          value={value()}
+          onInput={(ev) => set(ev.currentTarget.value)}
+        />
+      </Show>
+      <Show when={f.kind === "list"}>
+        <input
+          id={`ov-${props.prefKey}`}
+          class="pref-input"
+          type="text"
+          placeholder={f.validKeys ? f.validKeys.join(", ") : "comma-separated"}
+          value={value()}
+          onInput={(ev) => set(ev.currentTarget.value)}
+        />
+      </Show>
+    </div>
+  );
+}
+
+function OverridesPanel() {
+  const setCount = () => Object.keys(romOverridePrefs()).length;
+  return (
+    <div class="overlay-panel">
+      <p class="panel-intro">
+        Patch-time tweaks applied to <strong>your</strong> ROM only. They don't affect
+        the seed, logic, or other players. Left at <strong>default</strong>, each option
+        keeps whatever the seed rolled. Changes apply the next time a ROM is patched;
+        resuming a seed re-patches automatically when these change.
+      </p>
+
+      <h3 class="ov-group-head">General</h3>
+      <For each={TOP_LEVEL_FIELDS}>{(f) => <OverrideField field={f} prefKey={f.key} />}</For>
+
+      <h3 class="ov-group-head">In-game options</h3>
+      <For each={GAME_OPTION_FIELDS}>{(f) => <OverrideField field={f} prefKey={`go:${f.key}`} />}</For>
+
+      <div class="ctrl-actions">
+        <button class="btn-ghost" disabled={setCount() === 0} onClick={() => setRomOverridePrefs({})}>
+          reset all{setCount() > 0 ? ` (${setCount()})` : ""}
+        </button>
+      </div>
     </div>
   );
 }

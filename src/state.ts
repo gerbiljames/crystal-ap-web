@@ -8,6 +8,7 @@ import { createStore } from "solid-js/store";
 import { createSignal } from "solid-js";
 import { loadSessions } from "./lib/sessions.js";
 import { loadYamls } from "./lib/yamls.js";
+import type { OverridePrefs } from "./lib/overrides.js";
 
 const HOST_PREF_KEY = "crystal-ap-host-pref";
 
@@ -172,6 +173,34 @@ export const [uiPrefs, _setUiPrefs] = createSignal<UiPrefs>(loadUiPrefs());
 export function setUiPrefs(next: UiPrefs) {
   _setUiPrefs(next);
   try { localStorage.setItem(UI_PREFS_KEY, JSON.stringify(next)); } catch {}
+}
+
+// ---------- rom override settings ----------
+// Patch-time Pokemon Crystal option overrides (see lib/overrides.ts). Stored as
+// a flat pref map; an empty value means "leave the seed's own value alone".
+const ROM_OVERRIDES_KEY = "crystal-ap-rom-overrides";
+
+function loadOverridePrefs(): OverridePrefs {
+  try {
+    const raw = localStorage.getItem(ROM_OVERRIDES_KEY);
+    if (!raw) return {};
+    const p = JSON.parse(raw);
+    if (!p || typeof p !== "object") return {};
+    // Coerce every value to string and drop empties so the stored shape stays
+    // the flat string map the form and buildOverrides expect.
+    const out: OverridePrefs = {};
+    for (const [k, v] of Object.entries(p)) {
+      if (v == null || v === "") continue;
+      out[k] = String(v);
+    }
+    return out;
+  } catch { return {}; }
+}
+
+export const [romOverridePrefs, _setRomOverridePrefs] = createSignal<OverridePrefs>(loadOverridePrefs());
+export function setRomOverridePrefs(next: OverridePrefs) {
+  _setRomOverridePrefs(next);
+  try { localStorage.setItem(ROM_OVERRIDES_KEY, JSON.stringify(next)); } catch {}
 }
 
 // Log buffer. Each entry is { kind, time, text?, ansi? }.

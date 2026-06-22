@@ -100,10 +100,18 @@ sys.stderr = _Tee("stderr")
   return initPromise;
 }
 
-async function patch(id, romBytes, patchBytes) {
+async function patch(id, romBytes, patchBytes, overrides) {
   await ensureInit(id);
   pyodide.FS.writeFile("/tmp/vanilla.gbc", romBytes);
   pyodide.FS.writeFile("/tmp/seed.apcrystalpre", patchBytes);
+  // The apworld's apply_overrides step reads option overrides straight from
+  // host.yaml via get_settings(). get_settings() memoizes on first access, so
+  // rewriting the file wouldn't take effect — instead we set the override dict
+  // directly on the (cached) settings group. Both the stable and prerelease
+  // Crystal worlds read get_settings().pokemon_crystal_settings.option_overrides,
+  // so this single assignment covers whichever patch class runs. A fresh dict
+  // per call matters because apply_overrides may pop keys from it.
+  const overridesJson = JSON.stringify(JSON.stringify(overrides || {}));
   // Dispatch by game name from the patch's archipelago.json manifest. Stable
   // and prerelease both ship a PokemonCrystalProcedurePatch class but they
   // live in different modules and produce binary-incompatible patches.
@@ -116,6 +124,10 @@ from worlds.Files import AutoPatchRegister
 _PatchClass = AutoPatchRegister.patch_types.get(_game)
 if _PatchClass is None:
     raise RuntimeError(f"no patch handler for game {_game!r}")
+from settings import get_settings as _get_settings
+_grp = getattr(_get_settings(), "pokemon_crystal_settings", None)
+if _grp is not None:
+    _grp.option_overrides = json.loads(${overridesJson})
 _PatchClass.source_data = open("/tmp/vanilla.gbc","rb").read()
 _PatchClass(path="/tmp/seed.apcrystalpre").patch("/tmp/patched.gbc")
   `);
@@ -424,7 +436,7 @@ self.onmessage = async (ev) => {
       await ensureInit(id);
       post({ id, ok: true });
     } else if (cmd === "patch") {
-      const { out, transfer } = await patch(id, ev.data.rom, ev.data.patch);
+      const { out, transfer } = await patch(id, ev.data.rom, ev.data.patch, ev.data.overrides);
       post({ id, ok: true, out }, transfer);
     } else if (cmd === "generate") {
       const { out, transfer } = await generate(id, ev.data.yaml);

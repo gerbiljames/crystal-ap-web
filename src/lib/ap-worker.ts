@@ -63,7 +63,7 @@ function fire(cmd: string, payload: Record<string, any> = {}) { spawn().postMess
 
 export const apWorker = {
   init:            (cb?: ProgressCb)                                   => call("init", {}, [], cb ?? null),
-  patch:           (rom: Uint8Array, patch: Uint8Array, cb?: ProgressCb) => call("patch",    { rom, patch }, [rom.buffer, patch.buffer], cb ?? null),
+  patch:           (rom: Uint8Array, patch: Uint8Array, overrides?: Record<string, any>, cb?: ProgressCb) => call("patch",    { rom, patch, overrides: overrides ?? {} }, [rom.buffer, patch.buffer], cb ?? null),
   generate:        (yaml: string, cb?: ProgressCb)                     => call("generate", { yaml }, [], cb ?? null),
   startSession:    (server: string, slot: string, password: string)    => call("session-start", { server, slot, password }),
   stopSession:     ()                                                  => call("session-stop"),
