@@ -5406,6 +5406,37 @@
         "name": "Johto Roadblocks",
         "options": [
           {
+            "name": "MtSilverRequirement",
+            "yaml_key": "mt_silver_requirement",
+            "kind": "choice",
+            "docstring": "Sets the requirement to access Mt. Silver and Silver Cave",
+            "default": 0,
+            "display_name": "Mt. Silver Requirement",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "badges",
+              "gyms"
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "MtSilverCount",
+            "yaml_key": "mt_silver_count",
+            "kind": "range",
+            "docstring": "Number of badges/gyms required to access Mt. Silver and Silver Cave",
+            "default": 16,
+            "display_name": "Mt. Silver Count",
+            "range_start": 0,
+            "range_end": 16,
+            "choices": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
             "name": "RadioTowerRequirement",
             "yaml_key": "radio_tower_requirement",
             "kind": "choice",
@@ -5578,9 +5609,9 @@
           {
             "name": "RemoveIlexCutTree",
             "yaml_key": "remove_ilex_cut_tree",
-            "kind": "toggle_on",
+            "kind": "toggle",
             "docstring": "Removes the Cut tree in Ilex Forest",
-            "default": 1,
+            "default": 0,
             "display_name": "Remove Ilex Forest Cut Tree",
             "range_start": null,
             "range_end": null,
@@ -5628,37 +5659,6 @@
       {
         "name": "Kanto Roadblocks",
         "options": [
-          {
-            "name": "MtSilverRequirement",
-            "yaml_key": "mt_silver_requirement",
-            "kind": "choice",
-            "docstring": "Sets the requirement to access Mt. Silver and Silver Cave",
-            "default": 0,
-            "display_name": "Mt. Silver Requirement",
-            "range_start": null,
-            "range_end": null,
-            "choices": [
-              "badges",
-              "gyms"
-            ],
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "MtSilverCount",
-            "yaml_key": "mt_silver_count",
-            "kind": "range",
-            "docstring": "Number of badges/gyms required to access Mt. Silver and Silver Cave",
-            "default": 16,
-            "display_name": "Mt. Silver Count",
-            "range_start": 0,
-            "range_end": 16,
-            "choices": null,
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
           {
             "name": "Route22AccessRequirement",
             "yaml_key": "route_22_access_requirement",
