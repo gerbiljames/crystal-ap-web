@@ -5800,7 +5800,7 @@
             "name": "SouthKantoAccess",
             "yaml_key": "south_kanto_access",
             "kind": "choice",
-            "docstring": "Sets where the landslide that is normally south of Fuchsia City is located\n\nBoth can only be used if the condition is power restored or Pokecenter/Gym\nentrances are randomized.",
+            "docstring": "Sets where the landslide that is normally south of Fuchsia City is located\n\nBoth can only be used if the condition is power restored.",
             "default": 0,
             "display_name": "South Kanto Access",
             "range_start": null,
@@ -6474,24 +6474,6 @@
             "range_start": null,
             "range_end": null,
             "choices": null,
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "FlyCheese",
-            "yaml_key": "fly_cheese",
-            "kind": "choice",
-            "docstring": "Determines whether the Vermilion and Mahogany Fly unlocks can be accessed from behind Snorlax and the\nRagecandybar salesman respectively\n- Out of logic allows access but does not consider them in logic\n- Disallow prevents access to Fly unlocks beyond the roadblocks\n- In logic allows access and considers them in logic",
-            "default": 0,
-            "display_name": "Fly Cheese",
-            "range_start": null,
-            "range_end": null,
-            "choices": [
-              "out_of_logic",
-              "disallow",
-              "in_logic"
-            ],
             "special_range_names": null,
             "valid_keys": null,
             "valid_keys_computed": false
@@ -9844,7 +9826,7 @@
             "name": "GameOptions",
             "yaml_key": "game_options",
             "kind": "option_dict",
-            "docstring": "Presets in-game options. These can be changed in-game later. Any omitted options will use their default.\n\nAllowed options and values, with default first:\n\nap_item_sound: on/off - Sets whether a sound is played when a remote item is received\nauto_hms: off/on - HMs will be used automatically where possible, if their usage conditions are met\nauto_run: off/on - Sets whether run activates automatically, if on you can hold B to walk\nbattle_animations: all/no_scene/no_bars/speedy - Sets which battle animations are played:\n    all: All animations play, including entry and moves\n    no_scene: Entry and move animations do not play\n    no_bars: Entry, move and HP/EXP bar animations do not play\n    speedy: No battle animations play and many delays are removed to make battles faster\nbattle_move_stats: off/on - Sets whether or not to display power and accuracy of moves in battle\nbattle_shift: shift/set - Sets whether you are asked to switch between trainer Pokemon\nbike_music: on/off - Sets whether the bike music will play\nblind_trainers: off/on - Sets whether trainers will see you without talking to them directly\ncatch_exp: off/on - Sets whether or not you get EXP for catching a Pokemon\ndex_area_beep: off/on - Sets whether the Pokedex beeps for land and Surf encounters in the current area\nexp_distribution: gen2/gen6/gen8/no_exp - Sets the EXP distribution method:\n    gen2: EXP is split evenly among battle participants, Exp All splits evenly between participants and non-participants\n    gen6: Participants earn 100% of EXP, non-participants earn 50% of EXP when Exp All is enabled\n    gen8: Participants earn 100% of EXP, non-participants earn 100% of EXP when Exp All is enabled\n    no_exp: EXP is disabled\nfast_egg_hatch: off/on - Sets whether eggs take a single cycle to hatch\nfast_egg_make: off/on - Sets whether eggs are guaranteed after one cycle at the day care\nguaranteed_catch: off/on - Sets whether balls have a 100% success rate\nhms_require_teaching: on/off - Sets whether it is required to teach field moves to use them in the field\nitem_notification: popup/sound/none - Sets how Trainersanity, Dex(count)sanity and Grasssanity locations show item notifications\nlow_hp_beep: on/off - Sets whether the low HP beep is played in battle\nmenu_account: on/off - Sets whether extra information is shown on the Start menu\nmore_uncaught_encounters: on/off - Sets whether wild encounters of Pokemon you have not caught are more likely\nmusic: on/off - Sets whether music will play\npoison_flicker: on/off - Sets whether the overworld poison flash effect is played\nrods_always_work: off/on - Sets whether the fishing rods always succeed\nscaling_exp: off/on - Sets whether EXP scales based on level difference as in Generation 5\nshort_fanfares: off/on - Sets whether item receive fanfares are shortened\nskip_dex_registration: off/on - Sets whether the Pokedex registration screen is skipped\nskip_nicknames: off/on - Sets whether you are asked to nickname a Pokemon upon receiving it\nsound: mono/stereo - Sets the sound mode\nspinners: normal/rotators/heck/hell - Sets the overworld behaviour of trainers\n    normal: Trainers will behave as they do in vanilla\n    rotators: Trainers that spin randomly will rotate consistently\n    heck: All trainers with vision rotate consistently, they have their original vision range but can spot you through obstacles\n    hell: All trainers with vision will spin randomly, have max vision and can spot you through obstacles\nsurf_music: on/off - Sets whether the surf music will play\ntext_frame: 1-8 - Sets the textbox frame, \"random\" will pick a random frame\ntext_speed: mid/slow/fast/instant - Sets the speed at which text advances\ntime_of_day: auto/morn/day/nite - Sets a time of day override, auto follows the clock, \"random\" will pick a random time\ntracker_slot: 0-255 - Sets which tracker slot is used for map tracking, used for co-op seeds\ntrainersanity_indication: off/on - Sets whether Trainersanity trainers have grayscale sprites until they are beaten\nturbo_button: none/a/b/a_or_b - Sets which buttons auto advance text when held",
+            "docstring": "Presets in-game options. These can be changed in-game later. Any omitted options will use their default.\n\nAllowed options and values, with default first:\n\nap_item_notification: popup_sound/popup/sound/none - Sets how items received from AP are announced (popup_sound shows the popup and plays the sound)\nauto_hms: off/on - HMs will be used automatically where possible, if their usage conditions are met\nauto_run: off/on - Sets whether run activates automatically, if on you can hold B to walk\nbattle_always_run: off/on - Sets whether running from wild battles always succeeds, including through trapping moves like Mean Look and Wrap\nbattle_animations: all/no_scene/no_bars/speedy - Sets which battle animations are played:\n    all: All animations play, including entry and moves\n    no_scene: Entry and move animations do not play\n    no_bars: Entry, move and HP/EXP bar animations do not play\n    speedy: No battle animations play and many delays are removed to make battles faster\nbattle_move_stats: off/on - Sets whether or not to display power and accuracy of moves in battle\nbattle_shift: shift/set - Sets whether you are asked to switch between trainer Pokemon\nbike_music: on/off - Sets whether the bike music will play\nblind_trainers: off/on - Sets whether trainers will see you without talking to them directly\ncatch_exp: off/on - Sets whether or not you get EXP for catching a Pokemon\ndex_area_beep: off/on - Sets whether the Pokedex beeps for land and Surf encounters in the current area\nexp_distribution: gen2/gen6/gen8/no_exp - Sets the EXP distribution method:\n    gen2: EXP is split evenly among battle participants, Exp All splits evenly between participants and non-participants\n    gen6: Participants earn 100% of EXP, non-participants earn 50% of EXP when Exp All is enabled\n    gen8: Participants earn 100% of EXP, non-participants earn 100% of EXP when Exp All is enabled\n    no_exp: EXP is disabled\nfast_egg_hatch: off/on - Sets whether eggs take a single cycle to hatch\nfast_egg_make: off/on - Sets whether eggs are guaranteed after one cycle at the day care\nguaranteed_catch: off/on - Sets whether balls have a 100% success rate\nhms_require_teaching: on/off - Sets whether it is required to teach field moves to use them in the field\nlocal_item_notification: text/sound/none - Sets how Trainersanity, Dex(count)sanity and Grasssanity locations show item notifications\nlow_hp_beep: on/off - Sets whether the low HP beep is played in battle\nmenu_account: on/off - Sets whether extra information is shown on the Start menu\nmore_uncaught_encounters: on/off - Sets whether wild encounters of Pokemon you have not caught are more likely\nmusic: on/off - Sets whether music will play\npoison_flicker: on/off - Sets whether the overworld poison flash effect is played\nrods_always_work: off/on - Sets whether the fishing rods always succeed\nscaling_exp: off/on - Sets whether EXP scales based on level difference as in Generation 5\nshort_fanfares: off/on - Sets whether item receive fanfares are shortened\nskip_dex_registration: off/on - Sets whether the Pokedex registration screen is skipped\nskip_nicknames: off/on - Sets whether you are asked to nickname a Pokemon upon receiving it\nsound: mono/stereo - Sets the sound mode\nspinners: normal/rotators/heck/hell - Sets the overworld behaviour of trainers\n    normal: Trainers will behave as they do in vanilla\n    rotators: Trainers that spin randomly will rotate consistently\n    heck: All trainers with vision rotate consistently, they have their original vision range but can spot you through obstacles\n    hell: All trainers with vision will spin randomly, have max vision and can spot you through obstacles\nsurf_music: on/off - Sets whether the surf music will play\ntext_frame: 1-8 - Sets the textbox frame, \"random\" will pick a random frame\ntext_speed: mid/slow/fast/instant - Sets the speed at which text advances\ntime_of_day: auto/morn/day/nite - Sets a time of day override, auto follows the clock, \"random\" will pick a random time\ntracker_slot: 0-255 - Sets which tracker slot is used for map tracking, used for co-op seeds\ntrainersanity_indication: off/on - Sets whether Trainersanity trainers have grayscale sprites until they are beaten\nturbo_button: none/a/b/a_or_b - Sets which buttons auto advance text when held",
             "default": {
               "text_speed": "mid",
               "battle_shift": "shift",
@@ -9873,14 +9855,15 @@
               "skip_dex_registration": "off",
               "blind_trainers": "off",
               "guaranteed_catch": "off",
-              "ap_item_sound": "on",
+              "ap_item_notification": "popup_sound",
               "trainersanity_indication": "off",
               "more_uncaught_encounters": "off",
               "auto_hms": "off",
               "hms_require_teaching": "on",
-              "item_notification": "popup",
+              "local_item_notification": "text",
               "tracker_slot": 0,
-              "music": "on"
+              "music": "on",
+              "battle_always_run": "off"
             },
             "display_name": "Game Options",
             "range_start": null,
