@@ -84,33 +84,6 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     writeMem(writeAddr, bytes); return true;
   };
 
-  // --- domain helpers (for BizHawk protocol) ---
-  const romBytes = new Uint8Array(romBuf.slice(0)); // stable copy for ROM domain reads
-  const DOMAIN_SIZE = { WRAM: 32768, HRAM: 127, ROM: romBytes.length };
-  // The WRAM/HRAM pointers index into the shared 16MB wasm heap, so an
-  // out-of-range address would read/write adjacent emulator state instead of
-  // throwing. Enforce the domain bounds so a bad request fails loudly (surfaced
-  // as an ERROR response) rather than silently corrupting memory.
-  const checkBounds = (domain, addr, sz) => {
-    const size = DOMAIN_SIZE[domain];
-    if (size === undefined) throw new Error("unsupported domain: " + domain);
-    if (addr < 0 || sz < 0 || addr + sz > size)
-      throw new Error(`out-of-bounds ${domain} access: addr=${addr} size=${sz} (domain size ${size})`);
-  };
-  const readDomain = (domain, addr, sz) => {
-    checkBounds(domain, addr, sz);
-    if (domain === "ROM")  return romBytes.slice(addr, addr + sz);
-    if (domain === "WRAM") { const p = Module._emulator_get_wram_ptr(e); return new Uint8Array(Module.HEAP8.buffer, p + addr, sz).slice(); }
-    if (domain === "HRAM") { const p = Module._emulator_get_hram_ptr(e); return new Uint8Array(Module.HEAP8.buffer, p + addr, sz).slice(); }
-    throw new Error("unsupported domain: " + domain);
-  };
-  const writeDomain = (domain, addr, bytes) => {
-    checkBounds(domain, addr, bytes.length);
-    if (domain === "WRAM") { const p = Module._emulator_get_wram_ptr(e); new Uint8Array(Module.HEAP8.buffer, p + addr, bytes.length).set(bytes); return; }
-    if (domain === "HRAM") { const p = Module._emulator_get_hram_ptr(e); new Uint8Array(Module.HEAP8.buffer, p + addr, bytes.length).set(bytes); return; }
-    throw new Error("unsupported write domain: " + domain);
-  };
-
   // --- frame buffer → canvas ---
   const fbPtr = Module._get_frame_buffer_ptr(e);
   const fbSize = Module._get_frame_buffer_size(e);
@@ -195,6 +168,55 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     Module._emulator_read_state(e, stateFd);
     return true;
   };
+
+  // --- domain helpers (for BizHawk protocol) ---
+  const romBytes = new Uint8Array(romBuf.slice(0)); // stable copy for ROM domain reads
+  // Unlike WRAM/HRAM, binjgb exposes no live pointer into cart SRAM — only the
+  // whole-buffer ext_ram serialisation used above for save persistence. So the
+  // CartRAM domain snapshots emulator SRAM into `sramFd` before a read, and for
+  // a write snapshots, patches the buffer, then pushes it back. `sramFd` is the
+  // flat multi-bank SRAM image, matching BizHawk's CartRAM address layout.
+  const sramSize = Module._get_file_data_size(sramFd);
+  let sramDirty = false;
+  const DOMAIN_SIZE = { WRAM: 32768, HRAM: 127, ROM: romBytes.length, CartRAM: sramSize };
+  // The WRAM/HRAM pointers index into the shared 16MB wasm heap, so an
+  // out-of-range address would read/write adjacent emulator state instead of
+  // throwing. Enforce the domain bounds so a bad request fails loudly (surfaced
+  // as an ERROR response) rather than silently corrupting memory.
+  const checkBounds = (domain, addr, sz) => {
+    const size = DOMAIN_SIZE[domain];
+    if (size === undefined) throw new Error("unsupported domain: " + domain);
+    if (addr < 0 || sz < 0 || addr + sz > size)
+      throw new Error(`out-of-bounds ${domain} access: addr=${addr} size=${sz} (domain size ${size})`);
+  };
+  const readDomain = (domain, addr, sz) => {
+    checkBounds(domain, addr, sz);
+    if (domain === "ROM")  return romBytes.slice(addr, addr + sz);
+    if (domain === "WRAM") { const p = Module._emulator_get_wram_ptr(e); return new Uint8Array(Module.HEAP8.buffer, p + addr, sz).slice(); }
+    if (domain === "HRAM") { const p = Module._emulator_get_hram_ptr(e); return new Uint8Array(Module.HEAP8.buffer, p + addr, sz).slice(); }
+    if (domain === "CartRAM") {
+      Module._emulator_write_ext_ram(e, sramFd); // snapshot live SRAM into the buffer
+      const p = Module._get_file_data_ptr(sramFd);
+      return new Uint8Array(Module.HEAP8.buffer, p + addr, sz).slice();
+    }
+    throw new Error("unsupported domain: " + domain);
+  };
+  const writeDomain = (domain, addr, bytes) => {
+    checkBounds(domain, addr, bytes.length);
+    if (domain === "WRAM") { const p = Module._emulator_get_wram_ptr(e); new Uint8Array(Module.HEAP8.buffer, p + addr, bytes.length).set(bytes); return; }
+    if (domain === "HRAM") { const p = Module._emulator_get_hram_ptr(e); new Uint8Array(Module.HEAP8.buffer, p + addr, bytes.length).set(bytes); return; }
+    if (domain === "CartRAM") {
+      // Snapshot first so untouched bytes survive the read-back that pushes the
+      // whole buffer into the emulator, then flag it for the persistence loop.
+      Module._emulator_write_ext_ram(e, sramFd);
+      new Uint8Array(Module.HEAP8.buffer, Module._get_file_data_ptr(sramFd) + addr, bytes.length).set(bytes);
+      Module._emulator_read_ext_ram(e, sramFd);
+      sramDirty = true;
+      return;
+    }
+    throw new Error("unsupported write domain: " + domain);
+  };
+
   if (saveDb) {
     // Load SRAM first so the cart battery is populated for games that haven't
     // yet accumulated a savestate; if a savestate exists, applying it second
@@ -212,7 +234,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
   // in the background; workers aren't). Canvas paints still piggyback on
   // the natural browser repaint cadence, which is all that matters
   // visually — and audio is gated separately in pushAudio.
-  let lastTickSec = 0, leftoverTicks = 0, sramDirty = false, stateDirty = false;
+  let lastTickSec = 0, leftoverTicks = 0, stateDirty = false;
   let disposed = false;
   function step() {
     if (disposed) return;
@@ -323,7 +345,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     readDomain, writeDomain,
     romHash,
     DOMAIN_SIZE,
-    sramSize: Module._get_file_data_size(sramFd),
+    sramSize,
     dispose,
   };
 }
