@@ -6507,7 +6507,7 @@
             "name": "WildEncounterBlocklist",
             "yaml_key": "wild_encounter_blocklist",
             "kind": "pokemon_set",
-            "docstring": "These Pokemon will not appear in the wild\nDoes nothing if wild Pokemon are not randomized\nBlocklists are best effort, other constraints may cause them to be ignored\nThis setting does not affect the bug catching contest.",
+            "docstring": "These Pokemon will not appear in the wild\nDoes nothing if wild Pokemon are not randomized\nBlocklists are best effort, other constraints may cause them to be ignored\nThis setting also applies to bug catching contest encounters",
             "default": null,
             "display_name": "Wild Encounter Blocklist",
             "range_start": null,
