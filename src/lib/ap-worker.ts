@@ -19,9 +19,32 @@ let onPrint: ((text: string) => void) | null = null;
 let onTrackerDirty: (() => void) | null = null;
 let onHintsDirty: (() => void) | null = null;
 let onHintMsg: ((text: string, kind: string) => void) | null = null;
+let onFatal: ((reason: string) => void) | null = null;
+
+// The worker flags `fatal` when Pyodide has latched its dead-runtime state.
+// Nothing inside that worker can be recovered, so drop it: terminate, clear the
+// singleton (the next call() spawns a fresh worker that re-boots Pyodide), and
+// fail every in-flight call rather than leaving them hanging forever. Session,
+// host and tracker state all lived in the dead worker — onFatal owns rebuilding
+// them. The handler callbacks above are main-thread state and survive untouched.
+function killWorker(reason: string) {
+  const dead = worker;
+  worker = null;
+  if (dead) {
+    dead.onmessage = null;
+    dead.onerror = null;
+    dead.terminate();
+  }
+  const orphans = [...pending.values()];
+  pending.clear();
+  for (const p of orphans) p.reject(new Error("ap worker restarted after a fatal error"));
+  // Defer so the rejections above settle before the handler starts issuing new
+  // calls against the respawned worker.
+  queueMicrotask(() => onFatal?.(reason));
+}
 
 function handle(ev: MessageEvent) {
-  const { id, event, phase, reqId, payload, ok, error, out } = ev.data;
+  const { id, event, phase, reqId, payload, ok, error, out, fatal } = ev.data;
   if (event === "progress")      { pending.get(id)?.onProgress?.(phase); return; }
   if (event === "bh-req")        { onBhReq?.(reqId, payload); return; }
   if (event === "printjson")     { onPrint?.(ev.data.text); return; }
@@ -30,17 +53,28 @@ function handle(ev: MessageEvent) {
   if (event === "tracker-dirty") { onTrackerDirty?.(); return; }
   if (event === "hints-dirty")   { onHintsDirty?.(); return; }
   const p = pending.get(id);
-  if (!p) return;
-  pending.delete(id);
-  if (error) p.reject(new Error(error));
-  else p.resolve({ ok, out });
+  if (p) {
+    pending.delete(id);
+    if (error) p.reject(new Error(error));
+    else p.resolve({ ok, out });
+  }
+  if (fatal) killWorker(error || "pyodide fatal error");
 }
 
 function spawn(): Worker {
   if (worker) return worker;
   worker = new Worker("ap_worker.js");
   worker.onmessage = handle;
-  worker.onerror = ev => logErr("ap worker error: " + ev.message);
+  // An error event means something escaped the worker's own try/catch — a failed
+  // importScripts of the Pyodide CDN bundle, a 404 on the script itself, the
+  // browser reaping the worker. No reply is ever coming for the calls in flight,
+  // so treat it exactly like a Pyodide fatal: kill, respawn, recover. Without
+  // this those calls hang forever and every guard keyed off them (connectInFlight)
+  // latches shut.
+  worker.onerror = ev => {
+    logErr("ap worker error: " + ev.message);
+    killWorker(ev.message || "worker error");
+  };
   return worker;
 }
 
@@ -65,6 +99,7 @@ export const apWorker = {
   init:            (cb?: ProgressCb)                                   => call("init", {}, [], cb ?? null),
   patch:           (rom: Uint8Array, patch: Uint8Array, overrides?: Record<string, any>, cb?: ProgressCb) => call("patch",    { rom, patch, overrides: overrides ?? {} }, [rom.buffer, patch.buffer], cb ?? null),
   generate:        (yaml: string, cb?: ProgressCb)                     => call("generate", { yaml }, [], cb ?? null),
+  ping:            ()                                                  => call("ping"),
   startSession:    (server: string, slot: string, password: string)    => call("session-start", { server, slot, password }),
   stopSession:     ()                                                  => call("session-stop"),
   host:            (seedId: string, multidata: Uint8Array)             => call("host", { seedId, multidata }, [multidata.buffer]),
@@ -83,4 +118,5 @@ export const apWorker = {
   setTrackerDirtyHandler: (fn: typeof onTrackerDirty)                  => { onTrackerDirty = fn; },
   setHintsDirtyHandler:   (fn: typeof onHintsDirty)                    => { onHintsDirty = fn; },
   setHintMsgHandler:      (fn: typeof onHintMsg)                       => { onHintMsg = fn; },
+  setFatalHandler:        (fn: typeof onFatal)                         => { onFatal = fn; },
 };

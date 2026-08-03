@@ -479,7 +479,8 @@ function PlayControls() {
           <label>password<input type="password" id="sess-pw" autocomplete="off" readOnly={app.session.state === "live"} /></label>
           <Show when={!isLoopback()}>
             <div class="session-actions">
-              <button class="btn-primary" id="btn-connect" onClick={connectSession}>connect</button>
+              <button class="btn-primary" id="btn-connect" onClick={connectSession}
+                      disabled={app.session.state === "connecting"}>connect</button>
               <button id="btn-disconnect" onClick={disconnectSession}>disconnect</button>
             </div>
           </Show>

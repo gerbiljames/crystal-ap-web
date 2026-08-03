@@ -711,7 +711,56 @@ export async function importSaveFile(file: File) {
   }
 }
 
+// True from the moment a connect attempt enters until it settles. Each attempt
+// makes the worker tear down and rebuild the client (sessionStart calls
+// sessionStop first), so without this a few impatient clicks stack overlapping
+// connects.
+let connectInFlight = false;
+
+// Whether a session is wanted right now — user intent, not socket liveness.
+// recoverFromFatalWorker can't read app.session.state for this: it runs from a
+// microtask queued *after* the failing call's own catch has already flipped the
+// state to "error", so it would always see a dead session and skip the
+// reconnect. Re-checking this flag after each await also lets a disconnect click
+// mid-recovery win instead of being silently undone.
+let sessionWanted = false;
+
+// Heartbeat while a session is up. Nothing else on the main thread calls the
+// worker on a timer — tracker and hint refreshes are driven by events the
+// worker itself emits — so a runtime that dies while no bizhawk request happens
+// to be outstanding would go unnoticed until the user next touched the UI.
+const HEARTBEAT_MS = 20000;
+let heartbeatTimer: number | null = null;
+function stopHeartbeat() {
+  if (heartbeatTimer !== null) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+}
+function startHeartbeat() {
+  stopHeartbeat();
+  // A failed ping needs no handling here: the worker flags it fatal, which is
+  // what kicks off recovery. Anything else is a transient we don't care about.
+  heartbeatTimer = setInterval(() => { apWorker.ping().catch(() => {}); }, HEARTBEAT_MS) as unknown as number;
+}
+
 export async function connectSession() {
+  // Recovery drives its own connect once the replacement runtime is up. A click
+  // during that window would dial the dead worker's ws_url (loopback) or race
+  // the boot, and would leave connectInFlight set so the real attempt gets
+  // dropped — the exact inversion this guard is meant to prevent.
+  if (fatalRecoveryInFlight) { logWarn("python runtime is restarting — it will reconnect on its own"); return; }
+  await runConnect();
+}
+
+async function runConnect() {
+  if (connectInFlight) { logWarn("already connecting — hold on"); return; }
+  connectInFlight = true;
+  try {
+    await doConnectSession();
+  } finally {
+    connectInFlight = false;
+  }
+}
+
+async function doConnectSession() {
   // For loopback hosts the input shows "Self Hosted" as a label; the real
   // URI lives on app.hosted.ws_url. Substitute it before handing to the
   // worker so the websockets shim sees `loopback://...` and short-circuits.
@@ -721,12 +770,14 @@ export async function connectSession() {
   const slot   = $<HTMLInputElement>("#sess-slot").value.trim();
   const pw     = $<HTMLInputElement>("#sess-pw").value;
   if (!server || !slot) { logErr("server and slot are required"); return; }
+  sessionWanted = true;
   setSessionState("connecting", "connecting…");
   logOk(`connecting session for ${slot}@${server}`);
   try {
     await apWorker.startSession(server, slot, pw);
     setSessionState("live", slot);
     logOk(`session started`);
+    startHeartbeat();
     trackerInited = false;
     trackerUnavailable = false;
     setTrackerInLogic([]);
@@ -769,6 +820,10 @@ export async function connectSession() {
 // dependency on a live session or in-process MultiServer.
 let trackerInited = false;
 let trackerInitInFlight: Promise<boolean> | null = null;
+// Bumped whenever an in-flight init is abandoned (fatal-runtime recovery), so
+// the abandoned attempt's finally can't null out the promise that replaced it
+// and let two tracker-init commands run against the worker at once.
+let trackerInitSeq = 0;
 // Latched once we've decided this seed can't run the tracker (e.g. patch-only
 // upload with no .archipelago). Prevents the dirty handler from re-emitting
 // the same warning on every Connected/ReceivedItems/RoomUpdate.
@@ -789,6 +844,7 @@ async function ensureTrackerInited(): Promise<boolean> {
   // on Connected/RoomUpdate, so don't latch unavailable when we're just
   // waiting on the websocket handshake.
   const bytes = multiName ? (artifacts[multiName] as Uint8Array) : null;
+  const seq = ++trackerInitSeq;
   trackerInitInFlight = (async () => {
     try {
       const res = await apWorker.trackerInit(bytes, app.slotName || "");
@@ -807,7 +863,7 @@ async function ensureTrackerInited(): Promise<boolean> {
       trackerInited = true;
       setTrackerStatus({ kind: "ready" });
       return true;
-    } finally { trackerInitInFlight = null; }
+    } finally { if (seq === trackerInitSeq) trackerInitInFlight = null; }
   })();
   return trackerInitInFlight;
 }
@@ -972,6 +1028,11 @@ export function requestHint(raw: string): boolean {
 }
 
 export async function disconnectSession() {
+  // Set before the await so a recovery in progress sees it at its next
+  // checkpoint and abandons the reconnect instead of dragging the session back
+  // up after the user asked for it to go away.
+  sessionWanted = false;
+  stopHeartbeat();
   try { await apWorker.stopSession(); } catch {}
   setSessionState("idle", "disconnected");
   trackerInited = false;
@@ -988,6 +1049,131 @@ export async function disconnectSession() {
   hintCaptureSeq++;
   stopTrackerPolling();
   logOk("session disconnected");
+}
+
+// -----------------------------------------------------------------------------
+// fatal python-runtime recovery
+// -----------------------------------------------------------------------------
+// Pyodide can die outright — OOM, a WASM abort, an exception crossing the
+// JS↔WASM boundary. lib/ap-worker.ts terminates and respawns the worker, but
+// everything that lived inside it is gone: the AP client, the loopback
+// MultiServer, the Universal Tracker. Rebuild that here so a crash mid-run
+// costs a Pyodide re-boot instead of a page reload.
+let fatalRecoveryInFlight = false;
+let fatalRecoveryPending = false;
+let lastFatalReason = "";
+// Crashes are budgeted over a rolling window rather than reset on a successful
+// connect: a crash that reproduces *after* the session comes up — an OOM in
+// tracker-init off the Connected packet, say — would otherwise clear the budget
+// on every cycle and reboot Pyodide forever.
+const MAX_FATAL_RECOVERIES = 3;
+const FATAL_WINDOW_MS = 10 * 60 * 1000;
+let fatalTimes: number[] = [];
+
+apWorker.setFatalHandler((reason) => {
+  const now = Date.now();
+  fatalTimes = fatalTimes.filter((t) => now - t < FATAL_WINDOW_MS);
+  fatalTimes.push(now);
+  lastFatalReason = reason;
+  // A crash *during* recovery (the replacement runtime OOMs while re-hosting)
+  // has to queue rather than be dropped, or that attempt is the last one ever.
+  // The budget above is what stops this from looping.
+  if (fatalRecoveryInFlight) { fatalRecoveryPending = true; return; }
+  void driveFatalRecovery();
+});
+
+async function driveFatalRecovery() {
+  fatalRecoveryInFlight = true;
+  try {
+    do {
+      fatalRecoveryPending = false;
+      try { await recoverFromFatalWorker(lastFatalReason); }
+      catch (err: any) {
+        setSessionState("error", "error");
+        logErr("auto-reconnect failed: " + (err?.message || err));
+      }
+    } while (fatalRecoveryPending);
+  } finally {
+    fatalRecoveryInFlight = false;
+  }
+}
+
+async function recoverFromFatalWorker(reason: string) {
+  logErr("python runtime crashed: " + reason);
+
+  // Everything below mirrored worker state that no longer exists.
+  trackerInited = false;
+  trackerUnavailable = false;
+  trackerInitSeq++;
+  trackerInitInFlight = null;
+  setTrackerInLogic([]);
+  setTrackerGoMode("no");
+  setTrackerStatus({ kind: "idle" });
+  setHints(null);
+  setHintPoints(null);
+  setHintsStatus({ kind: "idle" });
+  setHintItemNames([]);
+  setHintFeedback(null);
+  hintCaptureUntil = 0;
+  hintCaptureSeq++;
+  stopTrackerPolling();
+  // The reconnect below restarts it; until then a ping would just spawn a
+  // worker to no-op against.
+  stopHeartbeat();
+
+  // Self-hosted seeds have no connect button — Play.tsx hides the session
+  // actions for loopback and the play step auto-connects instead — so bailing
+  // out on one is a dead end that only a reload escapes. Treat a loopback seed
+  // on the play step as always wanting a session, which also covers a crash
+  // that lands in the re-host before any connect was attempted.
+  const isLoopbackPlay = app.step === "play" && app.hosted?.kind === "loopback";
+  if (!sessionWanted && !isLoopbackPlay) {
+    setSessionState("idle", "disconnected");
+    log("python runtime will restart on the next action");
+    return;
+  }
+  sessionWanted = true;
+
+  if (fatalTimes.length > MAX_FATAL_RECOVERIES) {
+    setSessionState("error", "error");
+    logErr(`python runtime has crashed ${fatalTimes.length} times in the last ${FATAL_WINDOW_MS / 60000} minutes — not auto-reconnecting again, reload the page`);
+    return;
+  }
+
+  setSessionState("connecting", "restarting…");
+  log("restarting the python runtime and reconnecting — this takes as long as the initial boot");
+
+  // Boot the replacement worker explicitly rather than letting host/connect
+  // do it implicitly: init is the only command that forwards boot-phase
+  // progress, so this is what turns a silent minute into a visible one.
+  await apWorker.init((phase) => log(PHASE_LABELS[phase] || phase));
+  if (!sessionWanted) { setSessionState("idle", "disconnected"); return; }
+
+  // Loopback sessions point at an in-process MultiServer keyed to the dead
+  // worker's URI. Re-host before dialing, exactly as a resumed session does,
+  // so the connect below has a live ws_url to reach. The worker reloads the
+  // persisted .apsave itself, so received items and hints carry over.
+  if (isLoopbackPlay) {
+    const multiName = Object.keys(app.artifacts || {}).find((n) => n.toLowerCase().endsWith(".archipelago"));
+    if (!multiName || !app.seedId) {
+      setSessionState("error", "error");
+      logErr("self-hosted session lost and no .archipelago in cache — drop the YAML again to re-host");
+      return;
+    }
+    const res = await apWorker.host(app.seedId, app.artifacts[multiName].slice());
+    setApp("hosted", { ...app.hosted, ws_url: res.out.ws_url });
+    if (!sessionWanted) { setSessionState("idle", "disconnected"); return; }
+    // The host autosaves on a 5s tick, so the restored server can be slightly
+    // behind the emulator, whose own SRAM writes were never interrupted. Checks
+    // re-sync from RAM on connect; hint spends and data storage in that window
+    // don't.
+    logWarn("self-hosted server restored from its last autosave — a few seconds of server-side progress may have rolled back");
+  }
+
+  // The connect reads the server/slot/password inputs, which the play step
+  // still has populated — the crash was in the worker, not the UI. Go straight
+  // to runConnect: connectSession would bounce off its own recovery guard.
+  await runConnect();
 }
 
 // Brand-click teardown: stop the session and reload for a clean slate.

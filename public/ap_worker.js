@@ -11,6 +11,10 @@
 importScripts("https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js");
 
 let pyodide = null;
+// Only true once ensureInit has run all the way through. `pyodide` alone is a
+// bad readiness signal — it's assigned partway through boot, and it stays
+// truthy after a fatal error.
+let booted = false;
 let initPromise = null;
 // Session state (lives while a BizHawk AP session is running).
 let sessionTasks = null;           // py cancellables
@@ -20,6 +24,18 @@ const bhPending = new Map();        // id → { resolve, reject }
 let hostRunning = false;
 
 function post(msg, transfer) { self.postMessage(msg, transfer || []); }
+
+// After a fatal error (OOM, a WASM abort, an exception crossing the JS↔WASM
+// boundary) Pyodide latches a dead flag: every later call throws "already
+// fatally failed" and the runtime can never be revived in place. ensureInit
+// can't tell — `pyodide` is still a truthy, dead object — so probe with a
+// trivial eval whenever a command fails. A true result means the main thread
+// must terminate and respawn this worker; there is no in-place recovery.
+function pyodideIsDead() {
+  if (!pyodide) return false;
+  try { pyodide.runPython("1"); return false; }
+  catch (err) { return /fatally failed|fatal error/i.test(err?.message || String(err)); }
+}
 
 // Run Python and surface the traceback as a real Error message on failure.
 // Pyodide's own PythonError sometimes loses the traceback string in transit
@@ -41,7 +57,7 @@ _
 }
 
 async function ensureInit(id) {
-  if (pyodide) return;
+  if (booted) return;
   if (initPromise) return initPromise;
   initPromise = (async () => {
     const report = (phase) => post({ id, event: "progress", phase });
@@ -96,7 +112,20 @@ sys.stdout = _Tee("stdout")
 sys.stderr = _Tee("stderr")
     `);
     report("ready");
+    booted = true;
   })();
+  // A half-finished boot is worse than no boot: `pyodide` is already assigned
+  // from line 62 onwards, so the old `if (pyodide) return` fast path would let
+  // every later command run against a runtime with no AP source imported. Tear
+  // the attempt down instead and let the next command boot from scratch — a
+  // fresh loadPyodide brings a fresh MEMFS, so the retry isn't poisoned by the
+  // files this attempt already unpacked. Matters most for recovery: the whole
+  // respawn story assumes a replacement worker can still boot after an OOM.
+  initPromise.catch(() => {
+    pyodide = null;
+    booted = false;
+    initPromise = null;
+  });
   return initPromise;
 }
 
@@ -467,6 +496,14 @@ except Exception: pass
     } else if (cmd === "session-start") {
       await sessionStart(id, ev.data.server, ev.data.slot, ev.data.password);
       post({ id, ok: true });
+    } else if (cmd === "ping") {
+      // Liveness probe. Fatal detection is otherwise purely reactive — it needs
+      // a command to fail — but a dead runtime stops originating bizhawk
+      // requests and dirty events, so nothing would ever call in and the tab
+      // would sit on a "live" chip that does nothing. Touch Python for real:
+      // an ok reply from a dead runtime would defeat the point.
+      if (booted) pyodide.runPython("1");
+      post({ id, ok: true });
     } else if (cmd === "session-stop") {
       await sessionStop(id);
       post({ id, ok: true });
@@ -504,7 +541,7 @@ except Exception: pass
     // runPyChecked gives us formatted Python tracebacks; fall back to .message
     // then to String() for anything else. No JS stack — it's always Pyodide internals.
     const msg = err?.message || String(err);
-    post({ id, error: msg });
+    post({ id, error: msg, fatal: pyodideIsDead() });
   }
 };
 
