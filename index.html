@@ -1927,10 +1927,14 @@
     display: flex; align-items: stretch; justify-content: space-between;
     border-bottom: 1px solid var(--line);
   }
-  /* Five tabs no longer fit a narrow viewport — let the strip scroll
-     sideways instead of spilling out of the modal. */
-  .modal-tabs { display: flex; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  .modal-tabs::-webkit-scrollbar { display: none; }
+  /* The tabs no longer fit a narrow viewport — wrap onto extra rows where
+     the pointer can't swipe, and keep the sideways-scrolling strip on touch
+     so phones retain the single-row look. */
+  .modal-tabs { display: flex; flex-wrap: wrap; min-width: 0; }
+  @media (any-pointer: coarse) {
+    .modal-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+    .modal-tabs::-webkit-scrollbar { display: none; }
+  }
   .modal-tab {
     flex-shrink: 0;
     white-space: nowrap;
