@@ -217,10 +217,14 @@ function pickGame(parsed: any): GameKey {
   return "Pokemon Crystal";
 }
 
+// Option kinds whose YAML value is itself a mapping. For these, an object
+// value means "the option's data", not "weighted randomization".
+const DICT_KINDS = new Set<OptionKind>(["option_dict", "option_counter", "other"]);
+
 function coerceSingle(opt: OptionDef, raw: any): SingleValue {
-  // Weighted dict — collapse to the highest-weight entry's value.
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    // Caller should have handled this; fall through to default.
+  if (raw && typeof raw === "object" && !Array.isArray(raw) && !DICT_KINDS.has(opt.kind)) {
+    // Weighted mapping for a scalar option — the caller handles those, so
+    // reaching here means the value is malformed; fall back to the default.
     return initialValueFor(opt);
   }
   if (opt.kind === "toggle" || opt.kind === "toggle_on") {
@@ -252,9 +256,13 @@ function coerceSingle(opt: OptionDef, raw: any): SingleValue {
   }
   // option_dict / option_counter / other — re-serialize whatever js-yaml gave us.
   if (raw === undefined || raw === null) return initialValueFor(opt);
-  // Empty scalars (`""`, `null`) → treat as "use default" so the textarea
-  // stays empty instead of showing literal `''` after a round-trip.
+  // Empty scalars (`""`, `null`) and empty mappings (`{}`) → treat as "use
+  // default" so the textarea stays empty instead of showing literal `''` or
+  // `{}` after a round-trip.
   if (raw === "") return initialValueFor(opt);
+  if (typeof raw === "object" && !Array.isArray(raw) && Object.keys(raw).length === 0) {
+    return initialValueFor(opt);
+  }
   try {
     return { mode: "single", value: yaml.dump(raw, { flowLevel: 0 }).trim() };
   } catch {
@@ -290,10 +298,6 @@ export function parseYamlToForm(text: string): FormState {
 
   const section = parsed && typeof parsed === "object" ? parsed[schema.game] : null;
   if (!section || typeof section !== "object") return form;
-
-  // Option kinds whose YAML value is itself a mapping. For these, an object
-  // value means "the option's data", not "weighted randomization".
-  const DICT_KINDS = new Set<OptionKind>(["option_dict", "option_counter", "other"]);
 
   for (const group of schema.groups) {
     for (const opt of group.options) {
