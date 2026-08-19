@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import inspect
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -216,10 +217,15 @@ def compute_dynamic_valid_keys(world_dir: Path) -> dict[str, list[str]]:
             out["FlyLocationBlocklist"] = sorted(set(harvested["fly_regions"])) + ["_Johto", "_Kanto"]
 
     # entrance_types.json — prerelease only. The categories drive both
-    # RandomizeEntrances and MixEntrances.
+    # RandomizeEntrances and MixEntrances. Bipartite categories are stored
+    # with an " Entrance"/" Exit" side suffix that entrance_rando strips
+    # before handing the set to the options; the option-facing name is the
+    # bare category, so strip it here too.
     if entrance_types_path.is_file():
         mapping = json.loads(entrance_types_path.read_text())
-        categories = sorted(set(mapping.values()))
+        categories = sorted({
+            re.sub(r" (Entrance|Exit)$", "", cat) for cat in mapping.values()
+        })
         if categories:
             out["RandomizeEntrances"] = categories
             out["MixEntrances"] = categories
@@ -445,13 +451,31 @@ def build_world_schema(options_path: Path, manifest_path: Path) -> dict:
         for subclass in POKEMON_SET_SUBCLASSES_INHERITED:
             dynamic_keys.setdefault(subclass, pokemon_keys)
 
-    # DexsanityLogic adds a "Trades" option on top of its base class. The
-    # base PokemonSourceLogic carries a static list literal, so the AST
-    # already captured it on that class — copy + extend here.
-    if "DexsanityLogic" not in dynamic_keys:
-        base = classes.get("PokemonSourceLogic")
-        if base and base.get("valid_keys"):
-            dynamic_keys["DexsanityLogic"] = sorted(set(base["valid_keys"]) | {"Trades"})
+    # Option sets that subclass another option set without redefining
+    # valid_keys (e.g. DexsanityLogic / PokemonRequestLogic over
+    # PokemonSourceLogic) inherit the list at runtime. The AST only sees the
+    # literal on the ancestor, so walk the base chain and copy it down.
+    def inherited_valid_keys(cls_name: str, seen: set[str]) -> list[str] | None:
+        cls = classes.get(cls_name)
+        if cls is None or cls_name in seen:
+            return None
+        seen.add(cls_name)
+        if cls["valid_keys"]:
+            return cls["valid_keys"]
+        if cls["valid_keys_computed"]:
+            return None  # runtime-built; dynamic_keys handles these
+        for base in cls["bases"]:
+            keys = inherited_valid_keys(base, seen)
+            if keys:
+                return keys
+        return None
+
+    for cls_name, cls in classes.items():
+        if cls["valid_keys"] or cls["valid_keys_computed"] or cls_name in dynamic_keys:
+            continue
+        keys = inherited_valid_keys(cls_name, set())
+        if keys:
+            dynamic_keys[cls_name] = keys
 
     # Reverse map: class name → yaml key.
     yaml_key_by_class: dict[str, str] = {}

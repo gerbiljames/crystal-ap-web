@@ -9761,14 +9761,26 @@
             "name": "PokemonRequestLogic",
             "yaml_key": "pokemon_request_logic",
             "kind": "option_set",
-            "docstring": "Restricts which encounter sources may provide Pokemon for randomized requests and trades\n(Bill's Grandpa, phone call trainers, in-game trades, etc.)\n\nOnly applies when Pokemon requests or trades are randomized.\nSelected sources are further restricted by their own logic settings (e.g. Wild Encounter Methods Required).\nIf no Pokemon are available from the selected sources, falls back to the full logically available pool.\n\nTrades are intentionally not available here, since allowing trade-received Pokemon to\nsatisfy a trade/request would create a request-satisfies-request cycle.\n\n_Random has a 50% chance to include types which are not already included\n_All will include all types",
+            "docstring": "Restricts which encounter sources may provide Pokemon for randomized requests and trades\n(Bill's Grandpa, phone call trainers, in-game trades, etc.)\n\nOnly applies when Pokemon requests or trades are randomized.\nSelected sources are further restricted by their own logic settings (e.g. Wild Encounter Methods Required).\nIf no Pokemon are available from the selected sources, falls back to the full logically available pool.\n\n_Random has a 50% chance to include types which are not already included\n_All will include all types",
             "default": null,
             "display_name": "Pokemon Request Logic",
             "range_start": null,
             "range_end": null,
             "choices": null,
             "special_range_names": null,
-            "valid_keys": null,
+            "valid_keys": [
+              "Breeding",
+              "Bug Catching Contest",
+              "Evolution",
+              "Fishing",
+              "Headbutt",
+              "Land",
+              "Rock Smash",
+              "Statics",
+              "Surfing",
+              "Swarm",
+              "Trades"
+            ],
             "valid_keys_computed": false
           }
         ]
@@ -10357,19 +10369,20 @@
         "name": "Cosmetic",
         "options": [
           {
-            "name": "RandomizePalettes",
-            "yaml_key": "randomize_palettes",
+            "name": "ModifyPalettes",
+            "yaml_key": "modify_palettes",
             "kind": "choice",
-            "docstring": "- Vanilla: Vanilla Pokemon color palettes\n- Match Types: Color palettes match Pokemon Type\n- Completely Random: Color palettes are completely random\n- Swap Shiny: Regular Pokemon use shiny palettes and vice versa",
+            "docstring": "- Vanilla: Vanilla Pokemon color palettes\n- Match Types: Color palettes match Pokemon Type\n- Randomize: Color palettes are completely random\n- Swap Shiny: Regular Pokemon use shiny palettes and vice versa\n- Gold and Silver: For the Pokemon whose palettes changed between Gold/Silver and Crystal, restores their old palette",
             "default": 0,
-            "display_name": "Randomize Palettes",
+            "display_name": "Modify Palettes",
             "range_start": null,
             "range_end": null,
             "choices": [
               "vanilla",
               "match_types",
-              "completely_random",
-              "swap_shiny"
+              "randomize",
+              "swap_shiny",
+              "gold_and_silver"
             ],
             "special_range_names": null,
             "valid_keys": null,
