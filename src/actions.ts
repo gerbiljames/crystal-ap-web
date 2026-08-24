@@ -689,16 +689,27 @@ export async function importSaveFile(file: File) {
     const dbc = await db();
     if (!dbc) { logErr("IDB unavailable — can't store the imported save"); return; }
     const bytes = new Uint8Array(await file.arrayBuffer());
-    if (bytes.length !== expected) {
+    // Emulators that model the MBC3 clock append an RTC footer after the cart
+    // SRAM: BizHawk's .SaveRAM for Crystal is 32790 bytes against the 32768
+    // binjgb serialises. In every such format the SRAM image is the leading
+    // portion, so trim the footer rather than reject the file. Bounded so a
+    // genuinely wrong file (savestate, ROM, another game's save) still fails
+    // loudly instead of being silently truncated into garbage. slice() (not
+    // subarray) so what lands in IDB owns a buffer of exactly `expected` bytes.
+    const RTC_FOOTER_MAX = 256;
+    const extra = bytes.length - expected;
+    if (extra < 0 || extra > RTC_FOOTER_MAX) {
       logErr(`save size mismatch — got ${bytes.length} bytes, expected ${expected}; not a Crystal save`);
       return;
     }
+    const sram = extra ? bytes.slice(0, expected) : bytes;
     if (!confirm("Replace this seed's save with the imported file? Current progress in this slot will be overwritten.")) return;
+    if (extra) log(`dropped ${extra} trailing bytes of RTC clock data from the import`);
 
     disposeEmulator();
     let writeOk = true;
     try {
-      await idbPut(dbc, romHash, bytes, SAVE_STORE);
+      await idbPut(dbc, romHash, sram, SAVE_STORE);
       await idbDel(dbc, romHash, STATE_STORE);
     } catch (err: any) {
       writeOk = false;
