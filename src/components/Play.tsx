@@ -9,47 +9,21 @@ import { logErr, logWarn } from "../lib/log.js";
 import { apWorker } from "../lib/ap-worker.js";
 import { keyBindings, isDefaultKeyBindings } from "../lib/keyboard.js";
 
-function ScreenFrame() {
-  let frameRef!: HTMLDivElement;
-  const toggleFullscreen = () => {
-    if (document.fullscreenElement) {
-      document.exitFullscreen?.();
-    } else {
-      // Fullscreen the parent .play-game so the on-screen gamepad (sibling
-      // of .screen-frame) rides into the top-layer too on touch devices.
-      const target = (frameRef.closest(".play-game") as HTMLElement | null) ?? frameRef;
-      target.requestFullscreen?.();
-    }
-  };
-  // Tick every second so age-based expiry re-evaluates while fullscreen.
-  // Cheap: only wakes the overlay memo, not the whole page.
+// Recent log lines drawn over the game canvas while fullscreen. Mounted only
+// for the duration of fullscreen (see ScreenFrame), so everything here —
+// the expiry ticker, the buffer scan, the DOM — has that lifetime.
+function LogOverlay() {
+  const FADE_SEC = 0.8;
+
+  // Tick every second so age-based expiry re-evaluates.
   const [now, setNow] = createSignal(Date.now());
   const tick = setInterval(() => setNow(Date.now()), 1000);
   onCleanup(() => clearInterval(tick));
 
-  // When this frame unmounts (HMR, route-like teardown), dispose the
-  // emulator so its ticker/interval/listeners don't outlive the canvas.
-  // On remount, re-boot if we were already playing — this is what makes
-  // HMR self-heal instead of leaving a blank canvas.
-  onMount(() => { ensureEmulator(); });
-  onCleanup(() => disposeEmulator());
-
-  const FADE_SEC = 0.8;
-
-  // The overlay is display:none outside fullscreen, so don't build its DOM
-  // (or re-scan the log buffer on every line and every tick) until it can
-  // actually be seen.
-  const [fullscreen, setFullscreen] = createSignal(!!document.fullscreenElement);
-  const onFsChange = () => setFullscreen(!!document.fullscreenElement);
-  document.addEventListener("fullscreenchange", onFsChange);
-  onCleanup(() => document.removeEventListener("fullscreenchange", onFsChange));
-
-  // Last N non-expired log entries — rendered as an overlay only while
-  // fullscreen. `persistSec === 0` means entries never expire. Entries are
-  // appended in time order, so walk back from the newest and stop as soon as
-  // we have enough or hit one that's already expired.
+  // Last N non-expired log entries. `persistSec === 0` means entries never
+  // expire. Entries are appended in time order, so walk back from the newest
+  // and stop as soon as we have enough or hit one that's already expired.
   const tailLines = createMemo(() => {
-    if (!fullscreen()) return [];
     const prefs = overlayPrefs();
     const n = now();
     const lines = logLines();
@@ -68,8 +42,9 @@ function ScreenFrame() {
   });
 
   // Per-entry CSS for the fade animation. A negative animation-delay
-  // fast-forwards entries that are already part-way through their fade
-  // (e.g. when the overlay first mounts with entries already in the buffer).
+  // fast-forwards entries that are already part-way through their fade —
+  // every fullscreen entry mounts this fresh with entries already in the
+  // buffer, so this is the common case, not an edge case.
   const lineStyle = (entry: LogEntry) => {
     const prefs = overlayPrefs();
     if (prefs.persistSec === 0) return undefined;
@@ -80,18 +55,51 @@ function ScreenFrame() {
       "animation-delay": `${delaySec}s`,
     };
   };
+
+  return (
+    <div class="fs-log-overlay" aria-hidden="true">
+      <For each={tailLines()}>{(entry) => (
+        <div class={`fs-log-line log-${entry.kind}`} style={lineStyle(entry)}>
+          <span class="fs-log-time">{entry.time}</span>{" "}
+          {entry.ansi !== undefined
+            ? <span innerHTML={ansiToHtml(entry.ansi)} />
+            : <span>{entry.text}</span>}
+        </div>
+      )}</For>
+    </div>
+  );
+}
+
+function ScreenFrame() {
+  let frameRef!: HTMLDivElement;
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    } else {
+      // Fullscreen the parent .play-game so the on-screen gamepad (sibling
+      // of .screen-frame) rides into the top-layer too on touch devices.
+      const target = (frameRef.closest(".play-game") as HTMLElement | null) ?? frameRef;
+      target.requestFullscreen?.();
+    }
+  };
+  // When this frame unmounts (HMR, route-like teardown), dispose the
+  // emulator so its ticker/interval/listeners don't outlive the canvas.
+  // On remount, re-boot if we were already playing — this is what makes
+  // HMR self-heal instead of leaving a blank canvas.
+  onMount(() => { ensureEmulator(); });
+  onCleanup(() => disposeEmulator());
+
+  // The log overlay only renders in fullscreen. Mounting it conditionally
+  // (rather than hiding it with CSS) means its ticker, memo and DOM don't
+  // exist at all the rest of the time.
+  const [fullscreen, setFullscreen] = createSignal(!!document.fullscreenElement);
+  const onFsChange = () => setFullscreen(!!document.fullscreenElement);
+  document.addEventListener("fullscreenchange", onFsChange);
+  onCleanup(() => document.removeEventListener("fullscreenchange", onFsChange));
+
   return (
     <div class="screen-frame" ref={frameRef}>
-      <div class="fs-log-overlay" aria-hidden="true">
-        <For each={tailLines()}>{(entry) => (
-          <div class={`fs-log-line log-${entry.kind}`} style={lineStyle(entry)}>
-            <span class="fs-log-time">{entry.time}</span>{" "}
-            {entry.ansi !== undefined
-              ? <span innerHTML={ansiToHtml(entry.ansi)} />
-              : <span>{entry.text}</span>}
-          </div>
-        )}</For>
-      </div>
+      <Show when={fullscreen()}><LogOverlay /></Show>
       <div class="screen-wrap">
         <canvas id="screen" width="160" height="144"></canvas>
       </div>
