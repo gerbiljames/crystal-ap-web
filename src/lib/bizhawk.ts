@@ -70,6 +70,4 @@ export function installBizHawkBridge(emu, apWorker) {
     }
     apWorker.sendBhResponse(reqId, responseJson);
   });
-
-  apWorker.setPrintHandler((text) => logLine("chat", "» " + text));
 }

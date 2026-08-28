@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { app, logLines, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, hints, hintsStatus, hintPoints, hintItemNames, hintFeedback, connectOpen, setConnectOpen, isMobile, uiPrefs } from "../state.js";
+import { app, logLines, type LogEntry, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, hints, hintsStatus, hintPoints, hintItemNames, hintFeedback, connectOpen, setConnectOpen, isMobile, uiPrefs } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
 import { connectSession, disconnectSession, disposeEmulator, ensureEmulator, ensureTracker, ensureHints, requestHint, importSaveFile, stopTrackerPolling } from "../actions.js";
@@ -36,26 +36,44 @@ function ScreenFrame() {
 
   const FADE_SEC = 0.8;
 
+  // The overlay is display:none outside fullscreen, so don't build its DOM
+  // (or re-scan the log buffer on every line and every tick) until it can
+  // actually be seen.
+  const [fullscreen, setFullscreen] = createSignal(!!document.fullscreenElement);
+  const onFsChange = () => setFullscreen(!!document.fullscreenElement);
+  document.addEventListener("fullscreenchange", onFsChange);
+  onCleanup(() => document.removeEventListener("fullscreenchange", onFsChange));
+
   // Last N non-expired log entries — rendered as an overlay only while
-  // fullscreen. `persistSec === 0` means entries never expire.
+  // fullscreen. `persistSec === 0` means entries never expire. Entries are
+  // appended in time order, so walk back from the newest and stop as soon as
+  // we have enough or hit one that's already expired.
   const tailLines = createMemo(() => {
+    if (!fullscreen()) return [];
     const prefs = overlayPrefs();
     const n = now();
-    const visible = logLines().filter(e => {
-      if (prefs.persistSec === 0) return true;
-      const ageSec = (n - (e.ts ?? 0)) / 1000;
-      return ageSec < prefs.persistSec + FADE_SEC;
-    });
-    return visible.slice(Math.max(0, visible.length - prefs.maxEntries));
+    const lines = logLines();
+    const out: LogEntry[] = [];
+    for (let i = lines.length - 1; i >= 0 && out.length < prefs.maxEntries; i--) {
+      const e = lines[i];
+      if (prefs.persistSec !== 0) {
+        // Clamp so a backward wall-clock step reads as "brand new" rather than
+        // a negative age that would stop the walk early.
+        const ageSec = Math.max(0, n - e.ts) / 1000;
+        if (ageSec >= prefs.persistSec + FADE_SEC) break;
+      }
+      out.push(e);
+    }
+    return out.reverse();
   });
 
   // Per-entry CSS for the fade animation. A negative animation-delay
   // fast-forwards entries that are already part-way through their fade
   // (e.g. when the overlay first mounts with entries already in the buffer).
-  const lineStyle = (entry: { ts?: number }) => {
+  const lineStyle = (entry: LogEntry) => {
     const prefs = overlayPrefs();
     if (prefs.persistSec === 0) return undefined;
-    const ageSec = (Date.now() - (entry.ts ?? 0)) / 1000;
+    const ageSec = Math.max(0, Date.now() - entry.ts) / 1000;
     const delaySec = prefs.persistSec - ageSec;
     return {
       "animation": `fs-line-fade ${FADE_SEC}s linear forwards`,

@@ -23,7 +23,36 @@ const bhPending = new Map();        // id → { resolve, reject }
 // True while an in-process MultiServer is running. Cleared on host-stop.
 let hostRunning = false;
 
-function post(msg, transfer) { self.postMessage(msg, transfer || []); }
+// Python stdout/stderr lines are batched: a connected session prints in
+// bursts (one line per PrintJSON packet), and a postMessage per line costs
+// the main thread a task dispatch each. Lines queue here and go out as one
+// {event:"py-log", msgs:[...]} per worker tick. Any other post flushes the
+// queue first so log lines never reorder against replies or bridge requests,
+// and a fatal reply always carries the diagnostics printed just before it.
+let logQueue = [];
+let logFlushTimer = null;
+function flushLog() {
+  if (logFlushTimer !== null) { clearTimeout(logFlushTimer); logFlushTimer = null; }
+  if (logQueue.length === 0) return;
+  const msgs = logQueue;
+  logQueue = [];
+  self.postMessage({ event: "py-log", msgs });
+}
+self._pyLog = (msg) => {
+  logQueue.push(msg);
+  if (logFlushTimer === null) logFlushTimer = setTimeout(flushLog, 0);
+};
+function post(msg, transfer) {
+  flushLog();
+  self.postMessage(msg, transfer || []);
+}
+self._post = post;
+// An uncaught error or rejection reaches the main thread as worker.onerror,
+// which terminates us — flush first so the stderr lines leading up to it
+// (typically the traceback) still make it out. Listeners only; the error
+// still propagates to the parent.
+self.addEventListener("error", flushLog);
+self.addEventListener("unhandledrejection", flushLog);
 
 // After a fatal error (OOM, a WASM abort, an exception crossing the JS↔WASM
 // boundary) Pyodide latches a dead flag: every later call throws "already
@@ -98,18 +127,18 @@ import sys
 from js import self as _js_self, Object as _Js_Object
 from pyodide.ffi import to_js as _to_js
 def _jpost(d):
-    _js_self.postMessage(_to_js(d, dict_converter=_Js_Object.fromEntries))
+    _js_self._post(_to_js(d, dict_converter=_Js_Object.fromEntries))
 class _Tee:
-    def __init__(self, prefix): self.prefix = prefix; self.buf = ""
+    def __init__(self): self.buf = ""
     def write(self, s):
         self.buf += s
         while "\\n" in self.buf:
             line, self.buf = self.buf.split("\\n", 1)
             if line.strip():
-                _jpost({"event": "py-log", "level": self.prefix, "msg": line})
+                _js_self._pyLog(line)
     def flush(self): pass
-sys.stdout = _Tee("stdout")
-sys.stderr = _Tee("stderr")
+sys.stdout = _Tee()
+sys.stderr = _Tee()
     `);
     report("ready");
     booted = true;

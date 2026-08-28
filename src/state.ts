@@ -203,8 +203,10 @@ export function setRomOverridePrefs(next: OverridePrefs) {
   try { localStorage.setItem(ROM_OVERRIDES_KEY, JSON.stringify(next)); } catch {}
 }
 
-// Log buffer. Each entry is { kind, time, text?, ansi? }.
-export const [logLines, setLogLines] = createSignal([]);
+// Log buffer. `time` is the display stamp, `ts` the epoch ms used for
+// overlay expiry. Exactly one of `text` (plain) / `ansi` (SGR-coloured) is set.
+export type LogEntry = { kind: string; time: string; ts: number; text?: string; ansi?: string };
+export const [logLines, setLogLines] = createSignal<LogEntry[]>([]);
 
 // Universal Tracker state. trackerInLogic is the list of in-logic location
 // names from UT's last update. trackerStatus drives the Tracker tab placeholder

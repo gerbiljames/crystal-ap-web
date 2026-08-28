@@ -1,6 +1,6 @@
 // Pyodide worker (generation + patching + AP session bridge). Lazy-inits on
-// first call. Exposes a small command surface; internal bizhawk/printjson
-// callbacks are registered via setBhHandler / setPrintHandler.
+// first call. Exposes a small command surface; the bizhawk bridge callback
+// is registered via setBhHandler.
 
 import { logAnsi, logErr } from "./log.js";
 
@@ -15,7 +15,6 @@ let worker: Worker | null = null;
 let nextId = 1;
 const pending = new Map<number, { resolve: (v: CallResult) => void; reject: (e: Error) => void; onProgress: ProgressCb | null }>();
 let onBhReq: ((reqId: number, payload: string) => void) | null = null;
-let onPrint: ((text: string) => void) | null = null;
 let onTrackerDirty: (() => void) | null = null;
 let onHintsDirty: (() => void) | null = null;
 let onHintMsg: ((text: string, kind: string) => void) | null = null;
@@ -47,8 +46,13 @@ function handle(ev: MessageEvent) {
   const { id, event, phase, reqId, payload, ok, error, out, fatal } = ev.data;
   if (event === "progress")      { pending.get(id)?.onProgress?.(phase); return; }
   if (event === "bh-req")        { onBhReq?.(reqId, payload); return; }
-  if (event === "printjson")     { onPrint?.(ev.data.text); return; }
-  if (event === "py-log")        { logAnsi("info", ev.data.msg); return; }
+  if (event === "py-log") {
+    // ap_worker.js is served unhashed from public/, so a cached copy can
+    // outlive the bundle by a deploy: accept the old per-line {msg} shape too.
+    const msgs: string[] = ev.data.msgs ?? (ev.data.msg !== undefined ? [ev.data.msg] : []);
+    for (const msg of msgs) logAnsi("info", msg);
+    return;
+  }
   if (event === "hint-msg")      { onHintMsg?.(ev.data.text, ev.data.kind); return; }
   if (event === "tracker-dirty") { onTrackerDirty?.(); return; }
   if (event === "hints-dirty")   { onHintsDirty?.(); return; }
@@ -114,7 +118,6 @@ export const apWorker = {
   hintsGet:        ()                                                  => call("hints-get"),
   hintItems:       ()                                                  => call("hint-items"),
   setBhHandler:    (fn: typeof onBhReq)                                => { onBhReq = fn; },
-  setPrintHandler: (fn: typeof onPrint)                                => { onPrint = fn; },
   setTrackerDirtyHandler: (fn: typeof onTrackerDirty)                  => { onTrackerDirty = fn; },
   setHintsDirtyHandler:   (fn: typeof onHintsDirty)                    => { onHintsDirty = fn; },
   setHintMsgHandler:      (fn: typeof onHintMsg)                       => { onHintMsg = fn; },
