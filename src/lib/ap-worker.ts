@@ -101,6 +101,10 @@ function fire(cmd: string, payload: Record<string, any> = {}) { spawn().postMess
 
 export const apWorker = {
   init:            (cb?: ProgressCb)                                   => call("init", {}, [], cb ?? null),
+  // Ask the worker to boot a specific world_version per apworld package (see
+  // ap/versions.json). Must precede the first boot; after boot the reply's
+  // needsRestart says whether a respawn is required to honour it.
+  selectWorlds:    (selection: Record<string, string> | null)          => call("select-worlds", { selection }),
   patch:           (rom: Uint8Array, patch: Uint8Array, overrides?: Record<string, any>, cb?: ProgressCb) => call("patch",    { rom, patch, overrides: overrides ?? {} }, [rom.buffer, patch.buffer], cb ?? null),
   generate:        (yaml: string, cb?: ProgressCb)                     => call("generate", { yaml }, [], cb ?? null),
   ping:            ()                                                  => call("ping"),

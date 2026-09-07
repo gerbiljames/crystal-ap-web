@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "Which Pokemon Crystal apworld versions pack.sh bundles, per channel.",
+    "The newest version of a channel is always the submodule's checked-out tree",
+    "(that is also what the YAML creator and the nav version chip are built",
+    "from). `older` lists extra git refs from the same repo to bundle alongside",
+    "it, for playing seeds the newest version can no longer take: a stable",
+    "release that changed the ROM checksum, or a prerelease outside the newest",
+    "minimum_patch_version window. Versions inside the newest one's compatibility",
+    "window don't need listing; the newest plays their seeds."
+  ],
+  "channels": {
+    "stable": {
+      "repo": "vendor/archipelago",
+      "package": "pokemon_crystal",
+      "older": []
+    },
+    "prerelease": {
+      "repo": "vendor/archipelago-prerelease",
+      "package": "pokemon_crystal_prerelease",
+      "older": ["6.0.0-alpha.31"]
+    }
+  }
+}

@@ -8,7 +8,7 @@ A full multiworld client: upload an Archipelago YAML or a generated `.apcrystal`
 
 ## How it works
 
-- **Generation and patching** run in a Web Worker via Pyodide (CPython in WASM) against the Archipelago source in `vendor/archipelago`.
+- **Generation and patching** run in a Web Worker via Pyodide (CPython in WASM) against the Archipelago source in `vendor/archipelago`. `pack.sh` splits that into a core tarball plus one tarball per bundled Crystal apworld version (configured in `apworlds.json`, described by `public/ap/versions.json`); the worker unpacks the core and one version of each world at boot.
 - **Emulation** is binjgb compiled to WASM, driven from JS. SRAM saves and patched ROMs persist per-seed in IndexedDB.
 - **The session client** (`CommonClient` + `BizHawkClient`) also runs in Pyodide, with a JS shim replacing the TCP socket to BizHawk with direct postMessage calls to the main-thread emulator.
 - **archipelago.gg hosting** happens via a tiny Cloudflare Worker (`worker/`) that proxies the multidata upload. Necessary because browsers can't POST cross-origin to archipelago.gg (no CORS headers on their `/uploads` endpoint). No ROMs or YAMLs touch the Worker — only the multidata blob.
@@ -19,7 +19,7 @@ A full multiworld client: upload an Archipelago YAML or a generated `.apcrystal`
 git clone --recurse-submodules https://github.com/gerbiljames/crystal-ap-web
 cd crystal-ap-web
 npm install
-./pack.sh          # bundle Archipelago source into public/ap.tar
+./pack.sh          # bundle Archipelago source into public/ap/ (core + per-version apworld tars)
 npm run dev        # http://localhost:8765
 ```
 

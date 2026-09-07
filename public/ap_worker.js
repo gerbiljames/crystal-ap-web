@@ -16,6 +16,16 @@ let pyodide = null;
 // truthy after a fatal error.
 let booted = false;
 let initPromise = null;
+// Bundled Archipelago source is split into ap/core.tar plus one tar per
+// Crystal apworld version (see pack.sh / apworlds.json), described by
+// ap/versions.json. Archipelago's registries are keyed by game name, so only
+// one version of each world package can live in this interpreter: the boot
+// picks one per package — the `latest` entry unless the main thread has asked
+// for a specific world_version via select-worlds — and unpacks just those.
+const AP_DIR = "ap/";
+let apVersions = null;       // parsed versions.json
+let worldSelection = null;   // { [package]: world_version } requested before boot
+let loadedWorlds = [];       // versions.json entries unpacked into /ap
 // Session state (lives while a BizHawk AP session is running).
 let sessionTasks = null;           // py cancellables
 let nextBhId = 1;
@@ -106,14 +116,25 @@ await micropip.install(["pathspec", "schema", "jellyfish", "colorama", "websocke
     await pyodide.runPythonAsync(BSDIFF4_SHIM_PY);
 
     report("fetch-ap-source");
-    const tarBuf = await (await fetch("ap.tar")).arrayBuffer();
+    apVersions = await fetchJson(AP_DIR + "versions.json");
+    const chosen = pickWorlds(apVersions, worldSelection);
+    // Publish the choice before the fetch so a select-worlds arriving while the
+    // boot is in flight compares against what this boot will actually load.
+    loadedWorlds = chosen;
+    const [coreBuf, ...worldBufs] = await Promise.all([
+      fetchBuf(AP_DIR + apVersions.core.tar),
+      ...chosen.map(w => fetchBuf(AP_DIR + w.tar)),
+    ]);
 
     report("unpack-ap-source");
     pyodide.FS.mkdir("/ap");
-    pyodide.unpackArchive(tarBuf, "tar", { extractDir: "/ap" });
+    pyodide.unpackArchive(coreBuf, "tar", { extractDir: "/ap" });
+    // World tars are rooted at worlds/<package>/, so layering them over /ap
+    // lands each world exactly where the core's worlds/ loader will find it.
+    for (const buf of worldBufs) pyodide.unpackArchive(buf, "tar", { extractDir: "/ap" });
 
     report("import-ap");
-    await pyodide.runPythonAsync(SETUP_PY);
+    await pyodide.runPythonAsync(SETUP_PY(chosen.map(w => w.package)));
     // Install the websockets shim once, at boot. Both the in-browser
     // MultiServer (loopback) and the BizHawkClientContext (real wss://)
     // share this single _ws.connect / _ws.serve patch — sessions and host
@@ -156,6 +177,59 @@ sys.stderr = _Tee()
     initPromise = null;
   });
   return initPromise;
+}
+
+async function fetchBuf(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch ${url}: HTTP ${res.status}`);
+  return res.arrayBuffer();
+}
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch ${url}: HTTP ${res.status}`);
+  return res.json();
+}
+
+// One world per package: the requested world_version if the selection names
+// one, else the entry pack.sh flagged as latest. Throws on a version that
+// isn't bundled, or on a package with no latest flag, so the main thread sees
+// a clear error instead of a Python import failure (or a silently wrong
+// version) later.
+function pickWorlds(versions, selection) {
+  const byPackage = new Map();
+  for (const w of versions.worlds) {
+    if (!byPackage.has(w.package)) byPackage.set(w.package, []);
+    byPackage.get(w.package).push(w);
+  }
+  const out = [];
+  for (const [pkg, entries] of byPackage) {
+    const wanted = selection?.[pkg];
+    const pick = wanted
+      ? entries.find(w => w.world_version === wanted)
+      : entries.find(w => w.latest);
+    if (!pick) {
+      const have = entries.map(w => w.world_version).join(", ");
+      throw new Error(wanted
+        ? `apworld ${pkg} ${wanted} is not bundled (have ${have})`
+        : `versions.json flags no latest ${pkg} (have ${have})`);
+    }
+    out.push(pick);
+  }
+  return out;
+}
+
+// Record which world_version to boot per package. Only honoured before the
+// runtime starts booting: a booted (or booting) interpreter can't swap worlds
+// (registries are keyed by game name and Python modules can't be unloaded),
+// so a differing request from then on reports needsRestart and the main
+// thread must respawn this worker. During an in-flight boot loadedWorlds
+// already holds that boot's choice (set before the fetch), so the comparison
+// is against what will actually load.
+function selectWorlds(selection) {
+  const wanted = selection || null;
+  if (!booted && !initPromise) { worldSelection = wanted; return { needsRestart: false }; }
+  const differs = loadedWorlds.some(w => wanted?.[w.package] && wanted[w.package] !== w.world_version);
+  return { needsRestart: differs, loaded: loadedWorlds };
 }
 
 async function patch(id, romBytes, patchBytes, overrides) {
@@ -492,7 +566,9 @@ self.onmessage = async (ev) => {
   try {
     if (cmd === "init") {
       await ensureInit(id);
-      post({ id, ok: true });
+      post({ id, ok: true, out: { worlds: loadedWorlds } });
+    } else if (cmd === "select-worlds") {
+      post({ id, ok: true, out: selectWorlds(ev.data.selection) });
     } else if (cmd === "patch") {
       const { out, transfer } = await patch(id, ev.data.rom, ev.data.patch, ev.data.overrides);
       post({ id, ok: true, out }, transfer);
@@ -1078,7 +1154,7 @@ try: del _host_uri
 except Exception: pass
 `;
 
-const SETUP_PY = `
+const SETUP_PY = (worldPackages) => `
 import sys, os
 sys.path.insert(0, "/ap")
 os.chdir("/ap")
@@ -1141,11 +1217,10 @@ class _Sync:
 _cf.ThreadPoolExecutor = _Sync
 _cf.as_completed = lambda fs, timeout=None: iter(list(fs))
 
-# Eagerly import both apworlds so failures surface rather than being swallowed
-# by AutoWorldRegister, and so the patch dispatch table in AutoPatchRegister
-# has both PokemonCrystalProcedurePatch classes ready (stable + prerelease).
-import worlds.pokemon_crystal.world  # noqa: F401
-import worlds.pokemon_crystal_prerelease.world  # noqa: F401
+# Eagerly import every bundled Crystal apworld so failures surface rather than
+# being swallowed by AutoWorldRegister, and so the patch dispatch table in
+# AutoPatchRegister has each PokemonCrystalProcedurePatch class ready.
+${worldPackages.map(pkg => `import worlds.${pkg}.world  # noqa: F401`).join("\n")}
 # Universal Tracker. Imported eagerly so AutoWorldRegister picks up TrackerWorld
 # and so any incompatibility surfaces at boot, not on tab-click. The flag is
 # read back by JS to decide whether to enable the Tracker tab in the UI.

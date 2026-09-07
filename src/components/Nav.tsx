@@ -1,8 +1,8 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { app, setSettingsOpen, setConnectOpen, isMobile } from "../state.js";
 import { teardownAndReload } from "../actions.js";
-// Bundled at build time from the pokecrystal apworld submodule — same
-// source pack.sh tars into public/ap.tar, so versions stay in sync.
+// Bundled at build time from the apworld submodules — the same checkouts
+// pack.sh tars as the newest version of each channel, so the chip stays in sync.
 import crystalManifest    from "../../vendor/archipelago/worlds/pokemon_crystal/archipelago.json";
 import prereleaseManifest from "../../vendor/archipelago-prerelease/worlds/pokemon_crystal_prerelease/archipelago.json";
 import trackerInitSource  from "../../vendor/archipelago-tracker/worlds/tracker/__init__.py?raw";
