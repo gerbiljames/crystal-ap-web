@@ -26,27 +26,27 @@ export function isSavestateEnvelope(v: unknown): v is SavestateEnvelope {
 }
 
 // Before seed keying, both stores were keyed by the patched ROM's SHA-1, which
-// the session recorded as `romHash`. Copy those entries under the seed id the
-// first time the seed boots. Idempotent: once anything lives under the seed id
-// the legacy keys are ignored (a fresh save has already superseded them). The
-// legacy entries are copied, not moved: two sessions built from the same patch
-// share a ROM hash and so used to share a save, and each should still find it.
-// forgetSession deletes the legacy keys along with the session.
+// the session recorded as `romHash` (kept as `legacyRomHash` once it has served
+// here). Copy those entries under the seed id the first time the seed boots.
+// One-shot: as soon as *anything* lives under the seed id the legacy keys are
+// ignored — an SRAM row alone means a later state deletion was deliberate
+// (importSaveFile drops the savestate so the imported SRAM wins), not a gap to
+// backfill. The legacy entries are copied, not moved: two sessions built from
+// the same patch share a ROM hash and so used to share a save, and each should
+// still find it. forgetSession deletes the legacy keys once no session
+// references them.
 export async function migrateLegacySave(dbc: IDBDatabase, seedId: string, legacyRomHash: string | undefined | null): Promise<void> {
   if (!legacyRomHash || legacyRomHash === seedId) return;
   try {
     const [hasSram, hasState] = await Promise.all([idbHas(dbc, seedId, SAVE_STORE), idbHas(dbc, seedId, STATE_STORE)]);
+    if (hasSram || hasState) return;
     let copied = false;
-    if (!hasSram) {
-      const sram = await idbGet<ArrayBuffer>(dbc, legacyRomHash, SAVE_STORE);
-      if (sram) { await idbPut(dbc, seedId, sram, SAVE_STORE); copied = true; }
-    }
-    if (!hasState) {
-      const state = await idbGet<unknown>(dbc, legacyRomHash, STATE_STORE);
-      if (isBytes(state)) {
-        await idbPut(dbc, seedId, { romHash: legacyRomHash, state } satisfies SavestateEnvelope, STATE_STORE);
-        copied = true;
-      }
+    const sram = await idbGet<ArrayBuffer>(dbc, legacyRomHash, SAVE_STORE);
+    if (sram) { await idbPut(dbc, seedId, sram, SAVE_STORE); copied = true; }
+    const state = await idbGet<unknown>(dbc, legacyRomHash, STATE_STORE);
+    if (isBytes(state)) {
+      await idbPut(dbc, seedId, { romHash: legacyRomHash, state } satisfies SavestateEnvelope, STATE_STORE);
+      copied = true;
     }
     if (copied) log(`adopted save data for ${seedId} from its ROM-hash key`);
   } catch (err) {
