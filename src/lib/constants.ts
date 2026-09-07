@@ -28,8 +28,8 @@ export const RAM = {
 };
 
 export const SAVE_DB_NAME    = "crystal-ap-saves";
-export const SAVE_STORE      = "sav";       // SRAM per seed, keyed by ROM SHA-1
-export const STATE_STORE     = "state";     // full emulator savestate per seed, keyed by ROM SHA-1
+export const SAVE_STORE      = "sav";       // SRAM per seed, keyed by seed_id (pre-migration: ROM SHA-1)
+export const STATE_STORE     = "state";     // savestate envelope {romHash, state} per seed, keyed by seed_id
 export const ROM_STORE       = "rom";       // patched ROM per seed, keyed by seed_id
 export const VANILLA_STORE   = "vanilla";   // vanilla ROM, single key "rom"
 export const ARTIFACTS_STORE = "artifacts"; // gen artifacts per seed, keyed by seed_id

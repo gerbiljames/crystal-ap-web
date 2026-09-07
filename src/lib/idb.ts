@@ -1,5 +1,6 @@
-// IndexedDB: one DB, four stores (SRAM / patched ROM / vanilla ROM / gen
-// artifacts). Promise-wrapped get/put/delete plus a shared DB connection.
+// IndexedDB: one DB, several stores (SRAM + savestate per seed / patched ROM /
+// vanilla ROM / gen artifacts / yamls). Promise-wrapped get/put/delete plus a
+// shared DB connection.
 
 import {
   SAVE_DB_NAME, SAVE_STORE, STATE_STORE, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, YAML_STORE, MHOST_SAVE_STORE, DB_VERSION,

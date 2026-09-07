@@ -6,8 +6,9 @@
 
 /* global Binjgb */
 
-import { idbGet, idbPut } from "./idb.js";
+import { idbGet, idbPut, idbDel } from "./idb.js";
 import { STATE_STORE } from "./constants.js";
+import { isSavestateEnvelope, type SavestateEnvelope } from "./saves.js";
 import { log, logOk, logErr, logWarn } from "./log.js";
 import { getAudioContext } from "./audio.js";
 import { audioPrefs } from "../state.js";
@@ -44,13 +45,18 @@ export interface BootEmulatorOptions {
   canvas: HTMLCanvasElement;
   romBuf: ArrayBuffer;
   saveDb: IDBDatabase | null;
+  // Key for this seed's SRAM + savestate in saveDb (the seed id). Saves are
+  // keyed per seed, not per ROM, so a re-patched ROM keeps its save. Null
+  // disables persistence.
+  saveKey: string | null;
 }
 
-export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptions): Promise<EmulatorHandle | null> {
+export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmulatorOptions): Promise<EmulatorHandle | null> {
   log("booting binjgb…");
   const Module = await Binjgb();
 
-  // Hash the ROM for SRAM keying (and to serve HASH requests).
+  // Hash the ROM to serve HASH requests and to tag savestates with the ROM
+  // they were captured on.
   const romHashBuf = await crypto.subtle.digest("SHA-1", romBuf);
   const romHash = [...new Uint8Array(romHashBuf)].map(b => b.toString(16).padStart(2,"0").toUpperCase()).join("");
 
@@ -217,15 +223,26 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
     throw new Error("unsupported write domain: " + domain);
   };
 
-  if (saveDb) {
+  const persist = saveDb && saveKey ? { db: saveDb, key: saveKey } : null;
+  if (persist) {
     // Load SRAM first so the cart battery is populated for games that haven't
     // yet accumulated a savestate; if a savestate exists, applying it second
     // overwrites everything including cart RAM to the exact prior moment.
-    const existingSram = await idbGet<ArrayBuffer>(saveDb, romHash).catch(() => null);
+    const existingSram = await idbGet<ArrayBuffer>(persist.db, persist.key).catch(() => null);
     if (existingSram) { loadSram(new Uint8Array(existingSram)); logOk("loaded SRAM from prior session"); }
     else { log("fresh save slot"); }
-    const existingState = await idbGet<ArrayBuffer>(saveDb, romHash, STATE_STORE).catch(() => null);
-    if (existingState && loadState(new Uint8Array(existingState))) logOk("resumed from savestate");
+    // A savestate is only valid against the ROM it was taken on. After a
+    // re-patch the ROM bytes differ, so drop the state and boot from SRAM —
+    // resuming mid-instruction on different code would corrupt the run.
+    const existingState = await idbGet<unknown>(persist.db, persist.key, STATE_STORE).catch(() => null);
+    if (isSavestateEnvelope(existingState)) {
+      if (existingState.romHash !== romHash) {
+        logWarn("ROM changed since the last savestate — booting from SRAM instead");
+        idbDel(persist.db, persist.key, STATE_STORE).catch(() => {});
+      } else if (loadState(new Uint8Array(existingState.state))) {
+        logOk("resumed from savestate");
+      }
+    }
   }
 
   // --- run loop ---
@@ -274,23 +291,25 @@ export async function bootEmulator({ canvas, romBuf, saveDb }: BootEmulatorOptio
   // --- debounced SRAM + savestate commit ---
   let saveTimer: ReturnType<typeof setInterval> | null = null;
   let onSavePagehide: (() => void) | null = null;
-  if (saveDb) {
+  if (persist) {
+    const { db: pdb, key } = persist;
+    const stateEnvelope = (): SavestateEnvelope => ({ romHash, state: extractState() });
     saveTimer = setInterval(async () => {
       if (disposed) return;
       if (sramDirty) {
         sramDirty = false;
-        try { await idbPut(saveDb, romHash, extractSram()); }
+        try { await idbPut(pdb, key, extractSram()); }
         catch (err) { logErr("SRAM save failed: " + err); sramDirty = true; }
       }
       if (stateDirty) {
         stateDirty = false;
-        try { await idbPut(saveDb, romHash, extractState(), STATE_STORE); }
+        try { await idbPut(pdb, key, stateEnvelope(), STATE_STORE); }
         catch (err) { logErr("savestate save failed: " + err); stateDirty = true; }
       }
     }, 2000);
     onSavePagehide = () => {
-      try { if (sramDirty)  idbPut(saveDb, romHash, extractSram()); } catch {}
-      try { if (stateDirty) idbPut(saveDb, romHash, extractState(), STATE_STORE); } catch {}
+      try { if (sramDirty)  idbPut(pdb, key, extractSram()); } catch {}
+      try { if (stateDirty) idbPut(pdb, key, stateEnvelope(), STATE_STORE); } catch {}
     };
     window.addEventListener("pagehide", onSavePagehide);
   }

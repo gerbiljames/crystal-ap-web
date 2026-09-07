@@ -7,6 +7,7 @@ import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrack
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { bundledApworldVersion } from "./lib/apworld.js";
+import { migrateLegacySave } from "./lib/saves.js";
 import { buildOverrides, overridesHash } from "./lib/overrides.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
 import { db, idbGet, idbPut, idbDel } from "./lib/idb.js";
@@ -74,6 +75,10 @@ export async function forgetSession(id: string) {
     idbDel(dbc, id, ROM_STORE).catch(() => {});
     idbDel(dbc, id, ARTIFACTS_STORE).catch(() => {});
     idbDel(dbc, id, MHOST_SAVE_STORE).catch(() => {});
+    idbDel(dbc, id, SAVE_STORE).catch(() => {});
+    idbDel(dbc, id, STATE_STORE).catch(() => {});
+    // Saves recorded before seed keying still sit under the ROM hash if this
+    // session never booted post-migration.
     if (removed?.romHash) {
       idbDel(dbc, removed.romHash, SAVE_STORE).catch(() => {});
       idbDel(dbc, removed.romHash, STATE_STORE).catch(() => {});
@@ -306,6 +311,10 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
     }
     setApp("patchedRom", patched.buffer);
     logOk(`patched locally (${patched.byteLength} bytes)`);
+    // recordSession replaces the entry wholesale. Carry the previous romHash
+    // through: on a re-patch it is the key the pre-seed-keying save still
+    // lives under, and bootEmulatorAndUi's migration needs it.
+    const prevEntry = loadSessions().find((s: any) => s.id === app.seedId);
     recordSessionPure({
       id: app.seedId,
       slot: app.slotName,
@@ -314,6 +323,7 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
       game: patchGame,
       apworldVersion,
       overridesHash: ovHash,
+      romHash: prevEntry?.romHash,
     });
     refreshSessions();
     const dbc = await db();
@@ -591,10 +601,19 @@ async function bootEmulatorAndUi() {
     // don't leak.
     disposeEmulator();
     const saveDb = await db();
+    const seedId: string | null = app.seedId;
+    if (saveDb && seedId) {
+      // Saves used to be keyed by the patched ROM's SHA-1 (recorded on the
+      // session as romHash). Move them under the seed id before the boot
+      // looks them up, so an upgrade re-patch keeps the player's progress.
+      const entry = loadSessions().find((s: any) => s.id === seedId);
+      await migrateLegacySave(saveDb, seedId, entry?.romHash);
+    }
     const emu = await bootEmulator({
       canvas: $<HTMLCanvasElement>("#screen"),
       romBuf: app.patchedRom,
       saveDb,
+      saveKey: seedId,
     });
     if (!emu) return;
     currentEmu = emu;
@@ -667,15 +686,15 @@ async function bootEmulatorAndUi() {
 // dispose first — its final flush writes the OLD save — then overwrite IDB,
 // then boot, which reloads the imported SRAM and lands on the title screen.
 export async function importSaveFile(file: File) {
-  // Test-and-set swapInFlight synchronously, and snapshot romHash/sramSize off
+  // Test-and-set swapInFlight synchronously, and snapshot seedId/sramSize off
   // currentEmu before the first await — otherwise two concurrent imports could
   // both pass the guard, and a dispose during the awaits (canvas unmount/HMR)
   // could null currentEmu out from under a later `.sramSize` read.
   if (swapInFlight) { logWarn("a save import is already in progress"); return; }
   if (!currentEmu) { logErr("no running emulator — can't import a save"); return; }
-  const romHash = currentEmu.romHash;
+  const seedId: string | null = app.seedId;
   const expected = currentEmu.sramSize;
-  if (!romHash) { logErr("no running emulator — can't import a save"); return; }
+  if (!seedId) { logErr("no active seed — can't import a save"); return; }
 
   // Hold swapInFlight for the WHOLE import — including our own bootEmulatorAndUi
   // call. It blocks ensureEmulator (canvas remount/HMR) from racing a boot into
@@ -709,8 +728,8 @@ export async function importSaveFile(file: File) {
     disposeEmulator();
     let writeOk = true;
     try {
-      await idbPut(dbc, romHash, sram, SAVE_STORE);
-      await idbDel(dbc, romHash, STATE_STORE);
+      await idbPut(dbc, seedId, sram, SAVE_STORE);
+      await idbDel(dbc, seedId, STATE_STORE);
     } catch (err: any) {
       writeOk = false;
       logErr("import failed: " + (err?.message || err));

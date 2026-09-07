@@ -424,11 +424,11 @@ function SessionLinks() {
 
   const downloadSave = async () => {
     const session = app.sessions.find((s) => s.id === app.seedId);
-    const romHash = session?.romHash;
-    if (!romHash) { logErr("no ROM hash on this session — can't locate save"); return; }
+    const seedId = app.seedId;
+    if (!seedId) { logErr("no active seed — can't locate save"); return; }
     const dbc = await db();
     if (!dbc) { logErr("IDB unavailable"); return; }
-    const sram = await idbGet<ArrayBuffer>(dbc, romHash, SAVE_STORE).catch(() => null);
+    const sram = await idbGet<ArrayBuffer>(dbc, seedId, SAVE_STORE).catch(() => null);
     if (!sram || !sram.byteLength) { logWarn("no save data yet — play a bit first"); return; }
     const url = URL.createObjectURL(new Blob([sram], { type: "application/octet-stream" }));
     const a = document.createElement("a");
