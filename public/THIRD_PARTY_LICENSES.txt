@@ -32,7 +32,7 @@ Archipelago - https://github.com/ArchipelagoMW/Archipelago
     Shipped as: ap/core.tar (unpacked into the Pyodide virtual filesystem at
     runtime; the archive also contains this LICENSE alongside the source).
     The Pokemon Crystal apworlds ship separately as ap/worlds/*.tar, one per
-    bundled version, listed in ap/versions.json.
+    bundled version, listed in src/generated/versions.json at build time.
 ================================================================================
 
 MIT License

@@ -17,16 +17,16 @@ let pyodide = null;
 let booted = false;
 let initPromise = null;
 // Bundled Archipelago source is split into ap/core.tar plus one tar per
-// Crystal apworld version (see pack.sh / apworlds.json), described by
-// ap/versions.json. Archipelago's registries are keyed by game name, so only
-// one version of each world package can live in this interpreter: the boot
-// picks one per package — the `latest` entry unless the main thread has asked
-// for a specific world_version via select-worlds — and unpacks just those.
+// Crystal apworld version (see pack.sh / apworlds.json). Archipelago's
+// registries are keyed by game name, so only one version of each world package
+// can live in this interpreter. Which tars make up this runtime is decided on
+// the main thread (src/lib/apworld.ts, from the versions.json baked into the
+// bundle) and handed over in a `configure` message the wrapper posts the moment
+// it spawns us — before any command that could boot. A different world set
+// means a different worker; the wrapper restarts us for that.
 const AP_DIR = "ap/";
-let apVersions = null;       // parsed versions.json
-let worldSelection = null;   // { [package]: world_version } requested before boot
-let loadedWorlds = [];       // versions.json entries this boot loads / has loaded
-let chosenReady = null;      // resolves once an in-flight boot has picked its worlds
+let runtimeConfig = null;    // { coreTar, worlds: [versions.json entries] }
+let loadedWorlds = [];       // runtimeConfig.worlds once this boot has committed to them
 // Session state (lives while a BizHawk AP session is running).
 let sessionTasks = null;           // py cancellables
 let nextBhId = 1;
@@ -99,30 +99,17 @@ _
 async function ensureInit(id) {
   if (booted) return;
   if (initPromise) return initPromise;
-  let resolveChosen, rejectChosen;
-  chosenReady = new Promise((res, rej) => { resolveChosen = res; rejectChosen = rej; });
-  chosenReady.catch(() => {});
   initPromise = (async () => {
     const report = (phase) => post({ id, event: "progress", phase });
 
-    // Pick the world set first. It's one tiny fetch, and settling it before
-    // the long Pyodide boot means a select-worlds that arrives mid-boot
-    // compares against what this boot will really load (see selectWorlds).
-    // The tar downloads start now too and overlap the runtime boot.
-    let tarsPromise;
-    try {
-      apVersions = await fetchJson(AP_DIR + "versions.json");
-      loadedWorlds = pickWorlds(apVersions, worldSelection);
-      tarsPromise = Promise.all([
-        fetchBuf(AP_DIR + apVersions.core.tar),
-        ...loadedWorlds.map(w => fetchBuf(AP_DIR + w.tar)),
-      ]);
-      tarsPromise.catch(() => {});
-      resolveChosen(loadedWorlds);
-    } catch (err) {
-      rejectChosen(err);
-      throw err;
-    }
+    if (!runtimeConfig) throw new Error("ap worker booted before it was configured");
+    loadedWorlds = runtimeConfig.worlds;
+    // Start the tar downloads now so they overlap the Pyodide boot.
+    const tarsPromise = Promise.all([
+      fetchBuf(AP_DIR + runtimeConfig.coreTar),
+      ...loadedWorlds.map(w => fetchBuf(AP_DIR + w.tar)),
+    ]);
+    tarsPromise.catch(() => {});
 
     report("pyodide-boot");
     pyodide = await loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/" });
@@ -192,7 +179,6 @@ sys.stderr = _Tee()
     booted = false;
     initPromise = null;
     loadedWorlds = [];
-    chosenReady = null;
   });
   return initPromise;
 }
@@ -202,57 +188,6 @@ async function fetchBuf(url) {
   if (!res.ok) throw new Error(`fetch ${url}: HTTP ${res.status}`);
   return res.arrayBuffer();
 }
-async function fetchJson(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`fetch ${url}: HTTP ${res.status}`);
-  return res.json();
-}
-
-// One world per package: the requested world_version if the selection names
-// one, else the entry pack.sh flagged as latest. Throws on a version that
-// isn't bundled, or on a package with no latest flag, so the main thread sees
-// a clear error instead of a Python import failure (or a silently wrong
-// version) later.
-function pickWorlds(versions, selection) {
-  const byPackage = new Map();
-  for (const w of versions.worlds) {
-    if (!byPackage.has(w.package)) byPackage.set(w.package, []);
-    byPackage.get(w.package).push(w);
-  }
-  const out = [];
-  for (const [pkg, entries] of byPackage) {
-    const wanted = selection?.[pkg];
-    const pick = wanted
-      ? entries.find(w => w.world_version === wanted)
-      : entries.find(w => w.latest);
-    if (!pick) {
-      const have = entries.map(w => w.world_version).join(", ");
-      throw new Error(wanted
-        ? `apworld ${pkg} ${wanted} is not bundled (have ${have})`
-        : `versions.json flags no latest ${pkg} (have ${have})`);
-    }
-    out.push(pick);
-  }
-  return out;
-}
-
-// Record which world_version to boot per package. Only honoured before the
-// runtime starts booting: a booted (or booting) interpreter can't swap worlds
-// (registries are keyed by game name and Python modules can't be unloaded),
-// so a differing request from then on reports needsRestart and the main
-// thread must respawn this worker. During an in-flight boot we wait for that
-// boot to pick its worlds (the first thing it does) and compare against those.
-async function selectWorlds(selection) {
-  const wanted = selection || null;
-  if (!booted && !initPromise) { worldSelection = wanted; return { needsRestart: false }; }
-  if (!booted && chosenReady) {
-    try { await chosenReady; }
-    catch { return { needsRestart: true, loaded: [] }; }
-  }
-  const differs = loadedWorlds.some(w => wanted?.[w.package] && wanted[w.package] !== w.world_version);
-  return { needsRestart: differs, loaded: loadedWorlds };
-}
-
 async function patch(id, romBytes, patchBytes, overrides) {
   await ensureInit(id);
   pyodide.FS.writeFile("/tmp/vanilla.gbc", romBytes);
@@ -299,7 +234,8 @@ try:
     _rev = _rom[_ra["AP_ROM_Revision"]]
     _req = _data.rom_version if _rev == 0 else _data.rom_version_11
     _gen = bytes(b for b in _rom[_ra["AP_Version"]:_ra["AP_Version"] + 32] if b).decode("ascii", "replace") or "unknown"
-except (AttributeError, KeyError, TypeError):
+except (AttributeError, KeyError, TypeError) as _e:
+    print(f"[patch] skipping ROM checksum check: {_e!r}")
     _ver = _req = None
 if _ver is not None and _ver != _req:
     raise RuntimeError(f"this patch was generated with {_game} apworld {_gen} (ROM checksum {_ver:04x}), "
@@ -606,11 +542,15 @@ for _n in ("_ut_tracker", "_ut_multidata", "_ut_slot", "_ut_slot_name", "_ut_gam
 self.onmessage = async (ev) => {
   const { id, cmd } = ev.data;
   try {
-    if (cmd === "init") {
+    if (cmd === "configure") {
+      // Fire-and-forget from spawn(); must land before any booting command.
+      // A booted (or booting) runtime can't take a different world set — the
+      // wrapper restarts the worker for that instead of re-configuring.
+      if (booted || initPromise) throw new Error("ap worker configured after boot");
+      runtimeConfig = ev.data.runtime;
+    } else if (cmd === "init") {
       await ensureInit(id);
       post({ id, ok: true, out: { worlds: loadedWorlds } });
-    } else if (cmd === "select-worlds") {
-      post({ id, ok: true, out: await selectWorlds(ev.data.selection) });
     } else if (cmd === "patch") {
       const { out, transfer } = await patch(id, ev.data.rom, ev.data.patch, ev.data.overrides);
       post({ id, ok: true, out }, transfer);

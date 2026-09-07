@@ -4,8 +4,9 @@
 #                                 and Universal Tracker (no Crystal worlds)
 #   public/ap/worlds/<pkg>-<version>.tar
 #                               — one tar per bundled Crystal apworld version
-#   public/ap/versions.json     — what got bundled, with the version metadata
-#                                 needed to pick a world per seed
+#   src/generated/versions.json — what got bundled, with the version metadata
+#                                 needed to pick a world per seed (imported by
+#                                 the app at build time, like yaml-schema.json)
 # Which versions get bundled is configured in apworlds.json; the newest of each
 # channel is always the submodule checkout. We deliberately err toward MORE core
 # files rather than less; Pyodide is fine with unused modules sitting in the VFS.
@@ -40,12 +41,12 @@ rm -rf "$STAGE/worlds/tracker"
 cp -R "$UT/worlds/tracker" "$STAGE/worlds/tracker"
 
 mkdir -p "$OUT/worlds"
-# Pre-versioning builds produced a single public/ap.tar; drop it so a stale
-# copy can't be served alongside the split bundles.
-rm -f "$HERE/public/ap.tar"
+# Earlier layouts put the bundle at public/ap.tar and the manifest at
+# public/ap/versions.json; drop both so stale copies can't be served.
+rm -f "$HERE/public/ap.tar" "$OUT/versions.json"
 
 echo "bundling apworlds:" >&2
-python3 "$HERE/scripts/pack-worlds.py" "$HERE/apworlds.json" "$STAGE" "$OUT" "$AP"
+python3 "$HERE/scripts/pack-worlds.py" "$HERE/apworlds.json" "$STAGE" "$OUT" "$AP" "$HERE/src/generated/versions.json"
 
 # Dump option metadata for the YAML creator UI. Runs against the staged tree
 # (core + the newest world of each channel), so the form stays in lockstep

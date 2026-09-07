@@ -1,7 +1,9 @@
 // Bundled apworld versions and the rule for picking one per seed.
 //
 // pack.sh bundles one or more versions of each Crystal apworld and describes
-// them in public/ap/versions.json (see scripts/pack-worlds.py). A seed is
+// them in src/generated/versions.json (see scripts/pack-worlds.py), imported
+// here at build time so the app and the tars it points the worker at always
+// come from the same pack. A seed is
 // pinned to a *minimum*, not an exact version: upstream keeps newer apworlds
 // able to play older seeds within a compatibility window, so the app always
 // picks the newest bundled version that can still take the seed, and only
@@ -19,6 +21,7 @@
 //                checksum is what the client demands at connect.
 
 import { readPatchManifest, readZipEntry } from "./zip.js";
+import versionsJson from "../generated/versions.json";
 
 export type BundledWorld = {
   channel: string;
@@ -42,19 +45,21 @@ export type BundledVersions = {
   worlds: BundledWorld[];
 };
 
-let versionsPromise: Promise<BundledVersions> | null = null;
+export const VERSIONS: BundledVersions = versionsJson as BundledVersions;
 
-export function loadVersions(): Promise<BundledVersions> {
-  if (!versionsPromise) {
-    versionsPromise = fetch(`${import.meta.env.BASE_URL}ap/versions.json`).then(async (res) => {
-      if (!res.ok) throw new Error(`versions.json: HTTP ${res.status}`);
-      return res.json() as Promise<BundledVersions>;
-    });
-    // Let a transient fetch failure retry on the next call instead of
-    // poisoning every later resolution.
-    versionsPromise.catch(() => { versionsPromise = null; });
-  }
-  return versionsPromise;
+// What the worker needs to assemble a runtime: the core tar plus one world per
+// package, as paths under public/ap/. Sent to the worker when it is spawned.
+export type RuntimeConfig = { coreTar: string; worlds: BundledWorld[] };
+
+export function runtimeFor(worlds: BundledWorld[]): RuntimeConfig {
+  return { coreTar: VERSIONS.core.tar, worlds };
+}
+
+export function sameRuntime(a: RuntimeConfig | null, b: RuntimeConfig | null): boolean {
+  if (!a || !b) return a === b;
+  if (a.coreTar !== b.coreTar || a.worlds.length !== b.worlds.length) return false;
+  const byPkg = new Map(a.worlds.map((w) => [w.package, w.world_version]));
+  return b.worlds.every((w) => byPkg.get(w.package) === w.world_version);
 }
 
 // Numeric dotted-prefix compare, matching Utils.tuplize_version for the
@@ -78,26 +83,18 @@ export function compareVersions(a: string, b: string): number {
 const newest = (worlds: BundledWorld[]): BundledWorld | null =>
   worlds.reduce<BundledWorld | null>((best, w) => (!best || compareVersions(w.world_version, best.world_version) > 0 ? w : best), null);
 
-// The `latest` entry of every package: what generation uses, and the worker's
-// own default when nothing is selected.
-export async function latestWorlds(): Promise<BundledWorld[]> {
-  const { worlds } = await loadVersions();
-  return worlds.filter((w) => w.latest);
+// The `latest` entry of every package: what generation uses, and what a
+// runtime boots when no seed has asked for anything else.
+export function latestWorlds(): BundledWorld[] {
+  return VERSIONS.worlds.filter((w) => w.latest);
 }
 
-export async function latestWorldForGame(game: string): Promise<BundledWorld | null> {
-  const { worlds } = await loadVersions();
-  return worlds.find((w) => w.game === game && w.latest) ?? newest(worlds.filter((w) => w.game === game));
+export function latestWorldForGame(game: string): BundledWorld | null {
+  return VERSIONS.worlds.find((w) => w.game === game && w.latest) ?? newest(VERSIONS.worlds.filter((w) => w.game === game));
 }
 
-export async function bundledWorld(pkg: string, worldVersion: string): Promise<BundledWorld | null> {
-  const { worlds } = await loadVersions();
-  return worlds.find((w) => w.package === pkg && w.world_version === worldVersion) ?? null;
-}
-
-// The per-package selection the worker's select-worlds command takes.
-export function selectionFor(worlds: BundledWorld[]): Record<string, string> {
-  return Object.fromEntries(worlds.map((w) => [w.package, w.world_version]));
+export function bundledWorld(pkg: string, worldVersion: string): BundledWorld | null {
+  return VERSIONS.worlds.find((w) => w.package === pkg && w.world_version === worldVersion) ?? null;
 }
 
 export type WorldResolution =
@@ -115,8 +112,7 @@ export type WorldResolution =
 export async function resolveWorldForPatch(patchBytes: Uint8Array): Promise<WorldResolution> {
   const manifest = await readPatchManifest(patchBytes);
   const game: string = manifest.game || "Pokemon Crystal";
-  const { worlds } = await loadVersions();
-  const candidates = worlds.filter((w) => w.game === game);
+  const candidates = VERSIONS.worlds.filter((w) => w.game === game);
   if (candidates.length === 0) return { kind: "unsupported", game, reason: `no bundled apworld for ${game}` };
 
   const versioned = candidates.some((w) => w.minimum_patch_version);

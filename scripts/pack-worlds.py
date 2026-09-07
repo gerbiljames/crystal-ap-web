@@ -7,14 +7,15 @@ Reads apworlds.json, then for each channel:
     tars it as OUT/worlds/<package>-<world_version>.tar;
   * `git archive`s each ref in `older` and tars it the same way, fetching the
     ref first if a shallow submodule checkout lacks it.
-Finally writes OUT/versions.json describing every bundled world so the worker
-(and later the main thread) can pick a version per seed without touching git.
+Finally writes VERSIONS_JSON (src/generated/versions.json, imported by the app
+at build time like yaml-schema.json) describing every bundled world, so the
+main thread can pick a version per seed and tell the worker which tars to load.
 
 Tar entries are rooted at worlds/<package>/ so unpacking one over /ap drops the
 world into the core tree exactly where the monolithic tarball used to put it.
 
 Usage:
-    pack-worlds.py CONFIG_JSON STAGE_DIR OUT_DIR CORE_REPO
+    pack-worlds.py CONFIG_JSON STAGE_DIR OUT_DIR CORE_REPO VERSIONS_JSON
 """
 
 from __future__ import annotations
@@ -127,7 +128,7 @@ def core_version(core_repo: Path) -> str | None:
 
 
 def main() -> None:
-    config_path, stage, out, core_repo = (Path(a) for a in sys.argv[1:5])
+    config_path, stage, out, core_repo, versions_out = (Path(a) for a in sys.argv[1:6])
     config = json.loads(config_path.read_text())
     root = config_path.parent
 
@@ -178,7 +179,9 @@ def main() -> None:
         "core": {"tar": "core.tar", "ap_version": core_version(core_repo)},
         "worlds": worlds,
     }
-    (out / "versions.json").write_text(json.dumps(versions, indent=2) + "\n")
+    versions_out.parent.mkdir(parents=True, exist_ok=True)
+    versions_out.write_text(json.dumps(versions, indent=2) + "\n")
+    print(f"wrote {versions_out}", file=sys.stderr)
 
 
 if __name__ == "__main__":

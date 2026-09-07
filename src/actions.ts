@@ -6,8 +6,7 @@ import { unwrap } from "solid-js/store";
 import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setHints, setHintsStatus, setHintPoints, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen, romOverridePrefs } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
-import { resolveWorldForPatch, latestWorlds, latestWorldForGame, bundledWorld, selectionFor, type BundledWorld, type WorldResolution } from "./lib/apworld.js";
-import { migrateLegacySave } from "./lib/saves.js";
+import { resolveWorldForPatch, latestWorlds, latestWorldForGame, bundledWorld, runtimeFor, type BundledWorld, type WorldResolution } from "./lib/apworld.js";
 import { buildOverrides, overridesHash } from "./lib/overrides.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
 import { db, idbGet, idbPut, idbDel } from "./lib/idb.js";
@@ -77,17 +76,6 @@ export async function forgetSession(id: string) {
     idbDel(dbc, id, MHOST_SAVE_STORE).catch(() => {});
     idbDel(dbc, id, SAVE_STORE).catch(() => {});
     idbDel(dbc, id, STATE_STORE).catch(() => {});
-    // Saves recorded before seed keying sit under a ROM hash: romHash if this
-    // session never booted post-migration, legacyRomHash once it has (romHash
-    // then tracks the current ROM). Sessions built from the same patch share
-    // those rows, so only drop a hash no remaining session still points at.
-    const remaining = loadSessions();
-    const referenced = (h: string) => remaining.some((s: any) => s.romHash === h || s.legacyRomHash === h);
-    for (const h of new Set([removed?.romHash, removed?.legacyRomHash].filter((h): h is string => !!h))) {
-      if (referenced(h)) continue;
-      idbDel(dbc, h, SAVE_STORE).catch(() => {});
-      idbDel(dbc, h, STATE_STORE).catch(() => {});
-    }
   }
 }
 
@@ -110,19 +98,20 @@ export async function resumeSession(id: string) {
   let target: BundledWorld | null = null;
   try {
     if (patchName) {
-      target = await resolveOrFallback(await resolveWorldForPatch(savedArtifacts![patchName]));
+      target = await prepareRuntimeForPatch(savedArtifacts![patchName]);
       if (!target) {
-        // Definitive: incompatible or unsupported. resolveOrFallback logged why.
-        const msg = `can't resume ${id} — no bundled apworld can play this seed (see the log)`;
-        setApp("yamlErr", msg);
+        // Definitive: incompatible or unsupported (already logged), or the
+        // runtime couldn't be switched (already surfaced).
+        setApp("yamlErr", (a) => a ?? `can't resume ${id} — no bundled apworld can play this seed (see the log)`);
         return;
       }
     } else {
       // No artifacts to re-resolve from: stay on the recorded version while it
       // is still bundled, else the newest for the game (the cached ROM below is
       // played as-is in that case anyway).
-      if (session.worldPackage && session.worldVersion) target = await bundledWorld(session.worldPackage, session.worldVersion);
-      if (!target && session.game) target = await latestWorldForGame(session.game);
+      if (session.worldPackage && session.worldVersion) target = bundledWorld(session.worldPackage, session.worldVersion);
+      if (!target && session.game) target = latestWorldForGame(session.game);
+      if (target && !(await selectWorlds([target]))) return;
     }
   } catch (err) {
     const msg = `couldn't resume ${id}: ${err.message || err}`;
@@ -130,7 +119,6 @@ export async function resumeSession(id: string) {
     logErr(msg);
     return;
   }
-  if (target && !(await selectWorlds([target]))) return;
   const apworldStale = !session.worldVersion || !target || target.world_version !== session.worldVersion;
   // The cached ROM was patched with whatever overrides were set at the time
   // (tagged via overridesHash). If the current overrides differ, re-patch so
@@ -185,38 +173,37 @@ export async function resumeSession(id: string) {
 // -----------------------------------------------------------------------------
 // Tell the worker which world_version to boot per package. The worker only
 // honours this before Pyodide boots; once booted it can't swap worlds, and a
-// differing request comes back as needsRestart. Respawning the runtime for
-// that case is not wired up yet, so for now it is reported as an error and
-// the caller aborts rather than patching or connecting with the wrong world.
-// Returns true when the selection is (or already was) in effect.
-// The selection the active seed needs. Kept here because the worker's copy
-// dies with it: recoverFromFatalWorker re-sends this before booting the
-// replacement, so a crash mid-session doesn't silently come back on `latest`.
-let currentSelection: Record<string, string> | null = null;
-
+// differing request comes back as needsRestart. Every seed switch from the
+// play step goes through a page reload (brand click, browser back), so that
+// case only arises on the home flow — a generate or import booted the runtime
+// on one version and the user then opened a seed needing another. Nothing in
+// the old runtime is worth keeping there, so restart it and re-select. Only a
+// live session refuses, since restarting under it would drop the connection.
+// Returns true when the selection is in effect on the runtime that will boot.
 async function selectWorlds(worlds: BundledWorld[]): Promise<boolean> {
-  const selection = selectionFor(worlds);
-  let res;
-  try { res = await apWorker.selectWorlds(selection); }
-  catch (err) {
-    // A rejection here is most likely a stale cached ap_worker.js from before
-    // versioning ("unknown cmd") — it would go on to fetch a bundle that no
-    // longer exists, so don't proceed.
-    const msg = `couldn't select the apworld version (${err.message || err}) — reload the page`;
-    setApp("yamlErr", msg);
-    setApp("rom", "error", msg);
-    logErr(msg);
-    return false;
+  const { needsRestart, current } = apWorker.setRuntime(runtimeFor(worlds));
+  if (!needsRestart) return true;
+  const describe = (ws: BundledWorld[] | undefined) => ws?.map((w) => `${w.game} ${w.display_version}`).join(", ") ?? "unknown";
+  const loaded = describe(current?.worlds), wanted = describe(worlds);
+  const fail = (msg: string) => { setApp("yamlErr", msg); setApp("rom", "error", msg); logErr(msg); return false; };
+  if (app.step === "play" || app.session.state === "live" || app.session.state === "connecting") {
+    return fail(`this seed needs ${wanted} but the runtime is running ${loaded} for the current session — reload the page, then open this seed first`);
   }
-  currentSelection = selection;
-  if (!res.out?.needsRestart) return true;
-  const loaded = (res.out.loaded as BundledWorld[] | undefined)?.map((w) => `${w.game} ${w.display_version}`).join(", ");
-  const wanted = worlds.map((w) => `${w.game} ${w.display_version}`).join(", ");
-  const msg = `this seed needs ${wanted} but the runtime already booted with ${loaded} — reload the page, then open this seed first`;
-  setApp("yamlErr", msg);
-  setApp("rom", "error", msg);
-  logErr(msg);
-  return false;
+  log(`restarting the python runtime for ${wanted} (it was booted with ${loaded})`);
+  sessionWanted = false;
+  clearWorkerMirroredState();
+  try { await apWorker.restart(); }
+  catch (err) { return fail(`couldn't restart the python runtime for ${wanted} (${err.message || err}) — reload the page`); }
+  return true;
+}
+
+// Resolve the world a patch needs, fall back where allowed, and make sure the
+// runtime that boots next is built from it. Null means no usable world (logged
+// and surfaced already); a thrown error means the patch couldn't be read.
+async function prepareRuntimeForPatch(patchBytes: Uint8Array): Promise<BundledWorld | null> {
+  const world = await resolveOrFallback(await resolveWorldForPatch(patchBytes));
+  if (!world) return null;
+  return (await selectWorlds([world])) ? world : null;
 }
 
 // Turn a resolution into the world to use, logging why. Unknown stable
@@ -230,7 +217,7 @@ async function resolveOrFallback(res: WorldResolution): Promise<BundledWorld | n
       else log(`apworld: ${res.world.game} ${res.world.display_version}`);
       return res.world;
     case "unknown": {
-      const fallback = await latestWorldForGame(res.game);
+      const fallback = latestWorldForGame(res.game);
       logWarn(`${res.reason}; trying the newest bundled version (${fallback?.display_version ?? "none"})`);
       return fallback;
     }
@@ -291,7 +278,7 @@ async function hostMultidata(multidata: Uint8Array, status?: (label: string) => 
 // -----------------------------------------------------------------------------
 async function runGeneration(yamlText: string) {
   // Generation always runs on the newest bundled apworlds.
-  if (!(await selectWorlds(await latestWorlds()))) return;
+  if (!(await selectWorlds(latestWorlds()))) return;
   const start = performance.now();
   setApp("gen", { visible: true, status: "starting", elapsed: "0.0s", error: null, done: false });
   const elapsedTimer = setInterval(
@@ -379,18 +366,13 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
   // it, so resume can re-patch when a newer compatible version lands instead
   // of serving a stale ROM (see resumeSession).
   let world: BundledWorld | null = null;
-  let patchGame: string | undefined;
   let resolveErr: string | null = null;
-  try {
-    const res = await resolveWorldForPatch(app.artifacts[patchName]);
-    patchGame = "game" in res ? res.game : res.world.game;
-    world = await resolveOrFallback(res);
-  } catch (e) { resolveErr = `couldn't read this patch: ${e.message || e}`; logErr(resolveErr); }
+  try { world = await prepareRuntimeForPatch(app.artifacts[patchName]); }
+  catch (e) { resolveErr = `couldn't read this patch: ${e.message || e}`; logErr(resolveErr); }
   if (!world) {
-    setApp("rom", { progressText: null, error: resolveErr ?? "no bundled apworld can patch this seed — see the log" });
+    setApp("rom", (r) => ({ progressText: null, error: resolveErr ?? r.error ?? "no bundled apworld can patch this seed — see the log" }));
     return;
   }
-  if (!(await selectWorlds([world]))) { setApp("rom", "progressText", null); return; }
 
   // Patch-time option overrides (applied to this player's ROM only). Tag the
   // cached ROM with their hash too, so changing an override forces a re-patch
@@ -414,21 +396,16 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
     }
     setApp("patchedRom", patched.buffer);
     logOk(`patched locally (${patched.byteLength} bytes)`);
-    // recordSession replaces the entry wholesale. Carry the previous romHash
-    // through: on a re-patch it is the key the pre-seed-keying save still
-    // lives under, and bootEmulatorAndUi's migration needs it.
-    const prevEntry = loadSessions().find((s: any) => s.id === app.seedId);
     recordSessionPure({
       id: app.seedId,
       slot: app.slotName,
       hosted: app.hosted,
       romCached: true,
-      game: patchGame,
+      game: world.game,
       worldPackage: world.package,
       worldVersion: world.world_version,
       apworldVersion: world.display_version,
       overridesHash: ovHash,
-      romHash: prevEntry?.romHash,
     });
     refreshSessions();
     const dbc = await db();
@@ -500,10 +477,9 @@ export async function handleYamlDrop(f: File) {
     // Pick and select the apworld version before anything boots the runtime —
     // hosting the multidata below runs MultiServer in the same interpreter.
     let world: BundledWorld | null = null;
-    try { world = await resolveOrFallback(await resolveWorldForPatch(artifacts[patchName])); }
-    catch (e) { logWarn(`couldn't resolve apworld version: ${e.message || e}`); }
-    if (!world) { setApp("yamlErr", `no bundled apworld can play ${f.name} — see the log`); return; }
-    if (!(await selectWorlds([world]))) return;
+    try { world = await prepareRuntimeForPatch(artifacts[patchName]); }
+    catch (e) { setApp("yamlErr", `couldn't read ${f.name}: ${e.message || e}`); logErr(`couldn't read ${f.name}: ${e.message || e}`); return; }
+    if (!world) { setApp("yamlErr", (a) => a ?? `no bundled apworld can play ${f.name} — see the log`); return; }
 
     const multiName = Object.keys(artifacts).find(n => n.toLowerCase().endsWith(".archipelago"));
     let hosted = null;
@@ -715,20 +691,6 @@ async function bootEmulatorAndUi() {
     disposeEmulator();
     const saveDb = await db();
     const seedId: string | null = app.seedId;
-    if (saveDb && seedId) {
-      // Saves used to be keyed by the patched ROM's SHA-1 (recorded on the
-      // session as romHash). Move them under the seed id before the boot
-      // looks them up, so an upgrade re-patch keeps the player's progress.
-      const list = loadSessions();
-      const entry = list.find((s: any) => s.id === seedId);
-      if (entry) {
-        // romHash gets overwritten with the new ROM's hash below, so pin the
-        // legacy key separately the first time through; forgetSession needs it
-        // to clean the old rows up.
-        if (!entry.legacyRomHash && entry.romHash) { entry.legacyRomHash = entry.romHash; saveSessions(list); }
-        await migrateLegacySave(saveDb, seedId, entry.legacyRomHash);
-      }
-    }
     const emu = await bootEmulator({
       canvas: $<HTMLCanvasElement>("#screen"),
       romBuf: app.patchedRom,
@@ -1248,10 +1210,11 @@ async function driveFatalRecovery() {
   }
 }
 
-async function recoverFromFatalWorker(reason: string) {
-  logErr("python runtime crashed: " + reason);
-
-  // Everything below mirrored worker state that no longer exists.
+// Drop every piece of main-thread state that mirrors the worker's: tracker,
+// hints, their in-flight sequence counters, and the heartbeat (a ping would
+// just spawn a worker to no-op against). Used when the worker is gone, whether
+// it crashed or was restarted on purpose to switch apworld version.
+function clearWorkerMirroredState() {
   trackerInited = false;
   trackerUnavailable = false;
   trackerInitSeq++;
@@ -1267,9 +1230,14 @@ async function recoverFromFatalWorker(reason: string) {
   hintCaptureUntil = 0;
   hintCaptureSeq++;
   stopTrackerPolling();
-  // The reconnect below restarts it; until then a ping would just spawn a
-  // worker to no-op against.
   stopHeartbeat();
+}
+
+async function recoverFromFatalWorker(reason: string) {
+  logErr("python runtime crashed: " + reason);
+
+  // Everything that mirrored worker state no longer exists.
+  clearWorkerMirroredState();
 
   // Self-hosted seeds have no connect button — Play.tsx hides the session
   // actions for loopback and the play step auto-connects instead — so bailing
@@ -1296,10 +1264,6 @@ async function recoverFromFatalWorker(reason: string) {
   // Boot the replacement worker explicitly rather than letting host/connect
   // do it implicitly: init is the only command that forwards boot-phase
   // progress, so this is what turns a silent minute into a visible one.
-  if (currentSelection) {
-    try { await apWorker.selectWorlds(currentSelection); }
-    catch (err) { logWarn(`couldn't re-select the apworld version: ${err.message || err}`); }
-  }
   await apWorker.init((phase) => log(PHASE_LABELS[phase] || phase));
   if (!sessionWanted) { setSessionState("idle", "disconnected"); return; }
 

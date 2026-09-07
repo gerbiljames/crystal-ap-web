@@ -3,6 +3,7 @@
 // is registered via setBhHandler.
 
 import { logAnsi, logErr } from "./log.js";
+import { latestWorlds, runtimeFor, sameRuntime, type RuntimeConfig } from "./apworld.js";
 
 // Shape of a resolved call response. `out` is command-specific:
 //   - "patch":    { byteLength, buffer, ... }  (Uint8Array)
@@ -12,6 +13,13 @@ type CallResult = { ok: boolean; out: any };
 type ProgressCb = (phase: string) => void;
 
 let worker: Worker | null = null;
+// The world set a runtime is built from is part of the worker's identity:
+// Archipelago's registries are keyed by game name, so a booted interpreter
+// can't swap a world. `wantedRuntime` is what the next spawn boots (posted as
+// the worker's first message, so it can never boot unconfigured — including
+// the respawn after a fatal); `workerRuntime` is what the live worker got.
+let wantedRuntime: RuntimeConfig = runtimeFor(latestWorlds());
+let workerRuntime: RuntimeConfig | null = null;
 let nextId = 1;
 const pending = new Map<number, { resolve: (v: CallResult) => void; reject: (e: Error) => void; onProgress: ProgressCb | null }>();
 let onBhReq: ((reqId: number, payload: string) => void) | null = null;
@@ -42,6 +50,38 @@ function killWorker(reason: string) {
   queueMicrotask(() => onFatal?.(reason));
 }
 
+// Record the world set the next runtime must boot. Reports whether the live
+// worker (if any) was spawned with a different one and so has to be restarted
+// before it can serve this seed; the caller decides when that is safe.
+function setRuntime(runtime: RuntimeConfig): { needsRestart: boolean; current: RuntimeConfig | null } {
+  wantedRuntime = runtime;
+  return { needsRestart: !!worker && !sameRuntime(workerRuntime, runtime), current: workerRuntime };
+}
+
+// Deliberate restart, used to boot a different apworld version. Unlike
+// killWorker this is not a crash — onFatal is not invoked and the caller owns
+// whatever main-thread state mirrored the old runtime. The in-worker
+// MultiServer and client are asked to stop first so the loopback host's .apsave
+// reaches IndexedDB; a hung or still-booting runtime can't hold the restart up
+// past the timeout, since terminate() follows either way. The next call()
+// spawns a fresh worker configured with wantedRuntime.
+const RESTART_GRACE_MS = 3000;
+async function restart(): Promise<void> {
+  const dead = worker;
+  if (!dead) return;
+  const graceful = Promise.allSettled([call("host-flush"), call("session-stop"), call("host-stop")]);
+  await Promise.race([graceful, new Promise((r) => setTimeout(r, RESTART_GRACE_MS))]);
+  // A fatal during the grace period already replaced (or cleared) the worker.
+  if (worker !== dead) return;
+  worker = null;
+  dead.onmessage = null;
+  dead.onerror = null;
+  dead.terminate();
+  const orphans = [...pending.values()];
+  pending.clear();
+  for (const p of orphans) p.reject(new Error("ap worker restarted to switch apworld version"));
+}
+
 function handle(ev: MessageEvent) {
   const { id, event, phase, reqId, payload, ok, error, out, fatal } = ev.data;
   if (event === "progress")      { pending.get(id)?.onProgress?.(phase); return; }
@@ -69,6 +109,10 @@ function spawn(): Worker {
   if (worker) return worker;
   worker = new Worker("ap_worker.js");
   worker.onmessage = handle;
+  // First message, ahead of any command that could boot Pyodide: the tars this
+  // runtime is assembled from. The worker refuses to boot without it.
+  workerRuntime = wantedRuntime;
+  worker.postMessage({ cmd: "configure", runtime: wantedRuntime });
   // An error event means something escaped the worker's own try/catch — a failed
   // importScripts of the Pyodide CDN bundle, a 404 on the script itself, the
   // browser reaping the worker. No reply is ever coming for the calls in flight,
@@ -101,10 +145,8 @@ function fire(cmd: string, payload: Record<string, any> = {}) { spawn().postMess
 
 export const apWorker = {
   init:            (cb?: ProgressCb)                                   => call("init", {}, [], cb ?? null),
-  // Ask the worker to boot a specific world_version per apworld package (see
-  // ap/versions.json). Must precede the first boot; after boot the reply's
-  // needsRestart says whether a respawn is required to honour it.
-  selectWorlds:    (selection: Record<string, string> | null)          => call("select-worlds", { selection }),
+  setRuntime,
+  restart,
   patch:           (rom: Uint8Array, patch: Uint8Array, overrides?: Record<string, any>, cb?: ProgressCb) => call("patch",    { rom, patch, overrides: overrides ?? {} }, [rom.buffer, patch.buffer], cb ?? null),
   generate:        (yaml: string, cb?: ProgressCb)                     => call("generate", { yaml }, [], cb ?? null),
   ping:            ()                                                  => call("ping"),

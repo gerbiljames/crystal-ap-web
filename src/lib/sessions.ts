@@ -13,10 +13,14 @@ export function saveSessions(list) {
   catch { /* storage full or disabled — not fatal */ }
 }
 
-// Upsert by id. Returns the updated list so callers can refresh their view.
+// Upsert by id, merging over the existing entry so callers only state what
+// changed (a re-patch doesn't have to re-supply romHash, say). Returns the
+// updated list so callers can refresh their view.
 export function recordSession(entry) {
-  const list = loadSessions().filter(s => s.id !== entry.id);
-  list.unshift({ ...entry, savedAt: Date.now() });
+  const all = loadSessions();
+  const prev = all.find(s => s.id === entry.id);
+  const list = all.filter(s => s.id !== entry.id);
+  list.unshift({ ...prev, ...entry, savedAt: Date.now() });
   saveSessions(list);
   return list;
 }

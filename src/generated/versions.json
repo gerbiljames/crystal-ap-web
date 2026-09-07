@@ -1,0 +1,65 @@
+{
+  "core": {
+    "tar": "core.tar",
+    "ap_version": "0.6.7"
+  },
+  "worlds": [
+    {
+      "channel": "stable",
+      "package": "pokemon_crystal",
+      "game": "Pokemon Crystal",
+      "world_version": "5.4.6",
+      "display_version": "5.4.6",
+      "minimum_patch_version": null,
+      "minimum_ap_version": "0.6.3",
+      "rom_version": 17994,
+      "rom_version11": 17994,
+      "basepatch_sha256": {
+        "basepatch.bsdiff4": "7578622f14b99e03dbcf65f52c5b6ea6a32e05f6e417403052a0367afccff924",
+        "basepatch11.bsdiff4": "8be265a732ff8abf26792eaea9f937708357ed421c0dd4bfd7d7d17306582d9c"
+      },
+      "tar": "worlds/pokemon_crystal-5.4.6.tar",
+      "size": 2396160,
+      "latest": true,
+      "ref": null
+    },
+    {
+      "channel": "prerelease",
+      "package": "pokemon_crystal_prerelease",
+      "game": "Pokemon Crystal Prerelease",
+      "world_version": "1.30.11",
+      "display_version": "6.0.0-beta.12",
+      "minimum_patch_version": "1.30.0",
+      "minimum_ap_version": "0.6.7",
+      "rom_version": 41813,
+      "rom_version11": 41813,
+      "basepatch_sha256": {
+        "basepatch.bsdiff4": "ee9ee66fc2a597ed37a8788573676920b7b84ef5eebaae91b4347707f0004074",
+        "basepatch11.bsdiff4": "4aeca420a71bbf6c319bb8c5e42b9ba08a7dcd24acdcd69cad3dc22e32edf3d3"
+      },
+      "tar": "worlds/pokemon_crystal_prerelease-1.30.11.tar",
+      "size": 4085760,
+      "latest": true,
+      "ref": null
+    },
+    {
+      "channel": "prerelease",
+      "package": "pokemon_crystal_prerelease",
+      "game": "Pokemon Crystal Prerelease",
+      "world_version": "1.29.0",
+      "display_version": "6.0.0-alpha.31",
+      "minimum_patch_version": "1.29.0",
+      "minimum_ap_version": "0.6.7",
+      "rom_version": 19249,
+      "rom_version11": 19249,
+      "basepatch_sha256": {
+        "basepatch.bsdiff4": "6f6417d81a80504dcfaa0908a58fad87d3cf85bcbd60d15630b96a0764705cc0",
+        "basepatch11.bsdiff4": "787022836986b7aa894d50bd0fee5e03614ac051073aff313f91a71667f976ec"
+      },
+      "tar": "worlds/pokemon_crystal_prerelease-1.29.0.tar",
+      "size": 3850240,
+      "latest": false,
+      "ref": "6.0.0-alpha.31"
+    }
+  ]
+}
