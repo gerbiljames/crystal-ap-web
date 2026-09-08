@@ -9,6 +9,7 @@ import { createSignal } from "solid-js";
 import { loadSessions } from "./lib/sessions.js";
 import { loadYamls } from "./lib/yamls.js";
 import type { OverridePrefs } from "./lib/overrides.js";
+import type { BundledWorld } from "./lib/apworld.js";
 
 const HOST_PREF_KEY = "crystal-ap-host-pref";
 
@@ -57,6 +58,18 @@ export function refreshSessions() { setApp("sessions", loadSessions()); }
 export function refreshYamls()    { setApp("yamls", loadYamls()); }
 
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
+
+// A pending "which bundled apworld version should play this seed?" question.
+// Raised when a stable patch's basepatch matches no bundled version, so the
+// generator can't be identified and more than one stable version is bundled.
+// `resolve` hands the choice (or null for cancel) back to the resolver.
+export type VersionPick = {
+  game: string;
+  reason: string;
+  candidates: BundledWorld[];
+  resolve: (world: BundledWorld | null) => void;
+};
+export const [versionPick, setVersionPick] = createSignal<VersionPick | null>(null);
 export const [yamlCreatorOpen, setYamlCreatorOpen] = createSignal(false);
 
 // On mobile the connection form lives in a popup opened from the session chip

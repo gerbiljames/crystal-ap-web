@@ -75,6 +75,15 @@ function ResumeList() {
                   </Show>
                 </span>
                 <span class="meta">
+                  <Show when={s.apworldVersion}>
+                    <span
+                      class="apw"
+                      title={s.generatorVersion && s.generatorVersion !== s.apworldVersion
+                        ? `generated with apworld ${s.generatorVersion}, plays on ${s.apworldVersion}`
+                        : `apworld ${s.apworldVersion}`}
+                    >v{s.apworldVersion}</span>
+                    {" "}
+                  </Show>
                   <em>{s.hosted?.kind === "loopback" ? "self-hosted" : (s.hosted?.host ? `${s.hosted.host}:${s.hosted.port}` : "no host")}</em>
                   {" "}{formatAge(Date.now() - s.savedAt)}
                 </span>

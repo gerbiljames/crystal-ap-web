@@ -1,10 +1,8 @@
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { app, setSettingsOpen, setConnectOpen, isMobile } from "../state.js";
 import { teardownAndReload } from "../actions.js";
-// Bundled at build time from the apworld submodules — the same checkouts
-// pack.sh tars as the newest version of each channel, so the chip stays in sync.
-import crystalManifest    from "../../vendor/archipelago/worlds/pokemon_crystal/archipelago.json";
-import prereleaseManifest from "../../vendor/archipelago-prerelease/worlds/pokemon_crystal_prerelease/archipelago.json";
+// What pack.sh bundled, from the same versions.json the runtime is built from.
+import { VERSIONS, latestWorlds, compareVersions } from "../lib/apworld.js";
 import trackerInitSource  from "../../vendor/archipelago-tracker/worlds/tracker/__init__.py?raw";
 
 // UT publishes its version as `UT_VERSION = "v0.2.30"` in worlds/tracker/__init__.py.
@@ -14,8 +12,28 @@ const utVersion = (() => {
   return m ? m[1] : "unknown";
 })();
 
+// The version chip shows the apworld the active seed plays on once one is
+// known, else the newest bundled stable. Its tooltip lists everything bundled.
+const chipTooltip = (() => {
+  const channels = [...new Set(VERSIONS.worlds.map((w) => w.channel))];
+  const lines = channels.map((ch) => {
+    const vs = VERSIONS.worlds.filter((w) => w.channel === ch)
+      .sort((a, b) => compareVersions(b.world_version, a.world_version))
+      .map((w) => `v${w.display_version}${w.latest ? "" : " (older)"}`);
+    return `${ch} ${vs.join(", ")}`;
+  });
+  return ["bundled Pokémon Crystal apworld versions", ...lines, `universal tracker ${utVersion}`].join("\n");
+})();
+const latestStable = latestWorlds().find((w) => w.channel === "stable") ?? latestWorlds()[0];
+
 export function Nav() {
   const [menuOpen, setMenuOpen] = createSignal(false);
+  const active = createMemo(() => app.seedId ? app.sessions.find((s: any) => s.id === app.seedId) ?? null : null);
+  const chipVersion = () => active()?.apworldVersion ?? latestStable?.display_version ?? "?";
+  const chipTitle = () => {
+    const a = active();
+    return a?.apworldVersion ? `this seed plays on ${a.game ?? "Pokémon Crystal"} v${a.apworldVersion}\n\n${chipTooltip}` : chipTooltip;
+  };
   let menuRef: HTMLDivElement | undefined;
 
   onMount(() => {
@@ -46,7 +64,7 @@ export function Nav() {
       <a class="brand" id="brand-home" href="#" onClick={teardownAndReload}>
         <span>crystal<span style="color:var(--jade-bright)">.</span>ap</span>
       </a>
-      <span class="world-version" title={`bundled Pokémon Crystal apworld versions\nstable v${crystalManifest.world_version}\nprerelease v${prereleaseManifest.pokemon_crystal_version}\nuniversal tracker ${utVersion}`}>v{crystalManifest.world_version}</span>
+      <span class="world-version" title={chipTitle()}>v{chipVersion()}</span>
       <div class="nav-spacer"></div>
       <button class="cog-btn" onClick={() => setSettingsOpen(true)} aria-label="settings" title="settings">
         <svg viewBox="0 0 24 24" aria-hidden="true">

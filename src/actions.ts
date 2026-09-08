@@ -3,7 +3,7 @@
 // (state.js) and talk to the framework-agnostic lib/ modules.
 
 import { unwrap } from "solid-js/store";
-import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setHints, setHintsStatus, setHintPoints, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen, romOverridePrefs } from "./state.js";
+import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setHints, setHintsStatus, setHintPoints, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen, romOverridePrefs, setVersionPick } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { resolveWorldForPatch, latestWorlds, latestWorldForGame, bundledWorld, runtimeFor, type BundledWorld, type WorldResolution } from "./lib/apworld.js";
@@ -98,7 +98,8 @@ export async function resumeSession(id: string) {
   let target: BundledWorld | null = null;
   try {
     if (patchName) {
-      target = await prepareRuntimeForPatch(savedArtifacts![patchName]);
+      const recorded = session.worldPackage && session.worldVersion ? bundledWorld(session.worldPackage, session.worldVersion) : null;
+      target = (await prepareRuntimeForPatch(savedArtifacts![patchName], recorded))?.world ?? null;
       if (!target) {
         // Definitive: incompatible or unsupported (already logged), or the
         // runtime couldn't be switched (already surfaced).
@@ -200,26 +201,51 @@ async function selectWorlds(worlds: BundledWorld[]): Promise<boolean> {
 // Resolve the world a patch needs, fall back where allowed, and make sure the
 // runtime that boots next is built from it. Null means no usable world (logged
 // and surfaced already); a thrown error means the patch couldn't be read.
-async function prepareRuntimeForPatch(patchBytes: Uint8Array): Promise<BundledWorld | null> {
-  const world = await resolveOrFallback(await resolveWorldForPatch(patchBytes));
-  if (!world) return null;
-  return (await selectWorlds([world])) ? world : null;
+// Import and resume prepare before hosting; runPatch runs later in the same
+// flow and reuses that answer instead of resolving (and possibly asking) again.
+let preparedForSeed: { seedId: string; prepared: Prepared } | null = null;
+async function prepareRuntimeForPatch(patchBytes: Uint8Array, recorded: BundledWorld | null = null): Promise<Prepared | null> {
+  const prepared = await resolveOrFallback(await resolveWorldForPatch(patchBytes), recorded);
+  if (!prepared) return null;
+  if (!(await selectWorlds([prepared.world]))) return null;
+  if (app.seedId) preparedForSeed = { seedId: app.seedId, prepared };
+  return prepared;
 }
 
-// Turn a resolution into the world to use, logging why. Unknown stable
-// patches fall back to the newest bundled stable — the pre-versioning
-// behaviour — until a picker exists; incompatible and unsupported patches
-// have no usable world and return null.
-async function resolveOrFallback(res: WorldResolution): Promise<BundledWorld | null> {
+// Turn a resolution into the world to use, logging why. An unknown stable
+// patch (basepatch matches nothing bundled) can't be checked for
+// compatibility: with one stable version bundled there is nothing to choose,
+// so try it; with several, ask the user which one generated the seed. The
+// worker's post-patch ROM checksum check is the safety net for a wrong guess.
+// Incompatible and unsupported patches have no usable world and return null.
+type Prepared = { world: BundledWorld; generator: string | null };
+// `recorded` is the world a session already played this seed on: for an
+// unidentifiable stable patch it is a better answer than asking again.
+async function resolveOrFallback(res: WorldResolution, recorded: BundledWorld | null = null): Promise<Prepared | null> {
   switch (res.kind) {
     case "resolved":
       if (res.upgraded) log(`apworld: patch made with ${res.generator}, playing on ${res.world.display_version} (compatible)`);
       else log(`apworld: ${res.world.game} ${res.world.display_version}`);
-      return res.world;
+      return { world: res.world, generator: res.generator };
     case "unknown": {
-      const fallback = latestWorldForGame(res.game);
-      logWarn(`${res.reason}; trying the newest bundled version (${fallback?.display_version ?? "none"})`);
-      return fallback;
+      const again = recorded && res.candidates.find((w) => w.package === recorded.package && w.world_version === recorded.world_version);
+      if (again) {
+        log(`apworld: ${again.game} ${again.display_version} (as before — this patch's generator can't be identified)`);
+        return { world: again, generator: null };
+      }
+      if (res.candidates.length <= 1) {
+        const fallback = latestWorldForGame(res.game);
+        logWarn(`${res.reason}; trying the only bundled version (${fallback?.display_version ?? "none"})`);
+        return fallback ? { world: fallback, generator: null } : null;
+      }
+      logWarn(`${res.reason}; asking which bundled version to use`);
+      const world = await new Promise<BundledWorld | null>((resolve) =>
+        // Only one question can be up; a second flow racing in cancels the
+        // first rather than leaving its await orphaned.
+        setVersionPick((prev) => { prev?.resolve(null); return { game: res.game, reason: res.reason, candidates: res.candidates, resolve }; }));
+      if (!world) { logErr("no apworld version chosen for this seed"); return null; }
+      log(`apworld: ${world.game} ${world.display_version} (chosen)`);
+      return { world, generator: null };
     }
     case "incompatible":
     case "unsupported":
@@ -365,14 +391,22 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
   // Resolve the apworld version this patch runs on and tag the cached ROM with
   // it, so resume can re-patch when a newer compatible version lands instead
   // of serving a stale ROM (see resumeSession).
-  let world: BundledWorld | null = null;
+  let prepared: Prepared | null = null;
   let resolveErr: string | null = null;
-  try { world = await prepareRuntimeForPatch(app.artifacts[patchName]); }
-  catch (e) { resolveErr = `couldn't read this patch: ${e.message || e}`; logErr(resolveErr); }
-  if (!world) {
+  if (preparedForSeed && preparedForSeed.seedId === app.seedId) {
+    prepared = preparedForSeed.prepared;
+    // The runtime may have been restarted since (a crash); make sure the one
+    // that boots next still carries this world.
+    if (!(await selectWorlds([prepared.world]))) prepared = null;
+  } else {
+    try { prepared = await prepareRuntimeForPatch(app.artifacts[patchName]); }
+    catch (e) { resolveErr = `couldn't read this patch: ${e.message || e}`; logErr(resolveErr); }
+  }
+  if (!prepared) {
     setApp("rom", (r) => ({ progressText: null, error: resolveErr ?? r.error ?? "no bundled apworld can patch this seed — see the log" }));
     return;
   }
+  const { world, generator } = prepared;
 
   // Patch-time option overrides (applied to this player's ROM only). Tag the
   // cached ROM with their hash too, so changing an override forces a re-patch
@@ -405,6 +439,10 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
       worldPackage: world.package,
       worldVersion: world.world_version,
       apworldVersion: world.display_version,
+      // The apworld that generated the seed, when the patch says (prerelease
+      // manifests do; stable is inferred from the basepatch). Shown on the
+      // session card when it differs from what the seed now plays on.
+      generatorVersion: generator,
       overridesHash: ovHash,
     });
     refreshSessions();
@@ -476,10 +514,10 @@ export async function handleYamlDrop(f: File) {
 
     // Pick and select the apworld version before anything boots the runtime —
     // hosting the multidata below runs MultiServer in the same interpreter.
-    let world: BundledWorld | null = null;
-    try { world = await prepareRuntimeForPatch(artifacts[patchName]); }
+    let prepared: Prepared | null = null;
+    try { prepared = await prepareRuntimeForPatch(artifacts[patchName]); }
     catch (e) { setApp("yamlErr", `couldn't read ${f.name}: ${e.message || e}`); logErr(`couldn't read ${f.name}: ${e.message || e}`); return; }
-    if (!world) { setApp("yamlErr", (a) => a ?? `no bundled apworld can play ${f.name} — see the log`); return; }
+    if (!prepared) { setApp("yamlErr", (a) => a ?? `no bundled apworld can play ${f.name} — see the log`); return; }
 
     const multiName = Object.keys(artifacts).find(n => n.toLowerCase().endsWith(".archipelago"));
     let hosted = null;

@@ -51,8 +51,14 @@ export const VERSIONS: BundledVersions = versionsJson as BundledVersions;
 // package, as paths under public/ap/. Sent to the worker when it is spawned.
 export type RuntimeConfig = { coreTar: string; worlds: BundledWorld[] };
 
-export function runtimeFor(worlds: BundledWorld[]): RuntimeConfig {
-  return { coreTar: VERSIONS.core.tar, worlds };
+// A runtime always carries every package: the ones the caller pins plus the
+// latest of the rest. So pinning a seed's single world yields the same runtime
+// as "all latest" when that world is itself latest, and the worker isn't
+// restarted between generating a seed and patching it.
+export function runtimeFor(pinned: BundledWorld[]): RuntimeConfig {
+  const byPkg = new Map(pinned.map((w) => [w.package, w]));
+  for (const w of latestWorlds()) if (!byPkg.has(w.package)) byPkg.set(w.package, w);
+  return { coreTar: VERSIONS.core.tar, worlds: [...byPkg.values()] };
 }
 
 export function sameRuntime(a: RuntimeConfig | null, b: RuntimeConfig | null): boolean {

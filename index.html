@@ -658,6 +658,16 @@
     padding: 1px 5px;
     border-radius: 2px;
   }
+  .resume-row .apw {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    color: var(--ink-1);
+    border: 1px solid var(--line);
+    padding: 1px 5px;
+    border-radius: 2px;
+    cursor: default;
+  }
   .resume-row .rom-evicted {
     font-size: 9px;
     letter-spacing: 0.2em;
@@ -2020,6 +2030,23 @@
   .yc-version-opt[data-active="true"] { color: var(--jade-bright); border-color: var(--jade-bright); }
   .yc-version-opt input { display: none; }
   .yc-body { display: flex; flex-direction: column; gap: 16px; }
+
+  /* apworld version picker */
+  .vp { max-width: 440px; }
+  .vp-body { display: flex; flex-direction: column; gap: 14px; }
+  .vp-options { display: flex; flex-direction: column; gap: 6px; }
+  .vp-opt {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border: 1px solid var(--line);
+    font-family: var(--mono); font-size: 12px; color: var(--ink-1); cursor: pointer;
+  }
+  .vp-opt[data-active="true"] { color: var(--jade-bright); border-color: var(--jade-bright); }
+  .vp-opt input { display: none; }
+  .vp-ver { letter-spacing: 0.08em; }
+  .vp-tag, .vp-ref { font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-2); }
+  .vp-tag { color: var(--jade-bright); }
+  .vp-ref { margin-left: auto; text-transform: none; }
+  .vp-foot { display: flex; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--line); }
   .yc-header { display: flex; gap: 12px; flex-wrap: wrap; }
   .yc-header label { display: flex; flex-direction: column; gap: 4px; flex: 1 1 220px; font-family: var(--mono); font-size: 11px; color: var(--ink-2); letter-spacing: 0.12em; text-transform: uppercase; }
   .yc-header input, .yaml-creator input[type=text], .yaml-creator input[type=number], .yaml-creator select, .yaml-creator textarea {

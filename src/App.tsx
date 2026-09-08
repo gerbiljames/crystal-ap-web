@@ -6,6 +6,7 @@ import { Home } from "./components/Home.jsx";
 import { PlayStep } from "./components/Play.jsx";
 import { Settings } from "./components/Settings.jsx";
 import { YamlCreator } from "./components/YamlCreator.jsx";
+import { VersionPicker } from "./components/VersionPicker.jsx";
 // Side-effect import: installs one-shot gesture listeners on document so
 // the AudioContext is primed by the time the emulator boots (avoids a
 // silent window before the user's first in-emulator input).
@@ -34,6 +35,7 @@ export function App() {
       </main>
       <Settings />
       <YamlCreator />
+      <VersionPicker />
     </div>
   );
 }

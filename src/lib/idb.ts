@@ -15,7 +15,15 @@ import type { SavestateEnvelope } from "./saves.js";
 // then delete the hash-keyed rows. Runs inside the versionchange transaction,
 // so it is all-or-nothing and happens exactly once per browser. The session
 // list lives in localStorage, which is readable synchronously here.
+// Best effort throughout: an exception here, or an unhandled request error,
+// would abort the whole versionchange transaction and leave the app without
+// IndexedDB, which is far worse than a save that stays under its old key.
 function migrateSaveKeysToSeedIds(tx: IDBTransaction) {
+  try { migrateSaveKeysToSeedIdsUnsafe(tx); }
+  catch (err) { console.warn("save key migration skipped:", err); }
+}
+
+function migrateSaveKeysToSeedIdsUnsafe(tx: IDBTransaction) {
   let sessions: { id?: unknown; romHash?: unknown }[] = [];
   try { sessions = JSON.parse(localStorage.getItem(SESSIONS_KEY) || "[]"); } catch { return; }
   const byHash = new Map<string, string[]>();
@@ -26,10 +34,15 @@ function migrateSaveKeysToSeedIds(tx: IDBTransaction) {
   if (byHash.size === 0) return;
   const sav = tx.objectStore(SAVE_STORE), state = tx.objectStore(STATE_STORE);
   let outstanding = 0;
+  let failed = false;
   const done = () => {
     if (--outstanding > 0) return;
+    // Only drop the old rows once every copy went through.
+    if (failed) return;
     for (const hash of byHash.keys()) { sav.delete(hash); state.delete(hash); }
   };
+  // A request error bubbles to the transaction and aborts it unless handled.
+  const swallow = (ev: Event) => { ev.preventDefault(); ev.stopPropagation(); failed = true; done(); };
   for (const [hash, ids] of byHash) {
     outstanding += 2;
     const s1 = sav.get(hash);
@@ -37,13 +50,13 @@ function migrateSaveKeysToSeedIds(tx: IDBTransaction) {
       if (s1.result !== undefined) for (const id of ids) sav.put(s1.result, id);
       done();
     };
-    s1.onerror = done;
+    s1.onerror = swallow;
     const s2 = state.get(hash);
     s2.onsuccess = () => {
       if (s2.result !== undefined) for (const id of ids) state.put({ romHash: hash, state: s2.result } satisfies SavestateEnvelope, id);
       done();
     };
-    s2.onerror = done;
+    s2.onerror = swallow;
   }
 }
 
