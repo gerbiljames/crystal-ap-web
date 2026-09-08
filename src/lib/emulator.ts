@@ -237,7 +237,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     const existingState = await idbGet<unknown>(persist.db, persist.key, STATE_STORE).catch(() => null);
     if (isSavestateEnvelope(existingState)) {
       if (existingState.romHash !== romHash) {
-        logWarn("ROM changed since the last savestate — booting from SRAM instead");
+        log("ROM re-patched since the last savestate — resuming from the in-game save instead");
         idbDel(persist.db, persist.key, STATE_STORE).catch(() => {});
       } else if (loadState(new Uint8Array(existingState.state))) {
         logOk("resumed from savestate");

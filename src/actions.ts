@@ -9,7 +9,7 @@ import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.
 import { resolveWorldForPatch, latestWorlds, latestWorldForGame, bundledWorld, runtimeFor, type BundledWorld, type WorldResolution } from "./lib/apworld.js";
 import { buildOverrides, overridesHash } from "./lib/overrides.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
-import { db, idbGet, idbPut, idbDel } from "./lib/idb.js";
+import { db, idbGet, idbPut, idbDel, idbHas } from "./lib/idb.js";
 import { loadSessions, saveSessions, recordSession as recordSessionPure, removeSession } from "./lib/sessions.js";
 import { recordYaml, renameYaml as renameYamlPure, removeYaml, sha256Hex, loadYamls } from "./lib/yamls.js";
 import { tryHostMultidata } from "./lib/host.js";
@@ -132,6 +132,13 @@ export async function resumeSession(id: string) {
       log(`apworld changed since this seed was patched (${session.apworldVersion || "untagged"} → ${target?.display_version ?? "unknown"}) — re-patching`);
     else
       log(`option overrides changed since this seed was patched — re-patching`);
+    // A re-patch changes the ROM bytes, and the savestate only applies to the
+    // exact ROM it was taken on, so the emulator will come up from the
+    // in-game save instead. Say so here, before it happens, rather than
+    // letting the fallback read as lost progress at boot.
+    const hasState = dbc ? await idbHas(dbc, id, STATE_STORE).catch(() => false) : false;
+    if (hasState)
+      log("the new ROM will resume from your last in-game save (the exact moment you left only applies to the previous ROM)");
   }
   if (cachedRom && cachedRom.byteLength === GB_ROM_SIZE && !stale) {
     setApp("patchedRom", cachedRom);
