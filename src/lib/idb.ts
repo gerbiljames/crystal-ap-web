@@ -33,30 +33,34 @@ function migrateSaveKeysToSeedIdsUnsafe(tx: IDBTransaction) {
   }
   if (byHash.size === 0) return;
   const sav = tx.objectStore(SAVE_STORE), state = tx.objectStore(STATE_STORE);
+  // Every request gets an error handler: an unhandled request error bubbles to
+  // the transaction and aborts the whole upgrade. `outstanding` counts the gets
+  // and the puts they spawn; the old rows are dropped only once all of them
+  // settled and none failed.
   let outstanding = 0;
   let failed = false;
+  const quiet = (ev: Event) => { ev.preventDefault(); ev.stopPropagation(); };
   const done = () => {
     if (--outstanding > 0) return;
-    // Only drop the old rows once every copy went through.
     if (failed) return;
-    for (const hash of byHash.keys()) { sav.delete(hash); state.delete(hash); }
+    for (const hash of byHash.keys()) {
+      sav.delete(hash).onerror = quiet;
+      state.delete(hash).onerror = quiet;
+    }
   };
-  // A request error bubbles to the transaction and aborts it unless handled.
-  const swallow = (ev: Event) => { ev.preventDefault(); ev.stopPropagation(); failed = true; done(); };
+  const settle = (req: IDBRequest, onOk?: () => void) => {
+    outstanding++;
+    req.onsuccess = () => { onOk?.(); done(); };
+    req.onerror = (ev) => { quiet(ev); failed = true; done(); };
+  };
   for (const [hash, ids] of byHash) {
-    outstanding += 2;
     const s1 = sav.get(hash);
-    s1.onsuccess = () => {
-      if (s1.result !== undefined) for (const id of ids) sav.put(s1.result, id);
-      done();
-    };
-    s1.onerror = swallow;
+    settle(s1, () => { if (s1.result !== undefined) for (const id of ids) settle(sav.put(s1.result, id)); });
     const s2 = state.get(hash);
-    s2.onsuccess = () => {
-      if (s2.result !== undefined) for (const id of ids) state.put({ romHash: hash, state: s2.result } satisfies SavestateEnvelope, id);
-      done();
-    };
-    s2.onerror = swallow;
+    settle(s2, () => {
+      if (s2.result !== undefined)
+        for (const id of ids) settle(state.put({ romHash: hash, state: s2.result } satisfies SavestateEnvelope, id));
+    });
   }
 }
 

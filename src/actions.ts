@@ -79,12 +79,22 @@ export async function forgetSession(id: string) {
   }
 }
 
-export async function resumeSession(id: string) {
+// One seed-opening flow at a time. Resume and import both resolve a version,
+// may ask the user, select a runtime and possibly restart it; two racing
+// would fight over all of that. A second click while one is running is dropped.
+let flowInFlight = false;
+async function guardedFlow(label: string, fn: () => Promise<void>): Promise<void> {
+  if (flowInFlight) { logWarn(`still ${label} — ignoring another request`); return; }
+  flowInFlight = true;
+  try { await fn(); } finally { flowInFlight = false; }
+}
+
+export function resumeSession(id: string) { return guardedFlow("opening a seed", () => resumeSessionFlow(id)); }
+
+async function resumeSessionFlow(id: string) {
   const session = loadSessions().find((s: any) => s.id === id);
   if (!session) return;
-  setApp("seedId", id);
-  setApp("slotName", session.slot || "Player1");
-  setApp("hosted", session.hosted || null);
+  setApp("yamlErr", null);
 
   const dbc = await db();
   const cachedRom = dbc ? await idbGet<ArrayBuffer>(dbc, id, ROM_STORE).catch(() => null) : null;
@@ -95,32 +105,45 @@ export async function resumeSession(id: string) {
   // version is gone — the cache is stale and we re-patch. A session with no
   // recorded worldVersion (pre-versioning) is stale too.
   const patchName = savedArtifacts ? Object.keys(savedArtifacts).find(isPatchName) : undefined;
+  const recorded: BundledWorld | null = session.worldPackage && session.worldVersion ? bundledWorld(session.worldPackage, session.worldVersion) : null;
   let target: BundledWorld | null = null;
-  try {
-    if (patchName) {
-      const recorded = session.worldPackage && session.worldVersion ? bundledWorld(session.worldPackage, session.worldVersion) : null;
-      target = (await prepareRuntimeForPatch(savedArtifacts![patchName], recorded))?.world ?? null;
-      if (!target) {
+  let resolvedFromPatch = false;
+  if (patchName) {
+    try {
+      const prepared = await prepareRuntimeForPatch(savedArtifacts![patchName], { recorded, seedId: id });
+      if (prepared === "cancelled") return;
+      if (!prepared) {
         // Definitive: incompatible or unsupported (already logged), or the
         // runtime couldn't be switched (already surfaced).
         setApp("yamlErr", (a) => a ?? `can't resume ${id} — no bundled apworld can play this seed (see the log)`);
         return;
       }
-    } else {
-      // No artifacts to re-resolve from: stay on the recorded version while it
-      // is still bundled, else the newest for the game (the cached ROM below is
-      // played as-is in that case anyway).
-      if (session.worldPackage && session.worldVersion) target = bundledWorld(session.worldPackage, session.worldVersion);
-      if (!target && session.game) target = latestWorldForGame(session.game);
-      if (target && !(await selectWorlds([target]))) return;
+      target = prepared.world;
+      resolvedFromPatch = true;
+    } catch (err) {
+      // An unreadable cached patch shouldn't cost the seed: fall through to
+      // the recorded version and play the cached ROM as-is.
+      logWarn(`couldn't read this seed's cached patch (${err.message || err}) — using its recorded apworld version`);
     }
-  } catch (err) {
-    const msg = `couldn't resume ${id}: ${err.message || err}`;
-    setApp("yamlErr", msg);
-    logErr(msg);
-    return;
   }
-  const apworldStale = !session.worldVersion || !target || target.world_version !== session.worldVersion;
+  if (!resolvedFromPatch) {
+    // No (readable) artifacts to re-resolve from: stay on the recorded version
+    // while it is still bundled, else the newest for the game (the cached ROM
+    // below is played as-is in that case anyway).
+    target = recorded ?? (session.game ? latestWorldForGame(session.game) : null);
+    if (target && !(await selectWorlds([target]))) return;
+  }
+  setApp("seedId", id);
+  setApp("slotName", session.slot || "Player1");
+  setApp("hosted", session.hosted || null);
+  // Stale when the version to play on differs from the one the cached ROM was
+  // patched with. Sessions from before worldVersion was recorded carry only
+  // the display version; compare that rather than re-patching them for
+  // nothing.
+  const apworldStale = !target
+    || (session.worldVersion ? target.world_version !== session.worldVersion
+        : session.apworldVersion ? target.display_version !== session.apworldVersion
+        : true);
   // The cached ROM was patched with whatever overrides were set at the time
   // (tagged via overridesHash). If the current overrides differ, re-patch so
   // resume reflects the latest choices rather than serving a stale ROM.
@@ -189,8 +212,9 @@ export async function resumeSession(id: string) {
 // live session refuses, since restarting under it would drop the connection.
 // Returns true when the selection is in effect on the runtime that will boot.
 async function selectWorlds(worlds: BundledWorld[]): Promise<boolean> {
-  const { needsRestart, current } = apWorker.setRuntime(runtimeFor(worlds));
-  if (!needsRestart) return true;
+  const runtime = runtimeFor(worlds);
+  const { needsRestart, current } = apWorker.compareRuntime(runtime);
+  if (!needsRestart) { apWorker.setRuntime(runtime); return true; }
   const describe = (ws: BundledWorld[] | undefined) => ws?.map((w) => `${w.game} ${w.display_version}`).join(", ") ?? "unknown";
   const loaded = describe(current?.worlds), wanted = describe(worlds);
   const fail = (msg: string) => { setApp("yamlErr", msg); setApp("rom", "error", msg); logErr(msg); return false; };
@@ -198,6 +222,7 @@ async function selectWorlds(worlds: BundledWorld[]): Promise<boolean> {
     return fail(`this seed needs ${wanted} but the runtime is running ${loaded} for the current session — reload the page, then open this seed first`);
   }
   log(`restarting the python runtime for ${wanted} (it was booted with ${loaded})`);
+  apWorker.setRuntime(runtime);
   sessionWanted = false;
   clearWorkerMirroredState();
   try { await apWorker.restart(); }
@@ -211,11 +236,15 @@ async function selectWorlds(worlds: BundledWorld[]): Promise<boolean> {
 // Import and resume prepare before hosting; runPatch runs later in the same
 // flow and reuses that answer instead of resolving (and possibly asking) again.
 let preparedForSeed: { seedId: string; prepared: Prepared } | null = null;
-async function prepareRuntimeForPatch(patchBytes: Uint8Array, recorded: BundledWorld | null = null): Promise<Prepared | null> {
-  const prepared = await resolveOrFallback(await resolveWorldForPatch(patchBytes), recorded);
-  if (!prepared) return null;
+async function prepareRuntimeForPatch(
+  patchBytes: Uint8Array,
+  opts: { recorded?: BundledWorld | null; seedId?: string | null } = {},
+): Promise<Resolved> {
+  const prepared = await resolveOrFallback(await resolveWorldForPatch(patchBytes), opts.recorded ?? null);
+  if (!prepared || prepared === "cancelled") return prepared;
   if (!(await selectWorlds([prepared.world]))) return null;
-  if (app.seedId) preparedForSeed = { seedId: app.seedId, prepared };
+  const seedId = opts.seedId ?? app.seedId;
+  if (seedId) preparedForSeed = { seedId, prepared };
   return prepared;
 }
 
@@ -226,9 +255,12 @@ async function prepareRuntimeForPatch(patchBytes: Uint8Array, recorded: BundledW
 // worker's post-patch ROM checksum check is the safety net for a wrong guess.
 // Incompatible and unsupported patches have no usable world and return null.
 type Prepared = { world: BundledWorld; generator: string | null };
+// "cancelled" means the user dismissed the version picker: not an error, and
+// nothing to report beyond the log line.
+type Resolved = Prepared | "cancelled" | null;
 // `recorded` is the world a session already played this seed on: for an
 // unidentifiable stable patch it is a better answer than asking again.
-async function resolveOrFallback(res: WorldResolution, recorded: BundledWorld | null = null): Promise<Prepared | null> {
+async function resolveOrFallback(res: WorldResolution, recorded: BundledWorld | null = null): Promise<Resolved> {
   switch (res.kind) {
     case "resolved":
       if (res.upgraded) log(`apworld: patch made with ${res.generator}, playing on ${res.world.display_version} (compatible)`);
@@ -250,7 +282,7 @@ async function resolveOrFallback(res: WorldResolution, recorded: BundledWorld | 
         // Only one question can be up; a second flow racing in cancels the
         // first rather than leaving its await orphaned.
         setVersionPick((prev) => { prev?.resolve(null); return { game: res.game, reason: res.reason, candidates: res.candidates, resolve }; }));
-      if (!world) { logErr("no apworld version chosen for this seed"); return null; }
+      if (!world) { log("no apworld version chosen — nothing opened"); return "cancelled"; }
       log(`apworld: ${world.game} ${world.display_version} (chosen)`);
       return { world, generator: null };
     }
@@ -398,7 +430,7 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
   // Resolve the apworld version this patch runs on and tag the cached ROM with
   // it, so resume can re-patch when a newer compatible version lands instead
   // of serving a stale ROM (see resumeSession).
-  let prepared: Prepared | null = null;
+  let prepared: Resolved = null;
   let resolveErr: string | null = null;
   if (preparedForSeed && preparedForSeed.seedId === app.seedId) {
     prepared = preparedForSeed.prepared;
@@ -409,6 +441,7 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
     try { prepared = await prepareRuntimeForPatch(app.artifacts[patchName]); }
     catch (e) { resolveErr = `couldn't read this patch: ${e.message || e}`; logErr(resolveErr); }
   }
+  if (prepared === "cancelled") { setApp("rom", "progressText", null); setStep("rom"); return; }
   if (!prepared) {
     setApp("rom", (r) => ({ progressText: null, error: resolveErr ?? r.error ?? "no bundled apworld can patch this seed — see the log" }));
     return;
@@ -487,7 +520,9 @@ function extractSlotNameFromYaml(text: string): string | null {
   return m[1].trim().replace(/^["']|["']$/g, "").replace(/\s*#.*$/, "");
 }
 
-export async function handleYamlDrop(f: File) {
+export function handleYamlDrop(f: File) { return guardedFlow("opening a file", () => handleYamlDropFlow(f)); }
+
+async function handleYamlDropFlow(f: File) {
   setApp("yamlErr", null);
   log(`read ${f.name} (${f.size} bytes)`);
   setApp("seedId", (crypto.randomUUID?.() || Math.random().toString(36).slice(2)).replace(/-/g, "").slice(0, 12));
@@ -521,9 +556,10 @@ export async function handleYamlDrop(f: File) {
 
     // Pick and select the apworld version before anything boots the runtime —
     // hosting the multidata below runs MultiServer in the same interpreter.
-    let prepared: Prepared | null = null;
+    let prepared: Resolved = null;
     try { prepared = await prepareRuntimeForPatch(artifacts[patchName]); }
     catch (e) { setApp("yamlErr", `couldn't read ${f.name}: ${e.message || e}`); logErr(`couldn't read ${f.name}: ${e.message || e}`); return; }
+    if (prepared === "cancelled") return;
     if (!prepared) { setApp("yamlErr", (a) => a ?? `no bundled apworld can play ${f.name} — see the log`); return; }
 
     const multiName = Object.keys(artifacts).find(n => n.toLowerCase().endsWith(".archipelago"));

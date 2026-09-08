@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onCleanup, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, on, onCleanup, For, Show } from "solid-js";
 import { versionPick, setVersionPick } from "../state.js";
 import { compareVersions } from "../lib/apworld.js";
 
@@ -19,6 +19,10 @@ export function VersionPicker() {
     setChoice(null);
     q.resolve(world);
   };
+
+  // A new question (including one that replaced a pending one) starts from
+  // the newest candidate again, not from a pick made for another seed.
+  createEffect(on(versionPick, () => setChoice(null)));
 
   createEffect(() => {
     if (!versionPick()) return;

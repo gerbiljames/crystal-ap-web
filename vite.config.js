@@ -7,6 +7,9 @@ const base = process.env.BASE_PATH || "/";
 
 export default defineConfig({
   base,
+  // Stamped into the bundle so unhashed public/ assets that must match it
+  // (ap_worker.js) can be fetched with a per-build query string.
+  define: { __BUILD_ID__: JSON.stringify(Date.now().toString(36)) },
   plugins: [solid()],
   // esbuild defaults to the React factory for .tsx in dev, clobbering
   // vite-plugin-solid's JSX transform before it can run. `preserve` leaves

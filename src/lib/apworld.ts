@@ -121,28 +121,27 @@ export async function resolveWorldForPatch(patchBytes: Uint8Array): Promise<Worl
   const candidates = VERSIONS.worlds.filter((w) => w.game === game);
   if (candidates.length === 0) return { kind: "unsupported", game, reason: `no bundled apworld for ${game}` };
 
-  const versioned = candidates.some((w) => w.minimum_patch_version);
-  if (versioned) {
-    const patchVersion: string | undefined = manifest.world_version;
-    if (!patchVersion) {
-      return { kind: "incompatible", game, candidates,
-        reason: `this ${game} patch predates versioned manifests — regenerate it with a current apworld` };
-    }
+  // The patch's own manifest decides the rule. A versioned manifest is checked
+  // against the window each bundled version declares; a bundled version with no
+  // window (today's stable) can only be matched by basepatch identity, below.
+  const patchVersion: string | undefined = manifest.world_version;
+  const generatorDisplay = (v: string) => candidates.find((w) => w.world_version === v)?.display_version ?? v;
+  if (patchVersion) {
     const patchMin: string = manifest.minimum_patch_version || patchVersion;
     const compatible = candidates.filter((w) =>
-      compareVersions(w.world_version, patchMin) >= 0
-      && compareVersions(patchVersion, w.minimum_patch_version || "0") >= 0);
+      w.minimum_patch_version
+      && compareVersions(w.world_version, patchMin) >= 0
+      && compareVersions(patchVersion, w.minimum_patch_version) >= 0);
     const pick = newest(compatible);
-    if (!pick) {
-      const have = candidates.map((w) => w.display_version).join(", ");
-      return { kind: "incompatible", game, candidates,
-        reason: `this ${game} patch was made with apworld ${patchVersion}, and no bundled version is compatible with it (bundled: ${have})` };
+    if (pick) {
+      return { kind: "resolved", world: pick, generator: generatorDisplay(patchVersion),
+        upgraded: compareVersions(pick.world_version, patchVersion) !== 0 };
     }
-    return { kind: "resolved", world: pick, generator: patchVersion,
-      upgraded: compareVersions(pick.world_version, patchVersion) !== 0 };
   }
 
-  // Stable: identify the generator by the basepatch the patch carries.
+  // Identify the generator by the basepatch the patch carries (stable patches
+  // always do). Any bundled version with the same ROM checksum can play the
+  // result, since that checksum is what the client demands at connect.
   let hash: string | null = null;
   try {
     const base = await readZipEntry(patchBytes, "basepatch.bsdiff4");
@@ -152,15 +151,25 @@ export async function resolveWorldForPatch(patchBytes: Uint8Array): Promise<Worl
     hash = null;
   }
   const generator = hash ? candidates.find((w) => w.basepatch_sha256["basepatch.bsdiff4"] === hash) ?? null : null;
-  if (!generator) {
-    return { kind: "unknown", game, candidates,
-      reason: hash
-        ? `this ${game} patch's base ROM patch matches no bundled apworld version`
-        : `this ${game} patch carries no basepatch.bsdiff4` };
+  if (generator) {
+    const compatible = candidates.filter((w) =>
+      w.rom_version === generator.rom_version && w.rom_version11 === generator.rom_version11);
+    const pick = newest(compatible) ?? generator;
+    return { kind: "resolved", world: pick, generator: generator.display_version,
+      upgraded: pick.world_version !== generator.world_version };
   }
-  const compatible = candidates.filter((w) =>
-    w.rom_version === generator.rom_version && w.rom_version11 === generator.rom_version11);
-  const pick = newest(compatible) ?? generator;
-  return { kind: "resolved", world: pick, generator: generator.display_version,
-    upgraded: pick.world_version !== generator.world_version };
+
+  const have = candidates.map((w) => w.display_version).join(", ");
+  if (patchVersion) {
+    return { kind: "incompatible", game, candidates,
+      reason: `this ${game} patch was made with apworld ${generatorDisplay(patchVersion)}, and no bundled version is compatible with it (bundled: ${have})` };
+  }
+  if (candidates.every((w) => w.minimum_patch_version)) {
+    return { kind: "incompatible", game, candidates,
+      reason: `this ${game} patch predates versioned manifests — regenerate it with a current apworld` };
+  }
+  return { kind: "unknown", game, candidates,
+    reason: hash
+      ? `this ${game} patch's base ROM patch matches no bundled apworld version`
+      : `this ${game} patch carries no basepatch.bsdiff4` };
 }

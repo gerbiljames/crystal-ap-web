@@ -50,13 +50,14 @@ function killWorker(reason: string) {
   queueMicrotask(() => onFatal?.(reason));
 }
 
-// Record the world set the next runtime must boot. Reports whether the live
-// worker (if any) was spawned with a different one and so has to be restarted
-// before it can serve this seed; the caller decides when that is safe.
-function setRuntime(runtime: RuntimeConfig): { needsRestart: boolean; current: RuntimeConfig | null } {
-  wantedRuntime = runtime;
+// Would booting `runtime` mean restarting the live worker? Pure: the caller
+// decides whether that is acceptable before committing with setRuntime.
+function compareRuntime(runtime: RuntimeConfig): { needsRestart: boolean; current: RuntimeConfig | null } {
   return { needsRestart: !!worker && !sameRuntime(workerRuntime, runtime), current: workerRuntime };
 }
+
+// Record the world set the next spawn (or respawn after a fatal) boots.
+function setRuntime(runtime: RuntimeConfig) { wantedRuntime = runtime; }
 
 // Deliberate restart, used to boot a different apworld version. Unlike
 // killWorker this is not a crash — onFatal is not invoked and the caller owns
@@ -107,7 +108,10 @@ function handle(ev: MessageEvent) {
 
 function spawn(): Worker {
   if (worker) return worker;
-  worker = new Worker("ap_worker.js");
+  // ap_worker.js is served unhashed from public/, so pin it to this build:
+  // the worker and the bundle share a protocol and a tar layout, and a cached
+  // worker from the previous deploy would understand neither.
+  worker = new Worker(`ap_worker.js?v=${__BUILD_ID__}`);
   worker.onmessage = handle;
   // First message, ahead of any command that could boot Pyodide: the tars this
   // runtime is assembled from. The worker refuses to boot without it.
@@ -145,6 +149,7 @@ function fire(cmd: string, payload: Record<string, any> = {}) { spawn().postMess
 
 export const apWorker = {
   init:            (cb?: ProgressCb)                                   => call("init", {}, [], cb ?? null),
+  compareRuntime,
   setRuntime,
   restart,
   patch:           (rom: Uint8Array, patch: Uint8Array, overrides?: Record<string, any>, cb?: ProgressCb) => call("patch",    { rom, patch, overrides: overrides ?? {} }, [rom.buffer, patch.buffer], cb ?? null),
