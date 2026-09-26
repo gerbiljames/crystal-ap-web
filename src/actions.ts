@@ -1103,6 +1103,9 @@ async function doConnectSession() {
   logOk(`connecting session for ${slot}@${server}`);
   try {
     await apWorker.startSession(server, slot, pw);
+    // Disconnected while the start was in flight. The worker runs the queued
+    // stop after this start, so the session is already on its way down.
+    if (!sessionWanted) return;
     setSessionState("live", slot);
     logOk(`session started`);
     startHeartbeat();
@@ -1139,6 +1142,9 @@ async function doConnectSession() {
       setApp("hosted", entry.hosted);
     }
   } catch (err: any) {
+    if (!sessionWanted) return;
+    // Nothing came up, so there's nothing for fatal recovery to bring back.
+    sessionWanted = false;
     setSessionState("error", "error");
     logErr("session start failed: " + (err.message || err));
   }

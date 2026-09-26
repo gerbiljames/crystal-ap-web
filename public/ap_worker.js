@@ -576,6 +576,17 @@ for _n in ("_ut_tracker", "_ut_multidata", "_ut_slot", "_ut_slot_name", "_ut_gam
   } catch {}
 }
 
+// Session and host start/stop run one at a time, in arrival order. Each
+// awaits Python, so run concurrently a stop could land while its start is
+// still mid-flight, see nothing to stop, and let the start finish into a
+// session the main thread had already dropped.
+let lifecycleChain = Promise.resolve();
+function inLifecycleOrder(fn) {
+  const run = lifecycleChain.then(fn);
+  lifecycleChain = run.catch(() => {});
+  return run;
+}
+
 self.onmessage = async (ev) => {
   const { id, cmd } = ev.data;
   try {
@@ -595,7 +606,7 @@ self.onmessage = async (ev) => {
       const { out, transfer } = await generate(id, ev.data.yaml);
       post({ id, ok: true, out }, transfer);
     } else if (cmd === "host") {
-      const { out } = await hostStart(id, ev.data.seedId, ev.data.multidata);
+      const { out } = await inLifecycleOrder(() => hostStart(id, ev.data.seedId, ev.data.multidata));
       post({ id, ok: true, out });
     } else if (cmd === "host-flush") {
       // Synchronous flush from a pagehide/visibility-hidden handler so the
@@ -615,10 +626,10 @@ except Exception: pass
       }
       post({ id, ok: true });
     } else if (cmd === "host-stop") {
-      await hostStop(id);
+      await inLifecycleOrder(() => hostStop(id));
       post({ id, ok: true });
     } else if (cmd === "session-start") {
-      await sessionStart(id, ev.data.server, ev.data.slot, ev.data.password);
+      await inLifecycleOrder(() => sessionStart(id, ev.data.server, ev.data.slot, ev.data.password));
       post({ id, ok: true });
     } else if (cmd === "ping") {
       // Liveness probe. Fatal detection is otherwise purely reactive — it needs
@@ -629,7 +640,7 @@ except Exception: pass
       if (booted) pyodide.runPython("1");
       post({ id, ok: true });
     } else if (cmd === "session-stop") {
-      await sessionStop(id);
+      await inLifecycleOrder(() => sessionStop(id));
       post({ id, ok: true });
     } else if (cmd === "session-input") {
       // Dispatch a line of user input through the same ClientCommandProcessor
