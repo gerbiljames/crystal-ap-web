@@ -421,8 +421,12 @@ async function hostMultidata(multidata: Uint8Array, status?: (label: string) => 
 // generation
 // -----------------------------------------------------------------------------
 async function runGeneration(yamlText: string) {
-  // Generation always runs on the newest bundled apworlds.
-  if (!(await selectWorlds(latestWorlds()))) return;
+  // Generation always runs on the newest bundled apworlds. The generating
+  // pane is already up and shows only gen.error, so surface a failure there.
+  if (!(await selectWorlds(latestWorlds()))) {
+    setApp("gen", { visible: false, done: false, error: app.yamlErr || "couldn't prepare the python runtime — reload the page" });
+    return;
+  }
   const start = performance.now();
   setApp("gen", { visible: true, status: "starting", elapsed: "0.0s", error: null, done: false });
   const elapsedTimer = setInterval(
