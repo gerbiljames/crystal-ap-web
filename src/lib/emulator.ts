@@ -340,10 +340,35 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     }
     return null;
   };
-  const onKeyDown = (ev: KeyboardEvent) => { if (isTextTarget(ev.target)) return; const name = resolveInput(ev.code); if (name) { Module[`_set_joyp_${name}`](e, true);  ev.preventDefault(); } };
-  const onKeyUp   = (ev: KeyboardEvent) => { if (isTextTarget(ev.target)) return; const name = resolveInput(ev.code); if (name) { Module[`_set_joyp_${name}`](e, false); ev.preventDefault(); } };
+  // Physical key → the input it pressed. A keyup releases whatever its key
+  // pressed, wherever focus has moved since (into the chat box, say) and
+  // whatever it has been rebound to meanwhile, so nothing stays held.
+  const heldKeys = new Map<string, InputName>();
+  const onKeyDown = (ev: KeyboardEvent) => {
+    if (isTextTarget(ev.target)) return;
+    const name = resolveInput(ev.code);
+    if (!name) return;
+    heldKeys.set(ev.code, name);
+    Module[`_set_joyp_${name}`](e, true);
+    ev.preventDefault();
+  };
+  const onKeyUp = (ev: KeyboardEvent) => {
+    const name = heldKeys.get(ev.code);
+    if (!name) return;
+    heldKeys.delete(ev.code);
+    Module[`_set_joyp_${name}`](e, false);
+    if (!isTextTarget(ev.target)) ev.preventDefault();
+  };
+  // Keyups that happen in another window or tab never reach us.
+  const releaseKeys = () => {
+    for (const name of heldKeys.values()) Module[`_set_joyp_${name}`](e, false);
+    heldKeys.clear();
+  };
+  const onVisibility = () => { if (document.visibilityState === "hidden") releaseKeys(); };
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup",   onKeyUp);
+  window.addEventListener("blur",    releaseKeys);
+  document.addEventListener("visibilitychange", onVisibility);
 
   const dispose = () => {
     if (disposed) return;
@@ -362,6 +387,8 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     }
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("keyup",   onKeyUp);
+    window.removeEventListener("blur",    releaseKeys);
+    document.removeEventListener("visibilitychange", onVisibility);
     // No future audio buffers can be scheduled once `disposed` is true —
     // step() returns immediately, so nothing reaches pushAudio. Buffers
     // already queued play out and stop on their own.

@@ -109,8 +109,15 @@ export function bindController({ emulator, module }: { emulator: number; module:
     if (connectedCount === 0) stop();
   };
 
+  // Polling rides rAF, which stops while the tab is hidden, so the release
+  // branch in poll() never gets to run: let go of everything on the way out.
+  const onVisibility = () => {
+    if (document.visibilityState === "hidden") for (const name of Object.keys(held)) setHeld(name, false);
+  };
+
   window.addEventListener("gamepadconnected",    onConnect);
   window.addEventListener("gamepaddisconnected", onDisconnect);
+  document.addEventListener("visibilitychange",  onVisibility);
 
   // Some browsers populate `navigator.getGamepads()` with already-connected
   // controllers before firing gamepadconnected — seed from that.
@@ -123,6 +130,7 @@ export function bindController({ emulator, module }: { emulator: number; module:
   return () => {
     window.removeEventListener("gamepadconnected", onConnect);
     window.removeEventListener("gamepaddisconnected", onDisconnect);
+    document.removeEventListener("visibilitychange",  onVisibility);
     stop();
   };
 }
