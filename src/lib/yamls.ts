@@ -1,7 +1,7 @@
 // Local library of saved YAMLs — metadata in localStorage so the list
 // renders synchronously, raw text lives in IDB keyed by content hash.
 
-import { YAMLS_KEY, YAMLS_MAX } from "./constants.js";
+import { YAMLS_KEY } from "./constants.js";
 
 export type SavedYaml = {
   hash: string;        // sha256 of text (hex)
@@ -16,8 +16,10 @@ export function loadYamls(): SavedYaml[] {
   catch { return []; }
 }
 
+// Not capped, for the same reason as sessions: a silently dropped entry
+// loses the YAML from the library and orphans its text in IndexedDB.
 export function saveYamls(list: SavedYaml[]) {
-  try { localStorage.setItem(YAMLS_KEY, JSON.stringify(list.slice(0, YAMLS_MAX))); }
+  try { localStorage.setItem(YAMLS_KEY, JSON.stringify(list)); }
   catch { /* quota exceeded — not fatal */ }
 }
 

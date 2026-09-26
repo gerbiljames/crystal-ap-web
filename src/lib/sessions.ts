@@ -1,15 +1,17 @@
 // Local session history: small list of recent seeds with resume metadata.
 // Pure localStorage helpers — no DOM rendering (that's the UI layer's job).
 
-import { SESSIONS_KEY, SESSIONS_MAX } from "./constants.js";
+import { SESSIONS_KEY } from "./constants.js";
 
 export function loadSessions() {
   try { return JSON.parse(localStorage.getItem(SESSIONS_KEY) || "[]"); }
   catch { return []; }
 }
 
+// Not capped: dropping the oldest entry would strand its save (no resume or
+// forget left for it) and its ROM/artifacts in IndexedDB. Forget prunes.
 export function saveSessions(list) {
-  try { localStorage.setItem(SESSIONS_KEY, JSON.stringify(list.slice(0, SESSIONS_MAX))); }
+  try { localStorage.setItem(SESSIONS_KEY, JSON.stringify(list)); }
   catch { /* storage full or disabled — not fatal */ }
 }
 

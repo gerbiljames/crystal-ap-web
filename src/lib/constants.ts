@@ -38,9 +38,7 @@ export const MHOST_SAVE_STORE = "mhostsave"; // in-browser MultiServer .apsave b
 export const DB_VERSION      = 8;         // 8: sav/state re-keyed from ROM hash to seed_id (see idb.ts)
 
 export const SESSIONS_KEY = "crystal-ap-sessions";
-export const SESSIONS_MAX = 20;
 export const YAMLS_KEY    = "crystal-ap-yamls";
-export const YAMLS_MAX    = 50;
 
 export const HOST_PREF_KEY = "crystal-ap-host-pref";
 
