@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, on, onCleanup, For, Show } from "solid-js";
 import { versionPick, setVersionPick } from "../state.js";
 import { compareVersions } from "../lib/apworld.js";
+import { backdropDismiss } from "../lib/backdrop.js";
 
 // Modal asking which bundled apworld version to play a seed on, for the one
 // case the resolver can't decide itself: a stable patch whose embedded
@@ -33,7 +34,7 @@ export function VersionPicker() {
 
   return (
     <Show when={versionPick()}>{(q) => (
-      <div class="modal-backdrop" onClick={(ev) => { if (ev.target === ev.currentTarget) finish(false); }}>
+      <div class="modal-backdrop" {...backdropDismiss(() => finish(false))}>
         <div class="modal vp" role="dialog" aria-modal="true" aria-label="choose apworld version">
           <div class="modal-head">
             <span class="modal-title">choose apworld version</span>

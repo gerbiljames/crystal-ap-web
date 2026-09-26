@@ -9,6 +9,7 @@ import {
 import {
   DEFAULT_KEY_BINDINGS, loadKeyBindings, saveKeyBindings, captureNextKey,
 } from "../lib/keyboard.js";
+import { backdropDismiss } from "../lib/backdrop.js";
 
 const INPUT_ROWS: { name: InputName; label: string }[] = [
   { name: "A",      label: "A" },
@@ -26,9 +27,7 @@ type Tab = "controller" | "keyboard" | "audio" | "overlay" | "ui" | "tracker" | 
 export function Settings() {
   const [tab, setTab] = createSignal<Tab>("controller");
 
-  const onBackdrop = (ev: MouseEvent) => {
-    if (ev.target === ev.currentTarget) setSettingsOpen(false);
-  };
+  const backdrop = backdropDismiss(() => setSettingsOpen(false));
 
   // Esc closes the modal while open.
   createEffect(() => {
@@ -40,7 +39,7 @@ export function Settings() {
 
   return (
     <Show when={settingsOpen()}>
-      <div class="modal-backdrop" onClick={onBackdrop}>
+      <div class="modal-backdrop" {...backdrop}>
         <div class="modal" role="dialog" aria-modal="true" aria-label="settings">
           <div class="modal-head">
             <div class="modal-tabs" role="tablist">

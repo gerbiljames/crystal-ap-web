@@ -7,6 +7,7 @@ import {
   SCHEMAS, serializeFormToYaml, initialValueFor, parseYamlToForm,
   type FormState, type FormValue, type GameKey, type OptionDef, type SingleValue, type WeightedValue,
 } from "../lib/yaml-schema.js";
+import { backdropDismiss } from "../lib/backdrop.js";
 
 const GAMES: GameKey[] = ["Pokemon Crystal", "Pokemon Crystal Prerelease"];
 
@@ -408,6 +409,9 @@ export function YamlCreator() {
   // When editing an existing saved YAML, we hold onto the library name so the
   // entry round-trips with whatever the user had previously renamed it to.
   const [libraryName, setLibraryName] = createSignal<string | null>(null);
+  // The YAML as it stood when the creator opened, to tell whether a stray
+  // Esc or backdrop click would throw edits away.
+  let openedText = "";
 
   const schema = createMemo(() => SCHEMAS[form().game]);
   const yamlText = createMemo(() => serializeFormToYaml(form()));
@@ -434,8 +438,14 @@ export function YamlCreator() {
         setOpenGroups(initial);
       }
       setShowPreview(false);
+      openedText = serializeFormToYaml(form());
     });
   });
+
+  const closeUnlessEdited = () => {
+    if (yamlText() !== openedText && !confirm("Discard your changes to this YAML?")) return;
+    setYamlCreatorOpen(false);
+  };
 
   // Clear the edit target whenever the modal closes so the next open starts
   // in create mode.
@@ -446,14 +456,12 @@ export function YamlCreator() {
   // Esc closes.
   createEffect(() => {
     if (!yamlCreatorOpen()) return;
-    const onKey = (ev: KeyboardEvent) => { if (ev.key === "Escape") setYamlCreatorOpen(false); };
+    const onKey = (ev: KeyboardEvent) => { if (ev.key === "Escape") closeUnlessEdited(); };
     window.addEventListener("keydown", onKey);
     onCleanup(() => window.removeEventListener("keydown", onKey));
   });
 
-  const onBackdrop = (ev: MouseEvent) => {
-    if (ev.target === ev.currentTarget) setYamlCreatorOpen(false);
-  };
+  const backdrop = backdropDismiss(closeUnlessEdited);
 
   const setGame = (g: GameKey) => {
     // Carry across every value whose yaml_key + kind survives in the new
@@ -521,7 +529,7 @@ export function YamlCreator() {
 
   return (
     <Show when={yamlCreatorOpen()}>
-      <div class="modal-backdrop" onClick={onBackdrop}>
+      <div class="modal-backdrop" {...backdrop}>
         <div class="modal yaml-creator" role="dialog" aria-modal="true" aria-label="create yaml">
           <div class="modal-head">
             <span class="modal-title">{yamlEditTarget() ? "edit yaml" : "create yaml"}</span>
