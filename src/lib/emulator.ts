@@ -306,6 +306,8 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
       logErr("saves stopped: this page's storage connection was closed by an update in another tab");
       return true;
     };
+    const STATE_SAVE_MS = 15000;
+    let lastStateSave = performance.now();
     saveTimer = setInterval(async () => {
       if (disposed) return;
       if (sramDirty) {
@@ -315,8 +317,12 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
         // dispose() may have freed the emulator while that write committed.
         if (disposed) return;
       }
-      if (stateDirty) {
+      // The savestate changes on every tick, so it's always dirty: rewriting
+      // it every 2s meant ~360MB/h of IDB writes. SRAM (the in-game save)
+      // keeps the fast cadence; the savestate catches up on hide/pagehide.
+      if (stateDirty && performance.now() - lastStateSave >= STATE_SAVE_MS) {
         stateDirty = false;
+        lastStateSave = performance.now();
         try { await idbPut(pdb, key, stateEnvelope(), STATE_STORE); }
         catch (err) { stateDirty = true; if (stopIfClosed(err)) return; logErr("savestate save failed: " + err); }
       }
