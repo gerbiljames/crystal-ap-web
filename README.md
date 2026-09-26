@@ -23,6 +23,14 @@ npm install
 npm run dev        # http://localhost:8765
 ```
 
+`./pack.sh` needs GNU tar and must run before `npm run build`, which fails without its output.
+
+## Hosting worker
+
+The site talks to the Worker at `GEN_BASE` in `src/lib/constants.ts`. It only accepts requests from the origins in `DEFAULT_ORIGINS` (`worker/worker.js`: this site's GitHub Pages origin plus the local dev and preview servers), and rate-limits room creation to 5 per minute per IP through the `HOST_LIMITER` binding in `worker/wrangler.toml` (wrangler 4.36+).
+
+A fork served from another origin needs its own Worker: deploy it with `wrangler deploy` from `worker/`, point `GEN_BASE` at it, and list the fork's origin in `DEFAULT_ORIGINS` or in an `ALLOWED_ORIGINS` var (comma-separated). Put that var under `[vars]` in `wrangler.toml` — `wrangler deploy` replaces vars set only in the dashboard.
+
 ## Branches
 
 - `develop` — day-to-day work (default).
