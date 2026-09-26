@@ -108,6 +108,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
   const audioBufPtr  = Module._get_audio_buffer_ptr(e);
   const audioBufCap  = Module._get_audio_buffer_capacity(e);
   let audioStartSec = 0;
+  let audioDraining = false;
 
   function pushAudio() {
     if (audioCtx.state !== "running") return;
@@ -120,8 +121,15 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     // device's clock. When emulation runs even slightly fast the queue grows
     // without bound and sound drifts behind the picture; drop a buffer to
     // pull it back (a tiny gap beats seconds of lag an hour in).
+    // Once over the cap, keep dropping until the queue is back at the
+    // latency target, or the lag would just settle at the cap.
     const bufferSec = AUDIO_FRAMES / audioCtx.sampleRate;
-    if (audioStartSec - now > AUDIO_LATENCY_SEC + AUDIO_MAX_QUEUED_BUFFERS * bufferSec) return;
+    const ahead = audioStartSec - now;
+    if (ahead > AUDIO_LATENCY_SEC + AUDIO_MAX_QUEUED_BUFFERS * bufferSec) audioDraining = true;
+    if (audioDraining) {
+      if (ahead > AUDIO_LATENCY_SEC + bufferSec) return;
+      audioDraining = false;
+    }
     const buffer = audioCtx.createBuffer(2, AUDIO_FRAMES, audioCtx.sampleRate);
     const c0 = buffer.getChannelData(0);
     const c1 = buffer.getChannelData(1);
