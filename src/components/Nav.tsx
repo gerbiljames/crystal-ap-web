@@ -19,7 +19,7 @@ const chipTooltip = (() => {
   const lines = channels.map((ch) => {
     const vs = VERSIONS.worlds.filter((w) => w.channel === ch)
       .sort((a, b) => compareVersions(b.world_version, a.world_version))
-      .map((w) => `v${w.display_version}${w.latest ? "" : " (older)"}`);
+      .map((w) => `v${w.display_version}`);
     return `${ch} ${vs.join(", ")}`;
   });
   return ["bundled Pokémon Crystal apworld versions", ...lines, `universal tracker ${utVersion}`].join("\n");
