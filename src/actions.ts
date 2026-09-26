@@ -255,7 +255,7 @@ async function resumeSessionFlow(id: string) {
     setApp("artifacts", savedArtifacts);
     setApp("runningApworld", target?.display_version ?? null);
     logOk(`resumed ${id} — need ROM to patch`);
-    await continueToRom();
+    await continueToRomFlow();
     return;
   }
   // Re-patch isn't possible (the generation files were cleared, or the patch
@@ -485,7 +485,12 @@ async function runGeneration(yamlText: string) {
 // -----------------------------------------------------------------------------
 // rom + patch
 // -----------------------------------------------------------------------------
-export async function continueToRom() {
+// Continue → Play (and the ROM pane) run as a flow, so a double click or a
+// second drop can't start a second patch-and-boot over the first.
+export function continueToRom() { return guardedFlow("patching", continueToRomFlow); }
+export function handleRomDrop(f: File) { return guardedFlow("patching", () => handleRomDropFlow(f)); }
+
+async function continueToRomFlow() {
   const dbc = await db();
   const cached = dbc ? await idbGet(dbc, "rom", VANILLA_STORE).catch(() => null) : null;
   if (cached && cached.byteLength === GB_ROM_SIZE) {
@@ -678,7 +683,7 @@ async function handleYamlDropFlow(f: File) {
     setApp("artifacts", artifacts);
     setApp("hosted", hosted);
     logOk(`using uploaded ${isPatch ? "patch" : "zip"} — skipping generation` + (hosted ? "" : "; no host"));
-    await continueToRom();
+    await continueToRomFlow();
     return;
   }
 
@@ -826,7 +831,7 @@ export async function forgetSavedYaml(hash: string) {
   if (dbc) idbDel(dbc, hash, YAML_STORE).catch(() => {});
 }
 
-export async function handleRomDrop(f: File) {
+async function handleRomDropFlow(f: File) {
   setApp("rom", "error", null);
   if (f.size !== GB_ROM_SIZE) {
     const msg = `expected 2,097,152 bytes, got ${f.size.toLocaleString()} — is this the right file?`;
@@ -894,9 +899,13 @@ export async function ensureEmulator() {
   await bootEmulatorAndUi();
 }
 
+// Never rejects: a failed boot (the binjgb chunk not loading after a deploy,
+// say) is reported in the play step's log, the only place it would be seen.
 function bootEmulatorAndUi(): Promise<void> {
   bootsPending++;
-  const run = bootChain.then(bootEmulatorAndUiNow).finally(() => { bootsPending--; });
+  const run = bootChain.then(bootEmulatorAndUiNow)
+    .catch((err) => { logErr(`emulator failed to start: ${err?.message || err} — reload the page to try again`); })
+    .finally(() => { bootsPending--; });
   bootChain = run.catch(() => {});
   return run;
 }
