@@ -605,7 +605,7 @@ export function YamlCreator() {
 
             <details class="yc-preview" open={showPreview()} onToggle={ev => setShowPreview((ev.currentTarget as HTMLDetailsElement).open)}>
               <summary>preview YAML</summary>
-              <pre class="yaml-preview language-yaml"><code class="language-yaml" innerHTML={Prism.highlight(yamlText(), Prism.languages.yaml, "yaml")} /></pre>
+              <pre class="yaml-preview language-yaml"><code class="language-yaml" innerHTML={showPreview() ? Prism.highlight(yamlText(), Prism.languages.yaml, "yaml") : ""} /></pre>
             </details>
           </div>
 
