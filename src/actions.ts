@@ -1118,19 +1118,7 @@ async function doConnectSession() {
     setSessionState("live", slot);
     logOk(`session started`);
     startHeartbeat();
-    trackerInited = false;
-    trackerUnavailable = false;
-    setTrackerInLogic([]);
-    setTrackerGoMode("no");
-    setTrackerEntrances(null);
-    setTrackerStatus({ kind: "idle" });
-    setHints(null);
-    setHintPoints(null);
-    setHintsStatus({ kind: "idle" });
-    setHintItemNames([]);
-    setHintFeedback(null);
-    hintCaptureUntil = 0;
-    hintCaptureSeq++;
+    resetSessionMirrors();
     const list = loadSessions();
     const entry = list.find((s: any) => s.id === app.seedId);
     if (entry) {
@@ -1168,6 +1156,9 @@ let trackerInitInFlight: Promise<boolean> | null = null;
 // the abandoned attempt's finally can't null out the promise that replaced it
 // and let two tracker-init commands run against the worker at once.
 let trackerInitSeq = 0;
+// Bumped whenever the session mirrors reset (connect, disconnect, worker
+// loss); hint fetches drop results from an earlier epoch.
+let sessionEpoch = 0;
 // The seq trackerInitInFlight was started under.
 let trackerInitInFlightSeq = 0;
 // Latched once we've decided this seed can't run the tracker (e.g. patch-only
@@ -1295,8 +1286,10 @@ async function refreshHints() {
     setHintsStatus({ kind: "idle" });
     return;
   }
+  const epoch = sessionEpoch;
   try {
     const res = await apWorker.hintsGet();
+    if (epoch !== sessionEpoch) return;
     if (res?.out?.ok) {
       setHints(res.out.hints ?? null);
       const pts = res.out.points, cost = res.out.costPoints;
@@ -1309,6 +1302,7 @@ async function refreshHints() {
       setHintsStatus({ kind: "ready" });
     }
   } catch (e: any) {
+    if (epoch !== sessionEpoch) return;
     setHintsStatus({ kind: "error", reason: e?.message || String(e) });
   }
 }
@@ -1318,8 +1312,10 @@ async function refreshHints() {
 async function refreshHintItems() {
   if (app.session.state !== "live") return;
   if (hintItemNames().length) return;
+  const epoch = sessionEpoch;
   try {
     const res = await apWorker.hintItems();
+    if (epoch !== sessionEpoch) return;
     if (res?.out?.ok && Array.isArray(res.out.items)) setHintItemNames(res.out.items);
   } catch { /* leave empty; retried on next dirty event */ }
 }
@@ -1411,19 +1407,7 @@ export async function disconnectSession() {
   stopHeartbeat();
   try { await apWorker.stopSession(); } catch {}
   setSessionState("idle", "disconnected");
-  trackerInited = false;
-  trackerUnavailable = false;
-  setTrackerInLogic([]);
-  setTrackerGoMode("no");
-  setTrackerEntrances(null);
-  setTrackerStatus({ kind: "idle" });
-  setHints(null);
-  setHintPoints(null);
-  setHintsStatus({ kind: "idle" });
-  setHintItemNames([]);
-  setHintFeedback(null);
-  hintCaptureUntil = 0;
-  hintCaptureSeq++;
+  resetSessionMirrors();
   stopTrackerPolling();
   logOk("session disconnected");
 }
@@ -1479,11 +1463,14 @@ async function driveFatalRecovery() {
 // hints, their in-flight sequence counters, and the heartbeat (a ping would
 // just spawn a worker to no-op against). Used when the worker is gone, whether
 // it crashed or was restarted on purpose to switch apworld version.
-function clearWorkerMirroredState() {
+// Forget everything mirrored from the last session. Bumping the sequence
+// numbers makes a tracker init or hints fetch still in flight for that
+// session land as stale instead of as the new session's.
+function resetSessionMirrors() {
+  sessionEpoch++;
   trackerInited = false;
   trackerUnavailable = false;
   trackerInitSeq++;
-  trackerInitInFlight = null;
   setTrackerInLogic([]);
   setTrackerGoMode("no");
   setTrackerEntrances(null);
@@ -1495,6 +1482,11 @@ function clearWorkerMirroredState() {
   setHintFeedback(null);
   hintCaptureUntil = 0;
   hintCaptureSeq++;
+}
+
+function clearWorkerMirroredState() {
+  resetSessionMirrors();
+  trackerInitInFlight = null;
   stopTrackerPolling();
   stopHeartbeat();
 }
