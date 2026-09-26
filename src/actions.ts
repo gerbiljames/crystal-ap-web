@@ -889,6 +889,12 @@ export function disposeEmulator() {
   try { delete (window as any).ap; } catch {}
 }
 
+// The running emulator's current SRAM, or null when none is up (or an import
+// is swapping it).
+export function liveSram(): Uint8Array | null {
+  return currentEmu && !swapInFlight ? currentEmu.readSram() : null;
+}
+
 // Called on canvas mount. Under normal flow the step-transition code has
 // already booted the emulator, so this is a no-op; after HMR remounts
 // <ScreenFrame/> we boot a fresh one against the new canvas using the ROM

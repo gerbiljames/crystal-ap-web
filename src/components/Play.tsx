@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 import { app, logLines, type LogEntry, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, trackerEntrances, trackerPrefs, hints, hintsStatus, hintPoints, hintItemNames, hintFeedback, connectOpen, setConnectOpen, isMobile, uiPrefs } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
-import { connectSession, disconnectSession, disposeEmulator, ensureEmulator, ensureTracker, ensureHints, requestHint, importSaveFile, stopTrackerPolling } from "../actions.js";
+import { connectSession, disconnectSession, disposeEmulator, ensureEmulator, ensureTracker, ensureHints, requestHint, importSaveFile, liveSram, stopTrackerPolling } from "../actions.js";
 import { db, idbGet } from "../lib/idb.js";
 import { SAVE_STORE } from "../lib/constants.js";
 import { logErr, logWarn } from "../lib/log.js";
@@ -500,8 +500,11 @@ function SessionLinks() {
     if (!seedId) { logErr("no active seed — can't locate save"); return; }
     const dbc = await db();
     if (!dbc) { logErr("IDB unavailable"); return; }
-    const sram = await idbGet<ArrayBuffer>(dbc, seedId, SAVE_STORE).catch(() => null);
-    if (!sram || !sram.byteLength) { logWarn("no save data yet — play a bit first"); return; }
+    const stored = await idbGet<ArrayBuffer>(dbc, seedId, SAVE_STORE).catch(() => null);
+    if (!stored || !stored.byteLength) { logWarn("no save data yet — play a bit first"); return; }
+    // The stored copy trails the game by up to a save tick: a save made just
+    // before clicking would be missing from it.
+    const sram = (app.seedId === seedId && liveSram()) || stored;
     const url = URL.createObjectURL(new Blob([sram], { type: "application/octet-stream" }));
     const a = document.createElement("a");
     a.href = url;

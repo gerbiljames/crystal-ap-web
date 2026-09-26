@@ -38,6 +38,8 @@ export interface EmulatorHandle {
   romHash: string;
   DOMAIN_SIZE: Record<string, number>;
   sramSize: number;
+  // Cart RAM as the game has it right now, ahead of the debounced IDB copy.
+  readSram: () => Uint8Array;
   dispose: () => void;
 }
 
@@ -432,6 +434,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     romHash,
     DOMAIN_SIZE,
     sramSize,
+    readSram: extractSram,
     dispose,
   };
 }
