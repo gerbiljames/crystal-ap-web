@@ -122,7 +122,11 @@ function SavedYamlsList() {
     setEditing(hash);
     setDraft(current);
   };
+  // Only while that row is still being edited: Esc (and Enter's own commit)
+  // end the edit before the input's removal fires blur, so blur mustn't
+  // commit a cancelled draft or commit twice.
   const commitEdit = (hash: string) => {
+    if (editing() !== hash) return;
     renameSavedYaml(hash, draft());
     setEditing(null);
   };
@@ -160,7 +164,9 @@ function SavedYamlsList() {
                   <input
                     class="yaml-name-input"
                     value={draft()}
-                    autofocus
+                    // autofocus only applies at page load, not to an input
+                    // inserted later.
+                    ref={(el) => requestAnimationFrame(() => { el.focus(); el.select(); })}
                     onInput={(e) => setDraft(e.currentTarget.value)}
                     onBlur={() => commitEdit(y.hash)}
                     onKeyDown={(e) => {
@@ -175,6 +181,7 @@ function SavedYamlsList() {
                 {" "}{formatAge(Date.now() - y.savedAt)}
               </span>
               <span class="actions">
+                <button class="forget" title="open in the YAML creator" onClick={() => openYamlForEdit(y.hash)}>edit</button>
                 <button class="btn-primary resume" onClick={() => useSavedYaml(y.hash)}>use</button>
                 <button class="forget" title="remove from this device" onClick={() => forgetSavedYaml(y.hash)}>forget</button>
               </span>
