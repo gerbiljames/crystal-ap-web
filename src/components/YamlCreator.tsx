@@ -545,6 +545,20 @@ export function YamlCreator() {
     }
   };
 
+  // Saves the YAML as it stands in the form, without touching the library.
+  const downloadYaml = () => {
+    const base = (libraryName() ?? (form().name || "Player1")).replace(/\.ya?ml$/i, "");
+    const fileName = (base.replace(/[\\/:*?"<>|]+/g, "_").trim() || "Player1") + ".yaml";
+    const url = URL.createObjectURL(new Blob([yamlText()], { type: "text/yaml" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   return (
     <Show when={yamlCreatorOpen()}>
       <div class="modal-backdrop" {...backdrop}>
@@ -640,6 +654,7 @@ export function YamlCreator() {
             <button class="btn-primary" disabled={!!busy()} onClick={() => doSave(true)}>
               {busy() === "use" ? "starting…" : "save & use"}
             </button>
+            <button class="forget" onClick={downloadYaml} title="save this YAML as a file">download</button>
             <button class="forget" onClick={() => setYamlCreatorOpen(false)}>cancel</button>
           </div>
         </div>
