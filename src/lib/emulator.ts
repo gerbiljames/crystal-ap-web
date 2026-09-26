@@ -328,10 +328,15 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     window.addEventListener("pagehide", onSavePagehide);
   }
 
-  // --- keyboard (ignore text inputs) ---
+  // --- keyboard (ignore form controls and dialogs) ---
   // Bindings live in keyboard.ts; we read them per event so user rebinds in
   // the settings panel take effect immediately.
-  const isTextTarget = t => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+  const isTextTarget = t => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+  // Keys belong to the dialog while one is up (Tab between its controls,
+  // arrows in its lists), and to the controls of any modal focus is in.
+  const inDialog = (t: EventTarget | null) =>
+    !!document.querySelector('.modal[aria-modal="true"]') ||
+    !!(t instanceof Element && t.closest('[aria-modal="true"]'));
   const resolveInput = (code: string): InputName | null => {
     if (!code) return null;
     const map = getKeyBindings();
@@ -345,7 +350,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
   // whatever it has been rebound to meanwhile, so nothing stays held.
   const heldKeys = new Map<string, InputName>();
   const onKeyDown = (ev: KeyboardEvent) => {
-    if (isTextTarget(ev.target)) return;
+    if (isTextTarget(ev.target) || inDialog(ev.target)) return;
     const name = resolveInput(ev.code);
     if (!name) return;
     heldKeys.set(ev.code, name);
@@ -357,7 +362,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     if (!name) return;
     heldKeys.delete(ev.code);
     Module[`_set_joyp_${name}`](e, false);
-    if (!isTextTarget(ev.target)) ev.preventDefault();
+    if (!isTextTarget(ev.target) && !inDialog(ev.target)) ev.preventDefault();
   };
   // Keyups that happen in another window or tab never reach us.
   const releaseKeys = () => {
