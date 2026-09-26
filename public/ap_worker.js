@@ -40,8 +40,14 @@ let hostRunning = false;
 // {event:"py-log", msgs:[...]} per worker tick. Any other post flushes the
 // queue first so log lines never reorder against replies or bridge requests,
 // and a fatal reply always carries the diagnostics printed just before it.
+// The tick timer can't fire while synchronous Python (generate, patch,
+// tracker init) holds the worker for minutes, so a batch also goes out once
+// it's LOG_FLUSH_MS old: the log keeps moving, and a hard kill loses at most
+// that much of the output leading up to it.
+const LOG_FLUSH_MS = 100;
 let logQueue = [];
 let logFlushTimer = null;
+let logQueuedAt = 0;
 function flushLog() {
   if (logFlushTimer !== null) { clearTimeout(logFlushTimer); logFlushTimer = null; }
   if (logQueue.length === 0) return;
@@ -50,8 +56,10 @@ function flushLog() {
   self.postMessage({ event: "py-log", msgs });
 }
 self._pyLog = (msg) => {
+  if (logQueue.length === 0) logQueuedAt = performance.now();
   logQueue.push(msg);
-  if (logFlushTimer === null) logFlushTimer = setTimeout(flushLog, 0);
+  if (performance.now() - logQueuedAt >= LOG_FLUSH_MS) flushLog();
+  else if (logFlushTimer === null) logFlushTimer = setTimeout(flushLog, 0);
 };
 function post(msg, transfer) {
   flushLog();
