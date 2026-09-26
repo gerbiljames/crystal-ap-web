@@ -205,7 +205,12 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     if (addr < 0 || sz < 0 || addr + sz > size)
       throw new Error(`out-of-bounds ${domain} access: addr=${addr} size=${sz} (domain size ${size})`);
   };
+  let disposed = false;
+  // The BizHawk bridge keeps these until the next boot installs its own, so
+  // a request can arrive after dispose (mid save import): refuse it rather
+  // than touch the freed instance. The bridge answers with an ERROR.
   const readDomain = (domain, addr, sz) => {
+    if (disposed) throw new Error("emulator not running");
     checkBounds(domain, addr, sz);
     if (domain === "ROM")  return romBytes.slice(addr, addr + sz);
     if (domain === "WRAM") { const p = Module._emulator_get_wram_ptr(e); return new Uint8Array(Module.HEAP8.buffer, p + addr, sz).slice(); }
@@ -218,6 +223,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     throw new Error("unsupported domain: " + domain);
   };
   const writeDomain = (domain, addr, bytes) => {
+    if (disposed) throw new Error("emulator not running");
     checkBounds(domain, addr, bytes.length);
     if (domain === "WRAM") { const p = Module._emulator_get_wram_ptr(e); new Uint8Array(Module.HEAP8.buffer, p + addr, bytes.length).set(bytes); return; }
     if (domain === "HRAM") { const p = Module._emulator_get_hram_ptr(e); new Uint8Array(Module.HEAP8.buffer, p + addr, bytes.length).set(bytes); return; }
@@ -262,7 +268,6 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
   // the natural browser repaint cadence, which is all that matters
   // visually — and audio is gated separately in pushAudio.
   let lastTickSec = 0, leftoverTicks = 0, stateDirty = false;
-  let disposed = false;
   function step() {
     if (disposed) return;
     const nowSec = performance.now() / 1000;
