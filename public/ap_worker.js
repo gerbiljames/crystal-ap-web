@@ -416,6 +416,13 @@ function mhostPut(seedId, bytes) {
 }
 
 let _hostSeedId = null;
+// .apsave writes not yet committed. host-flush and host-stop wait on them
+// before replying: the reply is what lets the main thread terminate this
+// worker (restart, tab close), which would abort a write still in flight.
+const mhostWrites = new Set();
+function mhostSettled() {
+  return Promise.all([...mhostWrites]);
+}
 
 async function hostStart(id, seedId, multidataBytes) {
   await ensureInit(id);
@@ -424,6 +431,9 @@ async function hostStart(id, seedId, multidataBytes) {
   if (hostRunning) await hostStop(id);
   _hostSeedId = seedId || null;
   pyodide.FS.writeFile("/tmp/seed.archipelago", multidataBytes);
+  // A previous host's save must not be picked up by this one when this seed
+  // has none stored: init_save loads whatever sits at the path.
+  try { pyodide.FS.unlink("/tmp/seed.apsave"); } catch { /* none there */ }
   // Pre-load any persisted .apsave for this seed into MEMFS at the path
   // MultiServer.init_save expects: it does os.path.splitext on the multidata
   // path and replaces the extension, so /tmp/seed.archipelago → /tmp/seed.apsave
@@ -437,13 +447,25 @@ async function hostStart(id, seedId, multidataBytes) {
   // Save callback from Python's _async_saver. Writes the .apsave bytes
   // straight to IndexedDB so the worker is self-sufficient around tab
   // close — no main-thread round-trip required for durability.
+  // Bound to this host's seed, so nothing this Context saves can land under
+  // a later host's.
+  const saveSeedId = _hostSeedId;
   self._mhostSave = (bytesView) => {
-    if (!_hostSeedId) return;
+    if (!saveSeedId) return;
     // Copy off Pyodide's heap before the transaction goes async.
     const copy = new Uint8Array(bytesView).slice();
-    mhostPut(_hostSeedId, copy);
+    const write = mhostPut(saveSeedId, copy).finally(() => mhostWrites.delete(write));
+    mhostWrites.add(write);
   };
-  await pyodide.runPythonAsync(HOST_START_PY);
+  try {
+    await pyodide.runPythonAsync(HOST_START_PY);
+  } catch (err) {
+    // init_save may already have started the autosaver: stop it along with
+    // whatever else came up, since hostRunning never goes true to do it later.
+    try { await pyodide.runPythonAsync(HOST_STOP_PY); } catch {}
+    _hostSeedId = null;
+    throw err;
+  }
   const uri = pyodide.globals.get("_host_uri");
   hostRunning = true;
   return { out: { ws_url: uri } };
@@ -454,6 +476,7 @@ async function hostStop(id) {
   try { await pyodide.runPythonAsync(HOST_STOP_PY); } catch {}
   hostRunning = false;
   _hostSeedId = null;
+  await mhostSettled();
 }
 
 // --- Universal Tracker bridge ---
@@ -631,6 +654,7 @@ try:
 except Exception: pass
           `);
         } catch {}
+        await mhostSettled();
       }
       post({ id, ok: true });
     } else if (cmd === "host-stop") {
