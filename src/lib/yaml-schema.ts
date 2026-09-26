@@ -244,9 +244,13 @@ export function serializeFormToYaml(form: FormState): string {
     lines.push("  # --- other options ---");
     lines.push(...emitExtra(extraSection, "  "));
   }
-  if (form.extraTop && Object.keys(form.extraTop).length) {
+  // After a version switch the original's section for the now-current game
+  // can sit in extraTop; the form's section above replaces it.
+  const extraTop = { ...form.extraTop };
+  delete extraTop[schema.game];
+  if (Object.keys(extraTop).length) {
     lines.push("");
-    lines.push(...emitExtra(form.extraTop, ""));
+    lines.push(...emitExtra(extraTop, ""));
   }
   return lines.join("\n") + "\n";
 }
