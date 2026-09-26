@@ -307,6 +307,7 @@ function WeightedEditor(props: { opt: OptionDef; value: WeightedValue; setValue:
       return (
         <select value={e.value} onChange={ev => update(i, { value: ev.currentTarget.value })}>
           <For each={opt.choices}>{c => <option value={c}>{c}</option>}</For>
+          <Show when={!opt.choices.includes(e.value)}><option value={e.value}>{e.value}</option></Show>
         </select>
       );
     }
@@ -315,6 +316,7 @@ function WeightedEditor(props: { opt: OptionDef; value: WeightedValue; setValue:
         <select value={e.value} onChange={ev => update(i, { value: ev.currentTarget.value })}>
           <option value="true">true</option>
           <option value="false">false</option>
+          <Show when={e.value !== "true" && e.value !== "false"}><option value={e.value}>{e.value}</option></Show>
         </select>
       );
     }
@@ -426,7 +428,7 @@ export function YamlCreator() {
       if (prevKindByKey.get(k) !== nextKind) continue;
       carried[k] = v;
     }
-    setForm({ game: g, name: form().name, description: form().description, values: carried });
+    setForm({ ...form(), game: g, values: carried });
 
     // Keep section open state for groups that exist under the same name in
     // the new schema; default the rest to closed (the first group stays open
@@ -455,7 +457,7 @@ export function YamlCreator() {
       const name = libraryName() ?? ((form().name || "Player1") + ".yaml");
       setSaveErr(null);
       const saved = target
-        ? await saveEditedYaml(text, name, target.hash)
+        ? await saveEditedYaml(text, name, target.hash, !!form().lossy?.length)
         : await saveCreatedYaml(text, name);
       // A plain save that failed keeps the creator open so nothing is lost.
       // "save & use" goes ahead from the text in hand either way.
@@ -494,6 +496,15 @@ export function YamlCreator() {
           </div>
 
           <div class="modal-body yc-body">
+            <Show when={form().lossy?.length}>
+              <div class="error-box">
+                <span class="err-title">can't fully edit this YAML</span>
+                <span>
+                  The form can't represent {form().lossy!.join(", ")}. Saving adds a new
+                  library entry and keeps the original.
+                </span>
+              </div>
+            </Show>
             <div class="yc-header">
               <label>
                 <span>name</span>

@@ -794,14 +794,15 @@ export async function openYamlForEdit(hash: string) {
 }
 
 // Save an edited YAML. If the text changed (different hash) the old entry is
-// forgotten so the library doesn't pile up versions.
-export async function saveEditedYaml(text: string, displayName: string, oldHash: string): Promise<boolean> {
+// forgotten so the library doesn't pile up versions, unless the form couldn't
+// represent all of the original (keepOriginal), which then stays alongside.
+export async function saveEditedYaml(text: string, displayName: string, oldHash: string, keepOriginal = false): Promise<boolean> {
   clearFlowErr();
   const slot = extractSlotNameFromYaml(text);
   // Replace the old entry only once the new one is safely stored.
   if (!(await saveYamlToLibrary(text, displayName, slot))) return false;
   const newHash = await sha256Hex(text);
-  if (newHash !== oldHash) {
+  if (newHash !== oldHash && !keepOriginal) {
     await forgetSavedYaml(oldHash);
   }
   return true;
