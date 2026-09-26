@@ -679,7 +679,8 @@ except Exception: pass
       // that console_loop would — handles both /commands and plain chat.
       if (!sessionTasks) return;
       const text = ev.data.text || "";
-      pyodide.globals.get("_cmdproc")(text);
+      const cmdproc = pyodide.globals.get("_cmdproc");
+      try { cmdproc(text); } finally { cmdproc.destroy(); }
     } else if (cmd === "tracker-init") {
       const { out } = await trackerInit(id, ev.data.multidata, ev.data.slotName, ev.data.deferEntrances);
       post({ id, ok: true, out });
@@ -700,7 +701,10 @@ except Exception: pass
       post({ id, ok: true, out });
     } else if (cmd === "bh-res") {
       // Main-thread's response to a previously sent bizhawk request.
-      pyodide.globals.get("_bh_resolve")(ev.data.reqId, ev.data.payload);
+      // Each globals.get() is a fresh PyProxy; at several replies a second,
+      // leaving them to the FinalizationRegistry piles them up.
+      const resolve = pyodide.globals.get("_bh_resolve");
+      try { resolve(ev.data.reqId, ev.data.payload); } finally { resolve.destroy(); }
     } else {
       post({ id, error: "unknown cmd: " + cmd });
     }
@@ -943,13 +947,25 @@ class _BrowserWS:
             self._closed = True
             self._queue.put_nowait(None)
             if not self._close_fut.done(): self._close_fut.set_result(None)
+            # Not from inside the callback: its own proxy is on the stack.
+            asyncio.get_event_loop().call_soon(self._release)
         def on_error(ev):
             if not self._open_fut.done():
                 self._open_fut.set_exception(ConnectionError("ws error"))
         for evt, cb in (("open", on_open), ("message", on_message),
                         ("close", on_close), ("error", on_error)):
-            p = create_proxy(cb); self._proxies.append(p)
+            p = create_proxy(cb); self._proxies.append((evt, p))
             self._ws.addEventListener(evt, p)
+    def _release(self):
+        # Every connect attempt (auto-reconnect retries included) makes one of
+        # these; without this, each closed socket's listeners, proxies and
+        # queue stay alive for the worker's lifetime.
+        for evt, p in self._proxies:
+            try: self._ws.removeEventListener(evt, p)
+            except Exception: pass
+            try: p.destroy()
+            except Exception: pass
+        self._proxies = []
     async def wait_open(self): await self._open_fut
     async def send(self, data):
         if isinstance(data, (bytes, bytearray)): data = bytes(data)
