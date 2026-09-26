@@ -32,8 +32,8 @@ jobs:
           node-version: 20
           cache: npm
 
-      # pack.sh imports Archipelago's option code to dump the YAML schema;
-      # pin the interpreter rather than take whatever ubuntu-latest ships.
+      # pack.sh runs Python scripts; pin the interpreter so a runner image
+      # update can't change the build underneath it.
       - name: Setup Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
@@ -42,11 +42,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
-
       - name: Build AP source tarball
         run: ./pack.sh
+
+      # After pack.sh: it regenerates the JSON under src/generated the code
+      # imports, so this checks against what's about to ship.
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Build site
         # project pages deploy at /{repo-name}/; derive that from the repo.

@@ -23,7 +23,8 @@ const DEFAULT_ORIGINS = [
   "https://gerbiljames.github.io",
   "http://localhost:8765",
   "http://127.0.0.1:8765",
-  "http://localhost:4173",   // vite preview
+  "http://127.0.0.1:4173",   // vite preview
+  "http://localhost:4173",
 ];
 // Workers on the Free plan get 50 subrequests per invocation: 2 to upload
 // and create the room leaves room for this many polls of the room page.
@@ -62,7 +63,12 @@ export default {
       return json({ error: "POST a .archipelago body" }, 405);
     }
     if (!origin || !allowed.includes(origin)) {
-      return json({ error: "origin not allowed" }, 403);
+      // With CORS headers, so a page that isn't listed (a new dev port) sees
+      // this message instead of an opaque "Failed to fetch".
+      return new Response(JSON.stringify({ error: `origin ${origin || "(none)"} not allowed` }), {
+        status: 403,
+        headers: { "Content-Type": "application/json", ...(origin ? corsHeaders(origin) : {}) },
+      });
     }
     if (env.HOST_LIMITER) {
       const key = request.headers.get("CF-Connecting-IP") || "unknown";
