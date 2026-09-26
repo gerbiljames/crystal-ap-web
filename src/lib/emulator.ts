@@ -291,6 +291,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
   // --- debounced SRAM + savestate commit ---
   let saveTimer: ReturnType<typeof setInterval> | null = null;
   let onSavePagehide: (() => void) | null = null;
+  let onSaveHidden: (() => void) | null = null;
   if (persist) {
     const { db: pdb, key } = persist;
     const stateEnvelope = (): SavestateEnvelope => ({ romHash, state: extractState() });
@@ -326,6 +327,15 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
       if (stateDirty) idbPut(pdb, key, stateEnvelope(), STATE_STORE).catch(() => {});
     };
     window.addEventListener("pagehide", onSavePagehide);
+    // Hidden is the last event a mobile tab reliably gets before it's
+    // discarded (pagehide often never fires), and background timer
+    // throttling can stretch the 2s cadence to a minute while it's hidden.
+    onSaveHidden = () => {
+      if (document.visibilityState !== "hidden" || savesStopped || disposed) return;
+      if (sramDirty)  { sramDirty = false;  idbPut(pdb, key, extractSram()).catch(() => { sramDirty = true; }); }
+      if (stateDirty) { stateDirty = false; idbPut(pdb, key, stateEnvelope(), STATE_STORE).catch(() => { stateDirty = true; }); }
+    };
+    document.addEventListener("visibilitychange", onSaveHidden);
   }
 
   // --- keyboard (ignore form controls and dialogs) ---
@@ -390,6 +400,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
       try { onSavePagehide(); } catch {}
       window.removeEventListener("pagehide", onSavePagehide);
     }
+    if (onSaveHidden) document.removeEventListener("visibilitychange", onSaveHidden);
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("keyup",   onKeyUp);
     window.removeEventListener("blur",    releaseKeys);
