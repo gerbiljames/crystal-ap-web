@@ -974,7 +974,17 @@ class _BrowserWS:
             try: p.destroy()
             except Exception: pass
         self._proxies = []
-    async def wait_open(self): await self._open_fut
+    async def wait_open(self):
+        # A connect cancelled (disconnect, session replaced) or failed while
+        # still opening would otherwise leave the socket to finish opening and
+        # stay attached to the server unread. Closing it also fires the close
+        # event that releases its proxies.
+        try:
+            await self._open_fut
+        except BaseException:
+            try: self._ws.close()
+            except Exception: pass
+            raise
     async def send(self, data):
         if isinstance(data, (bytes, bytearray)): data = bytes(data)
         self._ws.send(data)
