@@ -44,6 +44,11 @@ function pinnedWorker() {
   return {
     name: "pinned-ap-worker",
     apply: "build",
+    // Without pack.sh's output the build would still succeed, and deploy a
+    // site whose worker 404s on every tar.
+    buildStart() {
+      if (!existsSync(here("public/ap/core.tar"))) this.error("public/ap/core.tar is missing — run ./pack.sh before building");
+    },
     generateBundle() {
       this.emitFile({ type: "asset", fileName: `ap_worker.${buildId}.js`, source: readFileSync(here("public/ap_worker.js")) });
     },
