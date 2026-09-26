@@ -19,6 +19,8 @@ const EVENT_NEW_FRAME = 1, EVENT_AUDIO_BUFFER_FULL = 2, EVENT_UNTIL_TICKS = 4;
 const CPU_TICKS_PER_SECOND = 4194304;
 const MAX_UPDATE_SEC = 5 / 60;
 const AUDIO_LATENCY_SEC = 0.1;
+// Buffers that may sit queued beyond the latency target before one is dropped.
+const AUDIO_MAX_QUEUED_BUFFERS = 3;
 // On underrun (mobile scroll jank, GC pause, …) we re-anchor closer to "now"
 // rather than re-introducing the full bootstrap latency budget — otherwise
 // each stall permanently shifts audio ~100ms behind the video that step()
@@ -114,6 +116,12 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     const nowPlusLatency = now + AUDIO_LATENCY_SEC;
     audioStartSec = audioStartSec || nowPlusLatency;
     if (audioStartSec < now) audioStartSec = now + AUDIO_RECOVERY_SEC;
+    // Emulation is paced by performance.now(), playback by the audio
+    // device's clock. When emulation runs even slightly fast the queue grows
+    // without bound and sound drifts behind the picture; drop a buffer to
+    // pull it back (a tiny gap beats seconds of lag an hour in).
+    const bufferSec = AUDIO_FRAMES / audioCtx.sampleRate;
+    if (audioStartSec - now > AUDIO_LATENCY_SEC + AUDIO_MAX_QUEUED_BUFFERS * bufferSec) return;
     const buffer = audioCtx.createBuffer(2, AUDIO_FRAMES, audioCtx.sampleRate);
     const c0 = buffer.getChannelData(0);
     const c1 = buffer.getChannelData(1);
@@ -134,7 +142,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     src.buffer = buffer;
     src.connect(audioCtx.destination);
     src.start(audioStartSec);
-    audioStartSec += AUDIO_FRAMES / audioCtx.sampleRate;
+    audioStartSec += bufferSec;
   }
 
   // --- SRAM + savestate persistence ---
