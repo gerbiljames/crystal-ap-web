@@ -283,14 +283,20 @@ function WeightedEditor(props: { opt: OptionDef; value: WeightedValue; setValue:
     next[i] = { ...next[i], ...patch };
     props.setValue({ mode: "weighted", entries: next });
   };
+  // A new row starts on a value no row has yet, so it doesn't just repeat
+  // row 0 (usually the default).
   const defaultRowValue = () => {
     const opt = props.opt;
+    const used = new Set(props.value.entries.map(e => e.value));
+    const firstUnused = (vals: string[]) => vals.find(v => !used.has(v)) ?? vals[0];
     if (opt.kind === "choice" && opt.choices && opt.choices.length) {
       const idx = typeof opt.default === "number" ? opt.default : 0;
-      return opt.choices[idx] ?? opt.choices[0];
+      const dflt = opt.choices[idx] ?? opt.choices[0];
+      return firstUnused([dflt, ...opt.choices]);
     }
     if (opt.kind === "toggle" || opt.kind === "toggle_on") {
-      return opt.default === 1 || opt.default === true ? "true" : "false";
+      const dflt = opt.default === 1 || opt.default === true ? "true" : "false";
+      return firstUnused([dflt, "true", "false"]);
     }
     if (opt.kind === "named_range") {
       const names = opt.special_range_names ? Object.keys(opt.special_range_names) : [];

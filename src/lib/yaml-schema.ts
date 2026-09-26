@@ -106,10 +106,15 @@ function emitFlowList(items: unknown[]): string {
 }
 
 function emitWeighted(entries: { value: string; weight: number }[]): string {
-  // Inline mapping: { v1: w1, v2: w2 }
-  const parts = entries
-    .filter(e => e.value !== "" || e.weight > 0)
-    .map(e => `${emitScalar(e.value)}: ${e.weight | 0}`);
+  // Inline mapping: { v1: w1, v2: w2 }. Rows naming the same value merge
+  // (a duplicate key would keep only the last weight, and js-yaml rejects
+  // it); blank rows are skipped (`"": 50` fails generation).
+  const merged = new Map<string, number>();
+  for (const e of entries) {
+    if (e.value.trim() === "") continue;
+    merged.set(e.value, (merged.get(e.value) ?? 0) + (e.weight | 0));
+  }
+  const parts = [...merged].map(([v, w]) => `${emitScalar(v)}: ${w}`);
   return "{" + parts.join(", ") + "}";
 }
 
