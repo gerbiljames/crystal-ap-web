@@ -160,11 +160,17 @@ export async function resolveWorldForPatch(patchBytes: Uint8Array): Promise<Worl
   }
   const generator = hash ? candidates.find((w) => w.basepatch_sha256["basepatch.bsdiff4"] === hash) ?? null : null;
   if (generator) {
-    const compatible = candidates.filter((w) =>
-      w.rom_version === generator.rom_version && w.rom_version11 === generator.rom_version11);
-    const pick = newest(compatible) ?? generator;
-    return { kind: "resolved", world: pick, generator: generator.display_version,
-      upgraded: pick.world_version !== generator.world_version };
+    // A versioned patch was already judged against every version that
+    // declares a window, above; only the windowless ones are open to it here,
+    // or a version its window refused would come back as the pick.
+    const eligible = (w: BundledWorld) => !patchVersion || !w.minimum_patch_version;
+    const compatible = candidates.filter((w) => eligible(w)
+      && w.rom_version === generator.rom_version && w.rom_version11 === generator.rom_version11);
+    const pick = newest(compatible) ?? (eligible(generator) ? generator : null);
+    if (pick) {
+      return { kind: "resolved", world: pick, generator: generator.display_version,
+        upgraded: pick.world_version !== generator.world_version };
+    }
   }
 
   const have = candidates.map((w) => w.display_version).join(", ");
