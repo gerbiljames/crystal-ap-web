@@ -852,11 +852,12 @@ export async function handleRomDrop(f: File) {
 // play-step boot + session connect
 // -----------------------------------------------------------------------------
 let currentEmu: EmulatorHandle | null = null;
-// True from the moment bootEmulatorAndUi enters until currentEmu is assigned
-// (or boot fails). Gates reentrant calls so concurrent triggers — e.g. a
-// canvas remount racing with a step transition — can't start a second
-// emulator while the first is still allocating.
-let bootInFlight = false;
+// Boots queued or running. Boots run one at a time off bootChain, so a boot
+// requested while another is still settling (an import disposing the
+// emulator during the loopback re-host, say) runs in full once that one is
+// done, instead of being dropped and leaving no emulator behind.
+let bootsPending = 0;
+let bootChain: Promise<void> = Promise.resolve();
 // True while importSaveFile is mid-swap (emulator disposed, IDB being
 // rewritten, not yet rebooted). Blocks ensureEmulator from racing a boot into
 // that window, where currentEmu is null but the import isn't done yet.
@@ -877,97 +878,101 @@ export function disposeEmulator() {
 // <ScreenFrame/> we boot a fresh one against the new canvas using the ROM
 // that's still sitting in the store.
 export async function ensureEmulator() {
-  if (currentEmu || bootInFlight || swapInFlight) return;
+  if (currentEmu || bootsPending || swapInFlight) return;
   if (app.step !== "play" || !app.patchedRom) return;
   await bootEmulatorAndUi();
 }
 
-async function bootEmulatorAndUi() {
-  if (bootInFlight) return;
-  bootInFlight = true;
-  try {
-    // Clear any prior instance so consecutive boots (session reset, HMR, etc.)
-    // don't leak.
-    disposeEmulator();
-    const saveDb = await db();
-    const seedId: string | null = app.seedId;
-    // Before the boot reads the seed's slot, and before the romHash below
-    // is overwritten with this ROM's: that is the key a save the upgrade
-    // couldn't move still lives under. Until adoption has settled, keep it.
-    let legacySettled = false;
-    if (saveDb && seedId) {
-      const entry = loadSessions().find((s: any) => s.id === seedId);
-      legacySettled = await adoptLegacySave(saveDb, seedId, entry?.romHash);
-    }
-    const emu = await bootEmulator({
-      canvas: $<HTMLCanvasElement>("#screen"),
-      romBuf: app.patchedRom,
-      saveDb,
-      saveKey: seedId,
-    });
-    if (!emu) return;
-    currentEmu = emu;
-    const { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash } = emu;
+function bootEmulatorAndUi(): Promise<void> {
+  bootsPending++;
+  const run = bootChain.then(bootEmulatorAndUiNow).finally(() => { bootsPending--; });
+  bootChain = run.catch(() => {});
+  return run;
+}
 
-    if (app.seedId) {
-      const list = loadSessions();
-      const entry = list.find((s: any) => s.id === app.seedId);
-      if (entry && entry.romHash !== romHash && (legacySettled || !entry.romHash)) {
-        entry.romHash = romHash;
-        saveSessions(list);
+async function bootEmulatorAndUiNow() {
+  // Clear any prior instance so consecutive boots (session reset, HMR, etc.)
+  // don't leak.
+  disposeEmulator();
+  const saveDb = await db();
+  const seedId: string | null = app.seedId;
+  // Before the boot reads the seed's slot, and before the romHash below
+  // is overwritten with this ROM's: that is the key a save the upgrade
+  // couldn't move still lives under. Until adoption has settled, keep it.
+  let legacySettled = false;
+  if (saveDb && seedId) {
+    const entry = loadSessions().find((s: any) => s.id === seedId);
+    legacySettled = await adoptLegacySave(saveDb, seedId, entry?.romHash);
+  }
+  const emu = await bootEmulator({
+    canvas: $<HTMLCanvasElement>("#screen"),
+    romBuf: app.patchedRom,
+    saveDb,
+    saveKey: seedId,
+  });
+  if (!emu) return;
+  currentEmu = emu;
+  const { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash } = emu;
+
+  if (app.seedId) {
+    const list = loadSessions();
+    const entry = list.find((s: any) => s.id === app.seedId);
+    if (entry && entry.romHash !== romHash && (legacySettled || !entry.romHash)) {
+      entry.romHash = romHash;
+      saveSessions(list);
+    }
+  }
+
+  initPlayLayout();
+  bindGamepad($<HTMLElement>(".gamepad"), { emulator: e, module: Module });
+  bindController({ emulator: e, module: Module });
+  installBizHawkBridge(emu, apWorker);
+  installTrackerDirtyHandler();
+  // Hints refresh on their own too, so the tab's count is current before
+  // the tab is first opened.
+  installHintsDirtyHandler();
+
+  // For loopback sessions, the in-process MultiServer is keyed off a fresh
+  // URI per worker boot. Re-host now so a resumed session points at a live
+  // server rather than a stale ws_url from a previous tab. The worker
+  // pulls any persisted .apsave from IndexedDB by seedId itself, so
+  // MultiServer restores received items / hints / data storage instead of
+  // starting from scratch.
+  if (app.hosted?.kind === "loopback") {
+    const multiName = Object.keys(app.artifacts || {}).find((n) => n.toLowerCase().endsWith(".archipelago"));
+    if (multiName && app.seedId) {
+      try {
+        const res = await apWorker.host(app.seedId, app.artifacts[multiName].slice());
+        setApp("hosted", { ...app.hosted, ws_url: res.out.ws_url });
+      } catch (err: any) {
+        logErr("re-host failed: " + (err?.message || err));
       }
-    }
-
-    initPlayLayout();
-    bindGamepad($<HTMLElement>(".gamepad"), { emulator: e, module: Module });
-    bindController({ emulator: e, module: Module });
-    installBizHawkBridge(emu, apWorker);
-    installTrackerDirtyHandler();
-    // Hints refresh on their own too, so the tab's count is current before
-    // the tab is first opened.
-    installHintsDirtyHandler();
-
-    // For loopback sessions, the in-process MultiServer is keyed off a fresh
-    // URI per worker boot. Re-host now so a resumed session points at a live
-    // server rather than a stale ws_url from a previous tab. The worker
-    // pulls any persisted .apsave from IndexedDB by seedId itself, so
-    // MultiServer restores received items / hints / data storage instead of
-    // starting from scratch.
-    if (app.hosted?.kind === "loopback") {
-      const multiName = Object.keys(app.artifacts || {}).find((n) => n.toLowerCase().endsWith(".archipelago"));
-      if (multiName && app.seedId) {
-        try {
-          const res = await apWorker.host(app.seedId, app.artifacts[multiName].slice());
-          setApp("hosted", { ...app.hosted, ws_url: res.out.ws_url });
-        } catch (err: any) {
-          logErr("re-host failed: " + (err?.message || err));
-        }
-      } else {
-        logWarn("loopback session resumed but no .archipelago in cache — drop the YAML again to re-host");
-      }
-    }
-
-    // Seed the session form with host/slot info. For loopback the input
-    // shows a friendly label ("Self Hosted") instead of the synthetic URI;
-    // connectSession reads the real ws_url from app.hosted in that case.
-    const serverDisplay = app.hosted?.kind === "loopback"
-      ? "Self Hosted"
-      : (app.hosted ? `${app.hosted.host}:${app.hosted.port}` : "");
-    $<HTMLInputElement>("#sess-server").value = serverDisplay;
-    $<HTMLInputElement>("#sess-slot").value   = app.slotName || "";
-
-    // Expose for console poking.
-    window.ap = { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash, RAM, WRAM_BASE };
-    if (app.hosted?.kind === "loopback") {
-      log("ready · self-hosted, auto-connecting");
-      // Defer one tick so the input fields we just populated are committed
-      // to the DOM before connectSession reads them.
-      queueMicrotask(() => { connectSession().catch(() => {}); });
+      // Disposed while the re-host ran (a save import): the boot queued
+      // behind this one takes over.
+      if (currentEmu !== emu) return;
     } else {
-      log("ready · enter session details and Connect");
+      logWarn("loopback session resumed but no .archipelago in cache — drop the YAML again to re-host");
     }
-  } finally {
-    bootInFlight = false;
+  }
+
+  // Seed the session form with host/slot info. For loopback the input
+  // shows a friendly label ("Self Hosted") instead of the synthetic URI;
+  // connectSession reads the real ws_url from app.hosted in that case.
+  const serverDisplay = app.hosted?.kind === "loopback"
+    ? "Self Hosted"
+    : (app.hosted ? `${app.hosted.host}:${app.hosted.port}` : "");
+  $<HTMLInputElement>("#sess-server").value = serverDisplay;
+  $<HTMLInputElement>("#sess-slot").value   = app.slotName || "";
+
+  // Expose for console poking.
+  window.ap = { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash, RAM, WRAM_BASE };
+  if (app.hosted?.kind === "loopback") {
+    log("ready · self-hosted, auto-connecting");
+    // Defer one tick so the input fields we just populated are committed
+    // to the DOM before connectSession reads them.
+    queueMicrotask(() => { connectSession().catch(() => {}); });
+  } else {
+    log("ready · enter session details and Connect");
   }
 }
 
@@ -994,7 +999,7 @@ export async function importSaveFile(file: File) {
   // the dispose→reboot window, and rejects a second importSaveFile at the guard
   // above while this one (boot included) is still running, so two imports can
   // never overlap. No self-deadlock: we call bootEmulatorAndUi directly, not
-  // ensureEmulator, and boot gates on bootInFlight, not swapInFlight. Cleared
+  // ensureEmulator, and boot doesn't look at swapInFlight. Cleared
   // exactly once, in finally, covering every early-return and error path.
   swapInFlight = true;
   try {
