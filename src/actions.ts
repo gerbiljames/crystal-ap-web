@@ -1442,7 +1442,11 @@ export async function disconnectSession() {
   // up after the user asked for it to go away.
   sessionWanted = false;
   stopHeartbeat();
-  try { await apWorker.stopSession(); } catch {}
+  // The worker runs the stop after any start still in flight, and a start can
+  // stall on a boot download. Don't hold the UI on it: the stop stays queued
+  // and runs when the start settles.
+  const STOP_WAIT_MS = 5000;
+  await Promise.race([apWorker.stopSession().catch(() => {}), new Promise((r) => setTimeout(r, STOP_WAIT_MS))]);
   setSessionState("idle", "disconnected");
   resetSessionMirrors();
   stopTrackerPolling();
