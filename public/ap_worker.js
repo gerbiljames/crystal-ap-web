@@ -41,10 +41,14 @@ let hostRunning = false;
 // queue first so log lines never reorder against replies or bridge requests,
 // and a fatal reply always carries the diagnostics printed just before it.
 // The tick timer can't fire while synchronous Python (generate, patch,
-// tracker init) holds the worker for minutes, so a batch also goes out once
-// it's LOG_FLUSH_MS old: the log keeps moving, and a hard kill loses at most
-// that much of the output leading up to it.
+// tracker work) holds the worker for minutes, so while one of those commands
+// runs each line goes out as it's printed: the log keeps moving through long
+// silent stretches, and a line printed just before a hang (or a kill for
+// one) isn't left in the queue. Otherwise a batch also goes out once it's
+// LOG_FLUSH_MS old.
 const LOG_FLUSH_MS = 100;
+const SYNC_HEAVY_CMDS = new Set(["init", "generate", "patch", "tracker-init", "tracker-update", "tracker-checks"]);
+let syncHeavyRuns = 0;
 let logQueue = [];
 let logFlushTimer = null;
 let logQueuedAt = 0;
@@ -58,7 +62,7 @@ function flushLog() {
 self._pyLog = (msg) => {
   if (logQueue.length === 0) logQueuedAt = performance.now();
   logQueue.push(msg);
-  if (performance.now() - logQueuedAt >= LOG_FLUSH_MS) flushLog();
+  if (syncHeavyRuns > 0 || performance.now() - logQueuedAt >= LOG_FLUSH_MS) flushLog();
   else if (logFlushTimer === null) logFlushTimer = setTimeout(flushLog, 0);
 };
 function post(msg, transfer) {
@@ -620,6 +624,8 @@ function inLifecycleOrder(fn) {
 
 self.onmessage = async (ev) => {
   const { id, cmd } = ev.data;
+  const heavy = SYNC_HEAVY_CMDS.has(cmd);
+  if (heavy) syncHeavyRuns++;
   try {
     if (cmd === "configure") {
       // Fire-and-forget from spawn(); must land before any booting command.
@@ -713,6 +719,8 @@ except Exception: pass
     // then to String() for anything else. No JS stack — it's always Pyodide internals.
     const msg = err?.message || String(err);
     post({ id, error: msg, fatal: pyodideIsDead() });
+  } finally {
+    if (heavy) syncHeavyRuns--;
   }
 };
 
