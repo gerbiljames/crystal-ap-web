@@ -121,6 +121,15 @@ export function idbPut(db: IDBDatabase, k: IDBValidKey, v: any, store: string = 
   });
 }
 
+// Several puts, across stores, in one transaction: all of them land or none.
+export function idbPutMany(db: IDBDatabase, puts: [store: string, k: IDBValidKey, v: any][]): Promise<void> {
+  return new Promise((res, rej) => {
+    const tx = db.transaction([...new Set(puts.map(([store]) => store))], "readwrite");
+    for (const [store, k, v] of puts) tx.objectStore(store).put(v, k);
+    commit(tx).then(res, rej);
+  });
+}
+
 // Presence check that doesn't materialise the value (count is O(1) on an
 // indexed-key range vs. reading the whole ArrayBuffer back into JS).
 export function idbHas(db: IDBDatabase, k: IDBValidKey, store: string = SAVE_STORE): Promise<boolean> {

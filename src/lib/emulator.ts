@@ -6,8 +6,8 @@
 
 /* global Binjgb */
 
-import { idbGet, idbPut, idbDel } from "./idb.js";
-import { STATE_STORE } from "./constants.js";
+import { idbGet, idbPutMany, idbDel } from "./idb.js";
+import { SAVE_STORE, STATE_STORE } from "./constants.js";
 import { isSavestateEnvelope, type SavestateEnvelope } from "./saves.js";
 import { log, logOk, logErr, logWarn } from "./log.js";
 import { getAudioContext } from "./audio.js";
@@ -319,31 +319,40 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
       logErr("saves stopped: this page's storage connection was closed by an update in another tab");
       return true;
     };
+    // SRAM and the savestate are written in one transaction, and SRAM never
+    // without the state. Boot applies the savestate over SRAM, so a stored
+    // state older than the stored SRAM would silently undo an in-game save.
+    // The state on its own (it's dirty every tick) only goes out every
+    // STATE_SAVE_MS, or when forced on hide/pagehide: rewriting it every 2s
+    // meant ~360MB/h of IDB writes.
     const STATE_SAVE_MS = 15000;
     let lastStateSave = performance.now();
+    const writeSaves = (force: boolean): Promise<void> | null => {
+      const withSram = sramDirty;
+      const withState = withSram || (stateDirty && (force || performance.now() - lastStateSave >= STATE_SAVE_MS));
+      if (!withState) return null;
+      const puts: [string, IDBValidKey, unknown][] = [];
+      if (withSram) puts.push([SAVE_STORE, key, extractSram()]);
+      puts.push([STATE_STORE, key, stateEnvelope()]);
+      sramDirty = false;
+      stateDirty = false;
+      lastStateSave = performance.now();
+      return idbPutMany(pdb, puts).catch((err) => {
+        if (withSram) sramDirty = true;
+        stateDirty = true;
+        throw err;
+      });
+    };
     saveTimer = setInterval(async () => {
       if (disposed) return;
-      if (sramDirty) {
-        sramDirty = false;
-        try { await idbPut(pdb, key, extractSram()); }
-        catch (err) { sramDirty = true; if (stopIfClosed(err)) return; logErr("SRAM save failed: " + err); }
-        // dispose() may have freed the emulator while that write committed.
-        if (disposed) return;
-      }
-      // The savestate changes on every tick, so it's always dirty: rewriting
-      // it every 2s meant ~360MB/h of IDB writes. SRAM (the in-game save)
-      // keeps the fast cadence; the savestate catches up on hide/pagehide.
-      if (stateDirty && performance.now() - lastStateSave >= STATE_SAVE_MS) {
-        stateDirty = false;
-        lastStateSave = performance.now();
-        try { await idbPut(pdb, key, stateEnvelope(), STATE_STORE); }
-        catch (err) { stateDirty = true; if (stopIfClosed(err)) return; logErr("savestate save failed: " + err); }
-      }
+      const write = writeSaves(false);
+      if (!write) return;
+      try { await write; }
+      catch (err) { if (stopIfClosed(err)) return; logErr("save failed: " + err); }
     }, 2000);
     onSavePagehide = () => {
       if (savesStopped) return;
-      if (sramDirty)  idbPut(pdb, key, extractSram()).catch(() => {});
-      if (stateDirty) idbPut(pdb, key, stateEnvelope(), STATE_STORE).catch(() => {});
+      writeSaves(true)?.catch(() => {});
     };
     window.addEventListener("pagehide", onSavePagehide);
     // Hidden is the last event a mobile tab reliably gets before it's
@@ -351,8 +360,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     // throttling can stretch the 2s cadence to a minute while it's hidden.
     onSaveHidden = () => {
       if (document.visibilityState !== "hidden" || savesStopped || disposed) return;
-      if (sramDirty)  { sramDirty = false;  idbPut(pdb, key, extractSram()).catch(() => { sramDirty = true; }); }
-      if (stateDirty) { stateDirty = false; idbPut(pdb, key, stateEnvelope(), STATE_STORE).catch(() => { stateDirty = true; }); }
+      writeSaves(true)?.catch(() => {});
     };
     document.addEventListener("visibilitychange", onSaveHidden);
   }
