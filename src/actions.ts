@@ -966,8 +966,11 @@ async function bootEmulatorAndUiNow() {
   // server rather than a stale ws_url from a previous tab. The worker
   // pulls any persisted .apsave from IndexedDB by seedId itself, so
   // MultiServer restores received items / hints / data storage instead of
-  // starting from scratch.
-  if (app.hosted?.kind === "loopback") {
+  // starting from scratch. Not while fatal recovery runs: it re-hosts and
+  // reconnects itself, and a second host here would stop the server recovery
+  // just connected to.
+  const recovering = fatalRecoveryInFlight;
+  if (app.hosted?.kind === "loopback" && !recovering) {
     const multiName = Object.keys(app.artifacts || {}).find((n) => n.toLowerCase().endsWith(".archipelago"));
     if (multiName && app.seedId) {
       try {
@@ -995,7 +998,9 @@ async function bootEmulatorAndUiNow() {
 
   // Expose for console poking.
   window.ap = { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash, RAM, WRAM_BASE };
-  if (app.hosted?.kind === "loopback") {
+  if (recovering) {
+    log("ready · the session reconnects once the python runtime is back");
+  } else if (app.hosted?.kind === "loopback") {
     log("ready · self-hosted, auto-connecting");
     // Defer one tick so the input fields we just populated are committed
     // to the DOM before connectSession reads them.
