@@ -53,7 +53,11 @@ python3 "$HERE/scripts/pack-worlds.py" "$HERE/apworlds.json" "$STAGE" "$OUT" "$A
 # with the vendor submodules.
 python3 "$HERE/scripts/dump-yaml-schema.py" "$STAGE" "$HERE/src/generated/yaml-schema.json"
 
+# Fixed order, timestamps, ownership and modes (GNU tar) so identical sources
+# give a byte-identical core.tar: its content hash busts the cache on deploy.
 tar -cf "$OUT/core.tar" -C "$STAGE" \
+    --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
+    --mode=u+rwX,go+rX,go-w \
     --exclude="__pycache__" \
     --exclude="*.pyc" \
     --exclude="test" \
