@@ -115,6 +115,20 @@ function ResumeList() {
   );
 }
 
+function HostPrefSelect() {
+  return (
+    <select
+      class="host-pref-select"
+      value={app.hostPref}
+      onChange={(ev) => persistHostPref(ev.currentTarget.value as any)}
+    >
+      <option value="local">in this tab (no external connections)</option>
+      <option value="remote">on archipelago.gg (public room)</option>
+      <option value="off">off (I'll host it myself)</option>
+    </select>
+  );
+}
+
 function SavedYamlsList() {
   const [editing, setEditing] = createSignal<string | null>(null);
   const [draft, setDraft] = createSignal("");
@@ -191,15 +205,7 @@ function SavedYamlsList() {
         <div class="resume-foot">
           <label class="host-pref host-pref-inline" title="Where to run the MultiServer when you `use` one of these.">
             <span class="host-pref-label">hosting</span>
-            <select
-              class="host-pref-select"
-              value={app.hostPref}
-              onChange={(ev) => persistHostPref(ev.currentTarget.value as any)}
-            >
-              <option value="local">in this tab (no external connections)</option>
-              <option value="remote">on archipelago.gg (public room)</option>
-              <option value="off">off (I'll host it myself)</option>
-            </select>
+            <HostPrefSelect />
           </label>
         </div>
       </div>
@@ -223,15 +229,7 @@ function OptionsPane() {
         </Dropzone>
         <label class="host-pref" title="Where to run the MultiServer for this seed.">
           <span class="host-pref-label">hosting</span>
-          <select
-            class="host-pref-select"
-            value={app.hostPref}
-            onChange={(ev) => persistHostPref(ev.currentTarget.value as any)}
-          >
-            <option value="local">in this tab (no external connections)</option>
-            <option value="remote">on archipelago.gg (public room)</option>
-            <option value="off">off (I'll host it myself)</option>
-          </select>
+          <HostPrefSelect />
         </label>
         <Show when={app.yamlErr}>
           <div class="error-box" id="yaml-err">
