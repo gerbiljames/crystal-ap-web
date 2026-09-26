@@ -20,7 +20,10 @@ const HOST_PREF_KEY = "crystal-ap-host-pref";
 export type HostPref = "local" | "remote" | "off";
 
 function loadHostPref(): HostPref {
-  const raw = localStorage.getItem(HOST_PREF_KEY);
+  // Blocked site data makes the accessor throw, which at module load would
+  // take the whole app down with it.
+  let raw: string | null = null;
+  try { raw = localStorage.getItem(HOST_PREF_KEY); } catch {}
   // Migrate the prior boolean form: "on" meant archipelago.gg; anything else
   // (including absent) now defaults to "local" since fully-local hosting is
   // the new zero-config path.
