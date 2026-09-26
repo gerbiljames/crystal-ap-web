@@ -175,6 +175,30 @@ export function setControllerPrefs(next: ControllerPrefs) {
   try { localStorage.setItem(CONTROLLER_PREFS_KEY, JSON.stringify(next)); } catch {}
 }
 
+// ---------- tracker settings ----------
+// deferEntrances: Universal Tracker's deferred-entrances mode. On, it leaves
+// randomized entrances unconnected until the player discovers them (so the
+// tracker doesn't spoil the layout) and the console's entrances tab lists the
+// discovered ones. Off, it knows every connection up front and the tab is hidden.
+const TRACKER_PREFS_KEY = "crystal-ap-tracker-prefs";
+export type TrackerPrefs = { deferEntrances: boolean };
+const TRACKER_DEFAULTS: TrackerPrefs = { deferEntrances: true };
+
+function loadTrackerPrefs(): TrackerPrefs {
+  try {
+    const raw = localStorage.getItem(TRACKER_PREFS_KEY);
+    if (!raw) return { ...TRACKER_DEFAULTS };
+    const p = JSON.parse(raw);
+    return { deferEntrances: p.deferEntrances !== false };
+  } catch { return { ...TRACKER_DEFAULTS }; }
+}
+
+export const [trackerPrefs, _setTrackerPrefs] = createSignal<TrackerPrefs>(loadTrackerPrefs());
+export function setTrackerPrefs(next: TrackerPrefs) {
+  _setTrackerPrefs(next);
+  try { localStorage.setItem(TRACKER_PREFS_KEY, JSON.stringify(next)); } catch {}
+}
+
 // ---------- ui settings ----------
 const UI_PREFS_KEY = "crystal-ap-ui-prefs";
 export type UiPrefs = { hideGamepad: boolean };
@@ -234,6 +258,11 @@ export const [logLines, setLogLines] = createSignal<LogEntry[]>([]);
 export const [trackerInLogic, setTrackerInLogic] = createSignal<string[]>([]);
 export type TrackerGoMode = "no" | "yes" | "glitched";
 export const [trackerGoMode, setTrackerGoMode] = createSignal<TrackerGoMode>("no");
+// Randomized entrances the tracker knows about, from the same update as
+// trackerInLogic. null until the first update; randomized=false when the seed
+// doesn't shuffle entrances. Deferred, `hidden` counts the undiscovered ones.
+export type TrackerEntrances = { randomized: boolean; deferred: boolean; hidden: number; rows: [string, string][] };
+export const [trackerEntrances, setTrackerEntrances] = createSignal<TrackerEntrances | null>(null);
 export const [trackerStatus, setTrackerStatus] = createSignal<
   { kind: "idle" } | { kind: "ready" } | { kind: "error"; reason: string }
 >({ kind: "idle" });

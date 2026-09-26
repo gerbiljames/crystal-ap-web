@@ -3,7 +3,7 @@
 // (state.js) and talk to the framework-agnostic lib/ modules.
 
 import { unwrap } from "solid-js/store";
-import { app, setApp, setPageNotice, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setHints, setHintsStatus, setHintPoints, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen, romOverridePrefs, setVersionPick } from "./state.js";
+import { app, setApp, setPageNotice, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setTrackerEntrances, trackerPrefs, setTrackerPrefs, setHints, setHintsStatus, setHintPoints, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen, romOverridePrefs, setVersionPick } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { resolveWorldForPatch, latestWorlds, latestWorldForGame, bundledWorld, bundledWorldByDisplay, runtimeFor, type BundledWorld, type WorldResolution } from "./lib/apworld.js";
@@ -922,6 +922,9 @@ async function bootEmulatorAndUi() {
     bindController({ emulator: e, module: Module });
     installBizHawkBridge(emu, apWorker);
     installTrackerDirtyHandler();
+    // Hints refresh on their own too, so the tab's count is current before
+    // the tab is first opened.
+    installHintsDirtyHandler();
 
     // For loopback sessions, the in-process MultiServer is keyed off a fresh
     // URI per worker boot. Re-host now so a resumed session points at a live
@@ -1101,6 +1104,7 @@ async function doConnectSession() {
     trackerUnavailable = false;
     setTrackerInLogic([]);
     setTrackerGoMode("no");
+    setTrackerEntrances(null);
     setTrackerStatus({ kind: "idle" });
     setHints(null);
     setHintPoints(null);
@@ -1143,6 +1147,8 @@ let trackerInitInFlight: Promise<boolean> | null = null;
 // the abandoned attempt's finally can't null out the promise that replaced it
 // and let two tracker-init commands run against the worker at once.
 let trackerInitSeq = 0;
+// The seq trackerInitInFlight was started under.
+let trackerInitInFlightSeq = 0;
 // Latched once we've decided this seed can't run the tracker (e.g. patch-only
 // upload with no .archipelago). Prevents the dirty handler from re-emitting
 // the same warning on every Connected/ReceivedItems/RoomUpdate.
@@ -1155,7 +1161,11 @@ async function ensureTrackerInited(): Promise<boolean> {
     setTrackerStatus({ kind: "idle" });
     return false;
   }
-  if (trackerInitInFlight) return trackerInitInFlight;
+  // Join an init that is still current. One superseded by a setting change
+  // (see setDeferEntrances) is left to finish, and the new init queues behind
+  // it, so the worker never runs two tracker-inits at once.
+  if (trackerInitInFlight && trackerInitInFlightSeq === trackerInitSeq) return trackerInitInFlight;
+  const prev = trackerInitInFlight;
   const artifacts = app.artifacts || {};
   const multiName = Object.keys(artifacts).find((n) => n.toLowerCase().endsWith(".archipelago"));
   // Patch-only flow: no cached multidata, fall back to driving UT off the
@@ -1164,9 +1174,13 @@ async function ensureTrackerInited(): Promise<boolean> {
   // waiting on the websocket handshake.
   const bytes = multiName ? (artifacts[multiName] as Uint8Array) : null;
   const seq = ++trackerInitSeq;
-  trackerInitInFlight = (async () => {
+  const run = (async () => {
     try {
-      const res = await apWorker.trackerInit(bytes, app.slotName || "");
+      await prev?.catch(() => {});
+      if (seq !== trackerInitSeq) return false;
+      const res = await apWorker.trackerInit(bytes, app.slotName || "", trackerPrefs().deferEntrances);
+      // Superseded while it ran: the newer init owns the tracker state.
+      if (seq !== trackerInitSeq) return false;
       if (!res?.out?.ok) {
         if (res?.out?.wait) {
           setTrackerStatus({ kind: "idle" });
@@ -1182,21 +1196,28 @@ async function ensureTrackerInited(): Promise<boolean> {
       trackerInited = true;
       setTrackerStatus({ kind: "ready" });
       return true;
-    } finally { if (seq === trackerInitSeq) trackerInitInFlight = null; }
+    } finally { if (trackerInitInFlight === run) trackerInitInFlight = null; }
   })();
-  return trackerInitInFlight;
+  trackerInitInFlight = run;
+  trackerInitInFlightSeq = seq;
+  return run;
 }
 
 async function refreshTrackerLocations() {
   if (!await ensureTrackerInited()) return;
   // Pull the checked-locations set from the worker's host context if running,
   // otherwise from the live session ctx, otherwise an empty set.
+  // A result from before a re-init (a setting change) describes the old
+  // tracker — with deferral just turned on, it could list every entrance.
+  const seq = trackerInitSeq;
   const checked = await fetchCheckedLocations();
   try {
     const res = await apWorker.trackerUpdate(checked);
+    if (seq !== trackerInitSeq) return;
     if (res?.out?.ok) {
       setTrackerInLogic(res.out.locations || []);
       setTrackerGoMode(res.out.go || "no");
+      setTrackerEntrances(res.out.entrances ?? null);
     }
   } catch (e: any) {
     logWarn("tracker update failed: " + (e?.message || e));
@@ -1223,6 +1244,21 @@ export async function ensureTracker() {
   installTrackerDirtyHandler();
   await refreshTrackerLocations();
 }
+// The deferred-entrances mode is fixed when UT builds its multiworld, so a
+// change re-initialises the tracker (bumping the seq so an init already in
+// flight can't land as current) and refreshes it if a session is up.
+export function setDeferEntrances(on: boolean) {
+  if (trackerPrefs().deferEntrances === on) return;
+  setTrackerPrefs({ ...trackerPrefs(), deferEntrances: on });
+  // Supersedes any init in flight without dropping it: the next init queues
+  // behind it (see ensureTrackerInited).
+  trackerInitSeq++;
+  trackerInited = false;
+  trackerUnavailable = false;
+  setTrackerEntrances(null);
+  if (app.session.state === "live") refreshTrackerLocations().catch(() => {});
+}
+
 // Kept as a no-op for the existing console-tab onClick caller; tracker is now
 // event-driven and has nothing to stop.
 export function stopTrackerPolling() {}
@@ -1358,6 +1394,7 @@ export async function disconnectSession() {
   trackerUnavailable = false;
   setTrackerInLogic([]);
   setTrackerGoMode("no");
+  setTrackerEntrances(null);
   setTrackerStatus({ kind: "idle" });
   setHints(null);
   setHintPoints(null);
@@ -1428,6 +1465,7 @@ function clearWorkerMirroredState() {
   trackerInitInFlight = null;
   setTrackerInLogic([]);
   setTrackerGoMode("no");
+  setTrackerEntrances(null);
   setTrackerStatus({ kind: "idle" });
   setHints(null);
   setHintPoints(null);

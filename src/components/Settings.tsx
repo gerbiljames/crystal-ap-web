@@ -1,5 +1,6 @@
 import { For, Show, createSignal, createEffect, onCleanup } from "solid-js";
-import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs, controllerPrefs, setControllerPrefs, audioPrefs, setAudioPrefs, uiPrefs, setUiPrefs, romOverridePrefs, setRomOverridePrefs } from "../state.js";
+import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs, controllerPrefs, setControllerPrefs, audioPrefs, setAudioPrefs, uiPrefs, setUiPrefs, romOverridePrefs, setRomOverridePrefs, trackerPrefs } from "../state.js";
+import { setDeferEntrances } from "../actions.js";
 import { TOP_LEVEL_FIELDS, GAME_OPTION_FIELDS, type OverrideField } from "../lib/overrides.js";
 import {
   DEFAULT_BINDINGS, loadBindings, saveBindings, captureNextButton, getActivePad,
@@ -20,7 +21,7 @@ const INPUT_ROWS: { name: InputName; label: string }[] = [
   { name: "right",  label: "right" },
 ];
 
-type Tab = "controller" | "keyboard" | "audio" | "overlay" | "ui" | "overrides";
+type Tab = "controller" | "keyboard" | "audio" | "overlay" | "ui" | "tracker" | "overrides";
 
 export function Settings() {
   const [tab, setTab] = createSignal<Tab>("controller");
@@ -81,6 +82,13 @@ export function Settings() {
               <button
                 class="modal-tab"
                 role="tab"
+                aria-selected={tab() === "tracker"}
+                data-active={tab() === "tracker"}
+                onClick={() => setTab("tracker")}
+              >tracker</button>
+              <button
+                class="modal-tab"
+                role="tab"
                 aria-selected={tab() === "overrides"}
                 data-active={tab() === "overrides"}
                 onClick={() => setTab("overrides")}
@@ -103,6 +111,9 @@ export function Settings() {
             </Show>
             <Show when={tab() === "ui"}>
               <UiPanel />
+            </Show>
+            <Show when={tab() === "tracker"}>
+              <TrackerSettingsPanel />
             </Show>
             <Show when={tab() === "overrides"}>
               <OverridesPanel />
@@ -354,6 +365,22 @@ function UiPanel() {
         />
         <span class="switch-track"><span class="switch-knob"></span></span>
         <span class="switch-text">never show on-screen controls</span>
+      </label>
+    </div>
+  );
+}
+
+function TrackerSettingsPanel() {
+  return (
+    <div class="ui-panel">
+      <label class="switch" title="When on, the tracker treats each randomized entrance as unknown until you go through it, so it doesn't reveal where entrances lead, and the console's entrances tab lists the ones you've discovered. When off, the tracker knows every connection from the start and the entrances tab is hidden. Only affects seeds with entrance randomization.">
+        <input
+          type="checkbox"
+          checked={trackerPrefs().deferEntrances}
+          onChange={(ev) => setDeferEntrances(ev.currentTarget.checked)}
+        />
+        <span class="switch-track"><span class="switch-knob"></span></span>
+        <span class="switch-text">deferred entrances (hide until discovered)</span>
       </label>
     </div>
   );

@@ -455,12 +455,13 @@ async function hostStop(id) {
 // authoritative source for slot_data + locations + items.
 let trackerReady = false;
 
-async function trackerInit(id, multidataBytes, slotName) {
+async function trackerInit(id, multidataBytes, slotName, deferEntrances) {
   await ensureInit(id);
   const available = pyodide.globals.get("_TRACKER_AVAILABLE");
   if (!available) {
     return { out: { ok: false, reason: "tracker world failed to import" } };
   }
+  pyodide.globals.set("_ut_deferred_in", deferEntrances !== false);
   if (multidataBytes) {
     pyodide.FS.writeFile("/tmp/ut_seed.archipelago", multidataBytes);
     pyodide.globals.set("_ut_slot_name_in", String(slotName || ""));
@@ -469,6 +470,7 @@ async function trackerInit(id, multidataBytes, slotName) {
       trackerReady = false;
       return { out: { ok: false, reason: String(errOrEmpty) } };
     }
+    await trackerDeferredSetup();
     trackerReady = true;
     return { out: { ok: true } };
   }
@@ -485,8 +487,18 @@ async function trackerInit(id, multidataBytes, slotName) {
     }
     return { out: { ok: false, reason } };
   }
+  await trackerDeferredSetup();
   trackerReady = true;
   return { out: { ok: true } };
+}
+
+// Deferred entrances, the way UT's TrackerClient wires them: the world names
+// data-storage keys its game client fills with discovered entrances, and a
+// callback that connects those entrances in the tracker's multiworld. Watch
+// the keys on the session; TRACKER_UPDATE_PY feeds new values to the callback.
+async function trackerDeferredSetup() {
+  try { await pyodide.runPythonAsync(TRACKER_DEFERRED_SETUP_PY); }
+  catch (err) { console.warn("[ut] deferred entrance setup failed:", err); }
 }
 
 async function trackerUpdate(id, checkedLocIds) {
@@ -496,8 +508,16 @@ async function trackerUpdate(id, checkedLocIds) {
   const tup = result?.toJs ? result.toJs() : result;
   const go = (tup && typeof tup[0] === "string") ? tup[0] : "no";
   const locations = Array.isArray(tup?.[1]) ? tup[1] : (tup?.[1] ? Array.from(tup[1]) : []);
+  // [randomized, deferred, hidden count, [[from, to], ...]]
+  const e = tup?.[2];
+  const entrances = e ? {
+    randomized: !!e[0],
+    deferred: !!e[1],
+    hidden: Number(e[2]) || 0,
+    rows: Array.from(e[3] || [], (r) => [String(r[0]), String(r[1])]),
+  } : null;
   if (result?.destroy) result.destroy();
-  return { out: { ok: true, locations, go } };
+  return { out: { ok: true, locations, go, entrances } };
 }
 
 async function trackerChecks(id) {
@@ -548,7 +568,8 @@ function trackerStop() {
   try {
     pyodide.runPython(`
 import builtins as _b
-for _n in ("_ut_tracker", "_ut_multidata", "_ut_slot", "_ut_slot_name", "_ut_game", "_ut_mode"):
+for _n in ("_ut_tracker", "_ut_multidata", "_ut_slot", "_ut_slot_name", "_ut_game", "_ut_mode",
+           "_ut_def_keys", "_ut_def_cb", "_ut_def_seen"):
     try: delattr(_b, _n)
     except Exception: pass
 `);
@@ -617,7 +638,7 @@ except Exception: pass
       const text = ev.data.text || "";
       pyodide.globals.get("_cmdproc")(text);
     } else if (cmd === "tracker-init") {
-      const { out } = await trackerInit(id, ev.data.multidata, ev.data.slotName);
+      const { out } = await trackerInit(id, ev.data.multidata, ev.data.slotName, ev.data.deferEntrances);
       post({ id, ok: true, out });
     } else if (cmd === "tracker-update") {
       const { out } = await trackerUpdate(id, ev.data.checked);
@@ -768,7 +789,15 @@ _orig_on_package = ctx.on_package
 def _ut_on_package(cmd, args):
     try: _orig_on_package(cmd, args)
     finally:
-        if cmd in ("Connected", "ReceivedItems", "RoomUpdate"):
+        _dirty = cmd in ("Connected", "ReceivedItems", "RoomUpdate")
+        # A discovered-entrance key (see TRACKER_DEFERRED_SETUP_PY) arriving or
+        # changing reconnects entrances, which can put new locations in logic.
+        if not _dirty and cmd in ("Retrieved", "SetReply"):
+            import builtins as _bi
+            _dk = getattr(_bi, "_ut_def_keys", None)
+            if _dk:
+                _dirty = (args.get("key") in _dk) or any(k in _dk for k in (args.get("keys") or {}))
+        if _dirty:
             try: _jpost({"event": "tracker-dirty"})
             except Exception as _e: print(f"[ut] dirty post failed: {_e}")
         # Hints arrive via the Get/SetNotify reply (Retrieved) and change live
@@ -1267,6 +1296,18 @@ try:
     if _world_cls is None:
         raise RuntimeError(f"no registered world for game {_game!r}")
     _tracker = TrackerCore(logging.getLogger("UT"), False, False)
+    # Deferred entrances, from the app's tracker setting: "on" has worlds that
+    # support it leave randomized entrances unconnected until discovered, "off"
+    # connects them all up front. Set before the host-settings read so its
+    # default can't override it.
+    from worlds.tracker import DeferredEntranceMode
+    _tracker.enforce_deferred_connections = (
+        DeferredEntranceMode.forced if _ut_deferred_in else DeferredEntranceMode.disabled)
+    # UT caches generated multiworlds on the class, keyed by slot data alone.
+    # This worker outlives tracker re-inits, so a hit would hand back one built
+    # under the other deferral mode (or with earlier discoveries connected).
+    TrackerCore.cached_multiworlds.clear()
+    TrackerCore.cached_slot_data.clear()
     # Seed sorting_priorities BEFORE initalize_tracker_core, so any error path
     # inside it doesn't KeyError on missing 'ut_status' priority.
     try:
@@ -1334,6 +1375,13 @@ try:
         if _world_cls is None:
             raise RuntimeError(f"no registered world for game {_game!r}")
         _tracker = TrackerCore(logging.getLogger("UT"), False, False)
+        # Deferred entrances, from the app's tracker setting (see TRACKER_INIT_PY).
+        from worlds.tracker import DeferredEntranceMode
+        _tracker.enforce_deferred_connections = (
+            DeferredEntranceMode.forced if _ut_deferred_in else DeferredEntranceMode.disabled)
+        # See TRACKER_INIT_PY: never reuse a multiworld cached by an earlier init.
+        TrackerCore.cached_multiworlds.clear()
+        TrackerCore.cached_slot_data.clear()
         try:
             (_yp, _tracker.output_format, _tracker.hide_excluded, _tracker.use_split,
              _enf_def, _tracker.enable_glitched_logic, _tracker.sorting_priorities,
@@ -1477,6 +1525,38 @@ _hints_get()
 
 // Recompute in-logic locations given the player's current set of checked
 // location IDs. items_received is derived from multidata for solo seeds.
+// Runs after a successful tracker init. Mirrors TrackerClient: only when the
+// tracker defers entrances and the world provides both the key(s) and the
+// callback. Keys are formatted with this slot's team/player and subscribed on
+// the live session so Retrieved/SetReply keep ctx.stored_data current (the
+// world's own game client usually subscribes already; set_notify dedupes).
+const TRACKER_DEFERRED_SETUP_PY = `
+def _ut_deferred_setup():
+    import builtins as _b
+    _b._ut_def_keys = None
+    _b._ut_def_cb = None
+    _b._ut_def_seen = {}
+    _t = getattr(_b, "_ut_tracker", None)
+    if _t is None: return
+    from worlds.tracker import DeferredEntranceMode
+    if _t.enforce_deferred_connections == DeferredEntranceMode.disabled: return
+    _w = _t.get_current_world()
+    _keys = getattr(_w, "found_entrances_datastorage_key", None)
+    _cb = getattr(_w, "reconnect_found_entrances", None)
+    if not _keys or not callable(_cb): return
+    if isinstance(_keys, str): _keys = [_keys]
+    _team = getattr(_t, "team", None)
+    _ctx = globals().get("ctx", None)
+    if _team is None: _team = getattr(_ctx, "team", None) or 0
+    _slot = getattr(_t, "slot", None) or _t.player_id
+    _keys = [k.format(player=_slot, team=_team) for k in _keys]
+    _b._ut_def_keys = _keys
+    _b._ut_def_cb = _cb
+    if _ctx is not None:
+        _ctx.set_notify(*_keys)
+_ut_deferred_setup()
+`;
+
 const TRACKER_UPDATE_PY = `
 def _ut_compute():
     import builtins as _b
@@ -1507,6 +1587,7 @@ def _ut_compute():
                 _iid, _recv, _flags = _info[0], _info[1], _info[2]
                 if _recv != _slot: continue   # not for us — would be sent over network
                 _items.append(NetworkItem(_iid, _lid, _slot, _flags))
+        _ut_apply_found_entrances(_t)
         _t.set_items_received(_items)
         _t.set_missing_locations(_missing)
         _state = _t.updateTracker()
@@ -1522,10 +1603,66 @@ def _ut_compute():
                 _go = "glitched"
         except Exception:
             pass
-        return [_go, list(_state.in_logic_locations)]
+        return [_go, list(_state.in_logic_locations), _ut_entrances(_t)]
     except Exception:
         import traceback; traceback.print_exc()
-        return ["no", []]
+        return ["no", [], None]
+
+# Hand each discovered-entrance key's value to the world's callback when it has
+# changed since last time (the callback connects entrances, never disconnects,
+# so replaying an unchanged list would only cost time).
+def _ut_apply_found_entrances(_t):
+    import builtins as _b
+    _keys = getattr(_b, "_ut_def_keys", None)
+    _cb = getattr(_b, "_ut_def_cb", None)
+    _ctx = globals().get("ctx", None)
+    if not _keys or _cb is None or _ctx is None: return
+    _seen = _b._ut_def_seen
+    _stored = getattr(_ctx, "stored_data", None) or {}
+    for _k in _keys:
+        _v = _stored.get(_k)
+        if _v is None: continue
+        _sig = repr(_v)
+        if _seen.get(_k) == _sig: continue
+        try: _cb(_k, _v)
+        except Exception:
+            import traceback; traceback.print_exc()
+            continue
+        _seen[_k] = _sig
+
+# The randomized entrances the player knows about, for the Entrances tab:
+# [randomized, deferred, hidden, [[from, to], ...]] with the world's display
+# names. Deferred, an entrance is known once reconnected (discovered); not
+# deferred, the tracker has them all. Worlds without er_pairings report none.
+def _ut_entrances(_t):
+    try:
+        from worlds.tracker import DeferredEntranceMode
+        _w = _t.get_current_world()
+        _pairs = list(getattr(_w, "er_pairings", None) or []) if _w is not None else []
+        if not _pairs: return [False, False, 0, []]
+        _deferred = (_t.enforce_deferred_connections != DeferredEntranceMode.disabled
+                     and bool(getattr(_w, "_deferred_entrance_targets", None)))
+        try:
+            import importlib
+            _pkg = type(_w).__module__.rsplit(".", 1)[0]
+            _friendly = importlib.import_module(_pkg + ".data").friendly_entrance_name
+        except Exception:
+            _friendly = lambda n: n
+        _mw, _pid = _t.multiworld, _t.player_id
+        _rows, _hidden = [], 0
+        for _src, _dst in _pairs:
+            if _deferred:
+                try: _known = _mw.get_entrance(_src, _pid).connected_region is not None
+                except Exception: _known = False
+                if not _known:
+                    _hidden += 1
+                    continue
+            _rows.append([_friendly(_src), _friendly(_dst)])
+        _rows.sort()
+        return [True, _deferred, _hidden, _rows]
+    except Exception:
+        import traceback; traceback.print_exc()
+        return None
 _ut_compute()
 `;
 

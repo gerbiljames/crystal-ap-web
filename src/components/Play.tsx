@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { app, logLines, type LogEntry, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, hints, hintsStatus, hintPoints, hintItemNames, hintFeedback, connectOpen, setConnectOpen, isMobile, uiPrefs } from "../state.js";
+import { app, logLines, type LogEntry, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, trackerEntrances, trackerPrefs, hints, hintsStatus, hintPoints, hintItemNames, hintFeedback, connectOpen, setConnectOpen, isMobile, uiPrefs } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { isPatchName } from "../lib/zip.js";
 import { connectSession, disconnectSession, disposeEmulator, ensureEmulator, ensureTracker, ensureHints, requestHint, importSaveFile, stopTrackerPolling } from "../actions.js";
@@ -192,6 +192,50 @@ function TrackerPanel() {
   );
 }
 
+// Randomized entrances the tracker knows, from the same UT update as the
+// Tracker tab. With deferral on (settings → tracker) that is the ones the
+// player has been through; off, it is every pairing in the seed.
+function EntrancesPanel() {
+  const status = () => trackerStatus();
+  const ents = () => trackerEntrances();
+  const placeholder = () => {
+    const s = status();
+    const e = ents();
+    if (app.session.state !== "live") return "connect a session to see entrances";
+    if (s.kind === "error") return "tracker unavailable: " + (s.reason || "").split("\n")[0];
+    if (s.kind === "idle" || e === null) return "waiting for tracker…";
+    if (!e.randomized) return "entrances aren't randomized in this seed";
+    if (e.rows.length === 0) return "no entrances discovered yet — go through one to see where it leads";
+    return null;
+  };
+  return (
+    <div class="tracker-panel">
+      <Show when={app.session.state === "live" && ents()?.randomized}>
+        <div class="tracker-header">
+          <span>
+            {ents()!.deferred
+              ? `${ents()!.rows.length} discovered · ${ents()!.hidden} unknown`
+              : `${ents()!.rows.length} entrances`}
+          </span>
+          <Show when={!ents()!.deferred}>
+            <span title="this world doesn't defer entrances, so all are known">all known</span>
+          </Show>
+        </div>
+      </Show>
+      <Show when={placeholder() !== null}>
+        <div class="tracker-empty">{placeholder()}</div>
+      </Show>
+      <Show when={placeholder() === null}>
+        <ul class="tracker-list">
+          <For each={ents()!.rows}>{([from, to]) => (
+            <li class="tracker-loc">{from} → {to}</li>
+          )}</For>
+        </ul>
+      </Show>
+    </div>
+  );
+}
+
 function HintsPanel() {
   let inputRef: HTMLInputElement | undefined;
   const status = () => hintsStatus();
@@ -312,7 +356,20 @@ function LogArea() {
   let wrapRef;
   let inputRef: HTMLInputElement | undefined;
   let atBottom = true;
-  const [tab, setTab] = createSignal<"console" | "tracker" | "hints">("console");
+  const [tab, setTab] = createSignal<"console" | "tracker" | "entrances" | "hints">("console");
+  // Counts shown in the tab names, once a live session has produced them:
+  // locations in logic, entrances known (discovered, or all when not
+  // deferred), and hints not yet found.
+  const live = () => app.session.state === "live";
+  const count = (n: number | null | undefined) => (live() && n != null ? ` (${n})` : "");
+  const trackerCount = () => count(trackerStatus().kind === "ready" ? trackerInLogic().length : null);
+  const entranceCount = () => { const e = trackerEntrances(); return count(e?.randomized ? e.rows.length : null); };
+  const hintCount = () => { const h = hints(); return count(h ? h.filter((x) => !x.found).length : null); };
+  // The entrances tab only exists with deferred entrances on; turning them off
+  // while it is open falls back to the console.
+  createEffect(() => {
+    if (!trackerPrefs().deferEntrances && tab() === "entrances") setTab("console");
+  });
   const onScroll = () => {
     atBottom = wrapRef.scrollHeight - wrapRef.clientHeight - wrapRef.scrollTop < 16;
   };
@@ -352,7 +409,17 @@ function LogArea() {
           aria-selected={tab() === "tracker"}
           data-active={tab() === "tracker"}
           onClick={() => { setTab("tracker"); ensureTracker().catch(() => {}); }}
-        >tracker</button>
+        >tracker{trackerCount()}</button>
+        <Show when={trackerPrefs().deferEntrances}>
+          <button
+            type="button"
+            class="log-tab"
+            role="tab"
+            aria-selected={tab() === "entrances"}
+            data-active={tab() === "entrances"}
+            onClick={() => { setTab("entrances"); ensureTracker().catch(() => {}); }}
+          >entrances{entranceCount()}</button>
+        </Show>
         <button
           type="button"
           class="log-tab"
@@ -360,7 +427,7 @@ function LogArea() {
           aria-selected={tab() === "hints"}
           data-active={tab() === "hints"}
           onClick={() => { setTab("hints"); stopTrackerPolling(); ensureHints().catch(() => {}); }}
-        >hints</button>
+        >hints{hintCount()}</button>
       </div>
       <Show when={tab() === "console"}>
         <div id="log-wrap" class="log-wrap" ref={wrapRef} onScroll={onScroll}>
@@ -399,6 +466,9 @@ function LogArea() {
       </Show>
       <Show when={tab() === "tracker"}>
         <TrackerPanel />
+      </Show>
+      <Show when={tab() === "entrances"}>
+        <EntrancesPanel />
       </Show>
       <Show when={tab() === "hints"}>
         <HintsPanel />
