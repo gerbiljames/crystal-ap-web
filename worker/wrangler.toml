@@ -1,3 +1,13 @@
 name = "crystal-ap-host"
 main = "worker.js"
 compatibility_date = "2025-01-01"
+
+# Per-IP cap on rooms created through this Worker (see HOST_LIMITER in
+# worker.js). namespace_id is any account-unique integer string.
+[[ratelimits]]
+name = "HOST_LIMITER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 5
+  period = 60
