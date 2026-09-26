@@ -8,6 +8,7 @@ import { SAVE_STORE } from "../lib/constants.js";
 import { logErr, logWarn } from "../lib/log.js";
 import { apWorker } from "../lib/ap-worker.js";
 import { keyBindings, isDefaultKeyBindings } from "../lib/keyboard.js";
+import { useArtifactUrls } from "../lib/artifact-urls.js";
 
 // Recent log lines drawn over the game canvas while fullscreen. Mounted only
 // for the duration of fullscreen (see ScreenFrame), so everything here —
@@ -478,11 +479,12 @@ function LogArea() {
 }
 
 function SessionLinks() {
+  const urls = useArtifactUrls(() => app.artifacts);
   const items = () => {
     const out = [];
     if (app.hosted?.room_url) out.push({ href: app.hosted.room_url, label: "archipelago.gg room", kind: "external" });
     const a = app.artifacts || {};
-    const blobUrl = (name) => URL.createObjectURL(new Blob([a[name]], { type: "application/octet-stream" }));
+    const blobUrl = (name) => urls()[name];
     const patch = Object.keys(a).find(isPatchName);
     const spoil = Object.keys(a).find(n => n.endsWith("_Spoiler.txt"));
     const multi = Object.keys(a).find(n => n.endsWith(".archipelago"));

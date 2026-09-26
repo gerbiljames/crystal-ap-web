@@ -10,6 +10,7 @@ import {
 } from "../actions.js";
 import type { SavedYaml } from "../lib/yamls.js";
 import { Dropzone } from "./Dropzone.jsx";
+import { useArtifactUrls } from "../lib/artifact-urls.js";
 
 function Blurb() {
   return (
@@ -238,7 +239,8 @@ function OptionsPane() {
 
 function ArtifactChips() {
   const artifacts = () => app.artifacts || {};
-  const blobUrl = (name) => URL.createObjectURL(new Blob([artifacts()[name]], { type: "application/octet-stream" }));
+  const urls = useArtifactUrls(() => app.artifacts);
+  const blobUrl = (name) => urls()[name];
   const chips = () => {
     const a = artifacts();
     const out = [];
