@@ -39,20 +39,23 @@ def run(args: list[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(args, check=True, text=True, capture_output=True, **kw)
 
 
-def ensure_ref(repo: Path, ref: str) -> None:
-    """Make `ref` resolvable in `repo`, fetching it if the checkout is shallow
-    or was cloned without tags (CI checkouts usually are)."""
+def ensure_ref(repo: Path, ref: str) -> str:
+    """Resolve `ref` to a commit in `repo`, fetching it if the checkout is
+    shallow or was cloned without tags (CI checkouts usually are). Returns the
+    commit id: a fetched branch only lands in FETCH_HEAD, not under its name."""
+    def commit(name: str) -> str:
+        return run(["git", "-C", str(repo), "rev-parse", "--verify", f"{name}^{{commit}}"]).stdout.strip()
     try:
-        run(["git", "-C", str(repo), "cat-file", "-e", f"{ref}^{{commit}}"])
-        return
+        return commit(ref)
     except subprocess.CalledProcessError:
         pass
     print(f"  fetching {ref} into {repo}", file=sys.stderr)
     try:
         run(["git", "-C", str(repo), "fetch", "--depth=1", "origin", f"refs/tags/{ref}:refs/tags/{ref}"])
+        return commit(ref)
     except subprocess.CalledProcessError:
         run(["git", "-C", str(repo), "fetch", "--depth=1", "origin", ref])
-    run(["git", "-C", str(repo), "cat-file", "-e", f"{ref}^{{commit}}"])
+        return commit("FETCH_HEAD")
 
 
 def archive_world(repo: Path, ref: str, package: str, dest: Path) -> None:
@@ -154,9 +157,9 @@ def main() -> None:
         print(f"  {channel}: {package} {version} (checkout) -> {tar_rel} ({size} bytes)", file=sys.stderr)
 
         for ref in spec.get("older", []):
-            ensure_ref(repo, ref)
+            rev = ensure_ref(repo, ref)
             with tempfile.TemporaryDirectory() as tmp:
-                archive_world(repo, ref, package, Path(tmp))
+                archive_world(repo, rev, package, Path(tmp))
                 world_dir = Path(tmp) / "worlds" / package
                 version = json.loads((world_dir / "archipelago.json").read_text(encoding="utf-8-sig"))["world_version"]
                 tar_rel = f"worlds/{package}-{version}.tar"
