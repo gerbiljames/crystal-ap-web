@@ -2,7 +2,7 @@ import { For, Index, Show, createSignal, createMemo, createEffect, onCleanup, un
 import Prism from "prismjs";
 import "prismjs/components/prism-yaml";
 import { yamlCreatorOpen, setYamlCreatorOpen, yamlEditTarget, setYamlEditTarget } from "../state.js";
-import { saveCreatedYaml, saveEditedYaml, useSavedYaml } from "../actions.js";
+import { saveCreatedYaml, saveEditedYaml, useYamlText } from "../actions.js";
 import {
   SCHEMAS, serializeFormToYaml, initialValueFor, parseYamlToForm,
   type FormState, type FormValue, type GameKey, type OptionDef, type SingleValue, type WeightedValue,
@@ -354,6 +354,7 @@ export function YamlCreator() {
   const [openGroups, setOpenGroups] = createSignal<Record<string, boolean>>({});
   const [showPreview, setShowPreview] = createSignal(false);
   const [busy, setBusy] = createSignal<null | "save" | "use">(null);
+  const [saveErr, setSaveErr] = createSignal<string | null>(null);
   // When editing an existing saved YAML, we hold onto the library name so the
   // entry round-trips with whatever the user had previously renamed it to.
   const [libraryName, setLibraryName] = createSignal<string | null>(null);
@@ -389,7 +390,7 @@ export function YamlCreator() {
   // Clear the edit target whenever the modal closes so the next open starts
   // in create mode.
   createEffect(() => {
-    if (!yamlCreatorOpen()) setYamlEditTarget(null);
+    if (!yamlCreatorOpen()) { setYamlEditTarget(null); setSaveErr(null); }
   });
 
   // Esc closes.
@@ -452,13 +453,20 @@ export function YamlCreator() {
       const text = yamlText();
       const target = yamlEditTarget();
       const name = libraryName() ?? ((form().name || "Player1") + ".yaml");
-      const hash = target
+      setSaveErr(null);
+      const saved = target
         ? await saveEditedYaml(text, name, target.hash)
         : await saveCreatedYaml(text, name);
+      // A plain save that failed keeps the creator open so nothing is lost.
+      // "save & use" goes ahead from the text in hand either way.
+      if (!saved && !alsoUse) {
+        setSaveErr("couldn't save to the library (browser storage unavailable — see the log)");
+        return;
+      }
       setYamlCreatorOpen(false);
       // Not awaited: the flow runs through generation, which shows its own
       // progress once the creator is closed.
-      if (alsoUse) void useSavedYaml(hash);
+      if (alsoUse) void useYamlText(text);
     } finally {
       setBusy(null);
     }
@@ -537,6 +545,12 @@ export function YamlCreator() {
             </details>
           </div>
 
+          <Show when={saveErr()}>
+            <div class="error-box">
+              <span class="err-title">not saved</span>
+              <span>{saveErr()}</span>
+            </div>
+          </Show>
           <div class="modal-foot yc-foot">
             <button class="btn-primary" disabled={!!busy()} onClick={() => doSave(false)}>
               {busy() === "save" ? "saving…" : "save"}

@@ -29,10 +29,13 @@ const latestStable = latestWorlds().find((w) => w.channel === "stable") ?? lates
 export function Nav() {
   const [menuOpen, setMenuOpen] = createSignal(false);
   const active = createMemo(() => app.seedId ? app.sessions.find((s: any) => s.id === app.seedId) ?? null : null);
-  const chipVersion = () => active()?.apworldVersion ?? latestStable?.display_version ?? "?";
+  // What the current seed runs on now; the session's recorded version only
+  // describes its cached ROM, which lags after a failed or pending re-patch.
+  const seedVersion = () => app.seedId ? (app.runningApworld ?? active()?.apworldVersion ?? null) : null;
+  const chipVersion = () => seedVersion() ?? latestStable?.display_version ?? "?";
   const chipTitle = () => {
-    const a = active();
-    return a?.apworldVersion ? `this seed plays on ${a.game ?? "Pokémon Crystal"} v${a.apworldVersion}\n\n${chipTooltip}` : chipTooltip;
+    const v = seedVersion();
+    return v ? `this seed plays on ${active()?.game ?? "Pokémon Crystal"} v${v}\n\n${chipTooltip}` : chipTooltip;
   };
   let menuRef: HTMLDivElement | undefined;
 

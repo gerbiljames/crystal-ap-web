@@ -3,13 +3,14 @@
 // (state.js) and talk to the framework-agnostic lib/ modules.
 
 import { unwrap } from "solid-js/store";
-import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setHints, setHintsStatus, setHintPoints, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen, romOverridePrefs, setVersionPick } from "./state.js";
+import { app, setApp, setPageNotice, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setHints, setHintsStatus, setHintPoints, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen, romOverridePrefs, setVersionPick } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
 import { resolveWorldForPatch, latestWorlds, latestWorldForGame, bundledWorld, bundledWorldByDisplay, runtimeFor, type BundledWorld, type WorldResolution } from "./lib/apworld.js";
 import { buildOverrides, overridesHash } from "./lib/overrides.js";
+import { adoptLegacySave } from "./lib/saves.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
-import { db, idbGet, idbPut, idbDel, idbHas } from "./lib/idb.js";
+import { db, idbGet, idbPut, idbDel, idbHas, setDbNoticeHandler } from "./lib/idb.js";
 import { loadSessions, saveSessions, recordSession as recordSessionPure, removeSession } from "./lib/sessions.js";
 import { recordYaml, renameYaml as renameYamlPure, removeYaml, sha256Hex, loadYamls } from "./lib/yamls.js";
 import { tryHostMultidata } from "./lib/host.js";
@@ -55,7 +56,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
 export function resetTransient() {
   setApp({
     seedId: null, artifacts: null, hosted: null, patchedRom: null,
-    yamlErr: null,
+    yamlErr: null, runningApworld: null,
     gen: { visible: false, status: "queued", elapsed: "0.0s", error: null, done: false },
     rom: { progressText: null, error: null },
   });
@@ -76,8 +77,30 @@ export async function forgetSession(id: string) {
     idbDel(dbc, id, MHOST_SAVE_STORE).catch(() => {});
     idbDel(dbc, id, SAVE_STORE).catch(() => {});
     idbDel(dbc, id, STATE_STORE).catch(() => {});
+    // A save the version-8 upgrade couldn't move still sits under the ROM hash
+    // (see adoptLegacySave). Drop it once no remaining session shares that hash.
+    const hash = removed?.romHash;
+    if (hash && hash !== id && !loadSessions().some((s: any) => s.romHash === hash)) {
+      idbDel(dbc, hash, SAVE_STORE).catch(() => {});
+      idbDel(dbc, hash, STATE_STORE).catch(() => {});
+    }
   }
 }
+
+// IndexedDB upgrade trouble (see idb.ts). A blocked open goes on the home
+// pane, which is where it would otherwise just hang, and comes off again once
+// the open goes through (unless something replaced it meanwhile). Being
+// superseded is permanent for this page, so it gets the page-wide notice.
+const DB_BLOCKED_MSG = "another tab is still running an older version of this site — close it to finish updating your saved data";
+setDbNoticeHandler((notice) => {
+  if (notice === "blocked") { logErr(DB_BLOCKED_MSG); setApp("yamlErr", DB_BLOCKED_MSG); }
+  else if (notice === "unblocked") { if (app.yamlErr === DB_BLOCKED_MSG) setApp("yamlErr", null); }
+  else {
+    const msg = "this site was updated in another tab — reload this page; it can no longer save";
+    logErr(msg);
+    setPageNotice(msg);
+  }
+});
 
 // One seed-opening flow at a time. Resume, import and using a saved YAML all
 // resolve a version or select a runtime (possibly restarting it) and set
@@ -85,10 +108,42 @@ export async function forgetSession(id: string) {
 // to the end, generation and patching included. A second click while one is
 // running is dropped.
 let flowInFlight = false;
+// The "still busy" notice a dropped request leaves on the home pane. It stands
+// in for no error: the running flow's own failure replaces it (see flowErr),
+// and it is cleared when that flow settles.
+let busyNotice: string | null = null;
+let runningLabel = "";
 async function guardedFlow(label: string, fn: () => Promise<void>): Promise<void> {
-  if (flowInFlight) { logWarn(`still ${label} — ignoring another request`); return; }
+  if (flowInFlight) {
+    // On the home pane too: the click may have come from a dialog that has
+    // already closed, and a log line alone would look like nothing happened.
+    // Named after the flow that is running, not the one dropped. A blocked DB
+    // upgrade is why a flow hangs, so its message stays put.
+    const msg = `still ${runningLabel} — try again once it has finished`;
+    logWarn(msg);
+    if (app.yamlErr !== DB_BLOCKED_MSG) { busyNotice = msg; setApp("yamlErr", msg); }
+    return;
+  }
   flowInFlight = true;
-  try { await fn(); } finally { flowInFlight = false; }
+  runningLabel = label;
+  try { await fn(); }
+  finally {
+    flowInFlight = false;
+    if (busyNotice && app.yamlErr === busyNotice) setApp("yamlErr", null);
+    busyNotice = null;
+  }
+}
+
+// A new flow clears the last one's error, but not the blocked-DB message: the
+// flow is about to wait on that same open, and the message is why.
+function clearFlowErr() {
+  if (app.yamlErr !== DB_BLOCKED_MSG) setApp("yamlErr", null);
+}
+
+// A flow's fallback error: keeps a more specific one already shown (from
+// selectWorlds, say), but not the busy notice.
+function flowErr(msg: string) {
+  setApp("yamlErr", (a) => (a && a !== busyNotice ? a : msg));
 }
 
 export function resumeSession(id: string) { return guardedFlow("opening a seed", () => resumeSessionFlow(id)); }
@@ -96,7 +151,7 @@ export function resumeSession(id: string) { return guardedFlow("opening a seed",
 async function resumeSessionFlow(id: string) {
   const session = loadSessions().find((s: any) => s.id === id);
   if (!session) return;
-  setApp("yamlErr", null);
+  clearFlowErr();
 
   const dbc = await db();
   const cachedRom = dbc ? await idbGet<ArrayBuffer>(dbc, id, ROM_STORE).catch(() => null) : null;
@@ -113,6 +168,7 @@ async function resumeSessionFlow(id: string) {
     : null;
   let target: BundledWorld | null = null;
   let resolvedFromPatch = false;
+  let patchUnreadable = false;
   if (patchName) {
     try {
       const prepared = await prepareRuntimeForPatch(savedArtifacts![patchName], { recorded, seedId: id });
@@ -120,7 +176,7 @@ async function resumeSessionFlow(id: string) {
       if (!prepared) {
         // Definitive: incompatible or unsupported (already logged), or the
         // runtime couldn't be switched (already surfaced).
-        setApp("yamlErr", (a) => a ?? `can't resume ${id} — no bundled apworld can play this seed (see the log)`);
+        flowErr(`can't resume ${id} — no bundled apworld can play this seed (see the log)`);
         return;
       }
       target = prepared.world;
@@ -128,6 +184,7 @@ async function resumeSessionFlow(id: string) {
     } catch (err) {
       // An unreadable cached patch shouldn't cost the seed: fall through to
       // the recorded version and play the cached ROM as-is.
+      patchUnreadable = true;
       logWarn(`couldn't read this seed's cached patch (${err.message || err}) — using its recorded apworld version`);
     }
   }
@@ -139,6 +196,7 @@ async function resumeSessionFlow(id: string) {
     if (target && !(await selectWorlds([target]))) return;
   }
   setApp("seedId", id);
+  setApp("runningApworld", null);
   setApp("slotName", session.slot || "Player1");
   setApp("hosted", session.hosted || null);
   // Stale when the version to play on differs from the one the cached ROM was
@@ -176,6 +234,7 @@ async function resumeSessionFlow(id: string) {
       refreshSessions();
     }
     setApp("patchedRom", cachedRom);
+    setApp("runningApworld", target?.display_version ?? null);
     if (savedArtifacts && Object.keys(savedArtifacts).length > 0) {
       setApp("artifacts", savedArtifacts);
     } else {
@@ -186,21 +245,30 @@ async function resumeSessionFlow(id: string) {
     await bootEmulatorAndUi();
     return;
   }
+  const hasCachedRom = !!cachedRom && cachedRom.byteLength === GB_ROM_SIZE;
   // No usable patched ROM yet (none cached, or it's stale) — if we still have
   // the generation artifacts, re-patch: drop the user back into the ROM-upload
-  // step (or straight to patching if the vanilla ROM is already cached).
-  if (savedArtifacts && Object.keys(savedArtifacts).length > 0) {
+  // step (or straight to patching if the vanilla ROM is already cached). Not
+  // when the cached patch is unreadable and a ROM is cached: the re-patch would
+  // fail on the same file, so play that ROM below instead.
+  if (savedArtifacts && Object.keys(savedArtifacts).length > 0 && !(patchUnreadable && hasCachedRom)) {
     setApp("artifacts", savedArtifacts);
+    setApp("runningApworld", target?.display_version ?? null);
     logOk(`resumed ${id} — need ROM to patch`);
     await continueToRom();
     return;
   }
-  // Re-patch isn't possible without the artifacts, but if the (stale) cached
-  // ROM is still here it's better to play that than to throw the seed away.
-  // This only happens on the stale path — a fresh cache was served above.
-  if (cachedRom && cachedRom.byteLength === GB_ROM_SIZE) {
+  // Re-patch isn't possible (the generation files were cleared, or the patch
+  // among them can't be read), but if the (stale) cached ROM is still here
+  // it's better to play that than to throw the seed away. This only happens on
+  // the stale path — a fresh cache was served above.
+  if (hasCachedRom) {
     setApp("patchedRom", cachedRom);
-    logWarn(`couldn't re-patch ${id} (generation files were cleared) — playing the previously patched ROM as-is; ${overridesStale ? "new option overrides" : "the apworld update"} won't apply`);
+    // The ROM is the one patched earlier, so it is that version's content.
+    setApp("runningApworld", session.apworldVersion ?? null);
+    if (savedArtifacts && Object.keys(savedArtifacts).length > 0) setApp("artifacts", savedArtifacts);
+    const why = patchUnreadable ? "its cached patch can't be read" : "generation files were cleared";
+    logWarn(`couldn't re-patch ${id} (${why}) — playing the previously patched ROM as-is; ${overridesStale ? "new option overrides" : "the apworld update"} won't apply`);
     setStep("play");
     await bootEmulatorAndUi();
     return;
@@ -458,6 +526,7 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
     return;
   }
   const { world, generator } = prepared;
+  setApp("runningApworld", world.display_version);
 
   // Patch-time option overrides (applied to this player's ROM only). Tag the
   // cached ROM with their hash too, so changing an override forces a re-patch
@@ -543,9 +612,10 @@ function extractSlotNameFromYaml(text: string): string | null {
 export function handleYamlDrop(f: File) { return guardedFlow("opening a file", () => handleYamlDropFlow(f)); }
 
 async function handleYamlDropFlow(f: File) {
-  setApp("yamlErr", null);
+  clearFlowErr();
   log(`read ${f.name} (${f.size} bytes)`);
   setApp("seedId", (crypto.randomUUID?.() || Math.random().toString(36).slice(2)).replace(/-/g, "").slice(0, 12));
+  setApp("runningApworld", null);
 
   const name = f.name.toLowerCase();
   const isPatch = isPatchName(name);
@@ -580,7 +650,7 @@ async function handleYamlDropFlow(f: File) {
     try { prepared = await prepareRuntimeForPatch(artifacts[patchName]); }
     catch (e) { setApp("yamlErr", `couldn't read ${f.name}: ${e.message || e}`); logErr(`couldn't read ${f.name}: ${e.message || e}`); return; }
     if (prepared === "cancelled") return;
-    if (!prepared) { setApp("yamlErr", (a) => a ?? `no bundled apworld can play ${f.name} — see the log`); return; }
+    if (!prepared) { flowErr(`no bundled apworld can play ${f.name} — see the log`); return; }
 
     const multiName = Object.keys(artifacts).find(n => n.toLowerCase().endsWith(".archipelago"));
     let hosted = null;
@@ -626,12 +696,17 @@ async function handleYamlDropFlow(f: File) {
   await runGeneration(text);
 }
 
-async function saveYamlToLibrary(text: string, filename: string, slot: string | null) {
+// Resolves whether the YAML (text and entry) was saved.
+async function saveYamlToLibrary(text: string, filename: string, slot: string | null): Promise<boolean> {
   try {
     const hash = await sha256Hex(text);
     const existing = loadYamls().find(y => y.hash === hash);
     const dbc = await db();
-    if (dbc) await idbPut(dbc, hash, { text }, YAML_STORE).catch((err) => logWarn(`save yaml text failed: ${err}`));
+    // No entry without its text: the list is shared with other tabs, which
+    // would find the entry and forget it as missing.
+    if (!dbc) { logWarn("could not save YAML to library: storage unavailable"); return false; }
+    try { await idbPut(dbc, hash, { text }, YAML_STORE); }
+    catch (err) { logWarn(`could not save YAML to library: ${err}`); return false; }
     recordYaml({
       hash,
       name: existing?.name ?? filename,
@@ -642,8 +717,10 @@ async function saveYamlToLibrary(text: string, filename: string, slot: string | 
     refreshYamls();
     if (existing) log(`YAML already saved as "${existing.name}" — timestamp refreshed`);
     else logOk(`saved YAML "${filename}" to library`);
+    return true;
   } catch (err: any) {
     logWarn(`could not save YAML to library: ${err.message || err}`);
+    return false;
   }
 }
 
@@ -656,29 +733,52 @@ export async function fetchSavedYamlText(hash: string): Promise<string | null> {
 
 export function useSavedYaml(hash: string) { return guardedFlow("opening a seed", () => useSavedYamlFlow(hash)); }
 
+// Generate from YAML text in hand (the creator's "save & use"), so a failed
+// library save doesn't cost what the user just wrote.
+export function useYamlText(text: string) { return guardedFlow("opening a seed", () => generateFromYaml(text)); }
+
 async function useSavedYamlFlow(hash: string) {
   const dbc = await db();
-  const stored = dbc ? await idbGet<{ text: string }>(dbc, hash, YAML_STORE).catch(() => null) : null;
+  // Only a read that succeeded and found nothing means the text is gone; an
+  // unavailable or failing DB must not cost the library entry (the list lives
+  // in localStorage, shared with every tab).
+  let stored: { text: string } | undefined;
+  try {
+    if (!dbc) throw new Error("storage unavailable");
+    stored = await idbGet<{ text: string }>(dbc, hash, YAML_STORE);
+  } catch (err: any) {
+    const msg = `couldn't read the saved YAML: ${err.message || err}`;
+    logErr(msg);
+    setApp("yamlErr", msg);
+    return;
+  }
   if (!stored?.text) {
-    logErr(`YAML text missing from storage — forgetting entry`);
+    const msg = "that saved YAML's text is missing from storage — removed it from the library";
+    logErr(msg);
+    setApp("yamlErr", msg);
     forgetSavedYaml(hash);
     return;
   }
-  setApp("yamlErr", null);
+  await generateFromYaml(stored.text);
+}
+
+async function generateFromYaml(text: string) {
+  clearFlowErr();
   setApp("seedId", (crypto.randomUUID?.() || Math.random().toString(36).slice(2)).replace(/-/g, "").slice(0, 12));
-  const slot = extractSlotNameFromYaml(stored.text);
+  setApp("runningApworld", null);
+  const slot = extractSlotNameFromYaml(text);
   if (slot) { setApp("slotName", slot); log(`parsed slot name: ${slot}`); }
   setStep("generating");
-  await runGeneration(stored.text);
+  await runGeneration(text);
 }
 
 // Save a YAML built by the in-app creation UI. Returns the content hash so
 // callers can immediately hand it to `useSavedYaml`.
-export async function saveCreatedYaml(text: string, displayName: string): Promise<string> {
-  setApp("yamlErr", null);
+// Both resolve whether the save landed.
+export async function saveCreatedYaml(text: string, displayName: string): Promise<boolean> {
+  clearFlowErr();
   const slot = extractSlotNameFromYaml(text);
-  await saveYamlToLibrary(text, displayName, slot);
-  return sha256Hex(text);
+  return saveYamlToLibrary(text, displayName, slot);
 }
 
 // Open the YAML creator in raw-edit mode with the saved YAML loaded.
@@ -695,15 +795,16 @@ export async function openYamlForEdit(hash: string) {
 
 // Save an edited YAML. If the text changed (different hash) the old entry is
 // forgotten so the library doesn't pile up versions.
-export async function saveEditedYaml(text: string, displayName: string, oldHash: string): Promise<string> {
-  setApp("yamlErr", null);
+export async function saveEditedYaml(text: string, displayName: string, oldHash: string): Promise<boolean> {
+  clearFlowErr();
   const slot = extractSlotNameFromYaml(text);
-  await saveYamlToLibrary(text, displayName, slot);
+  // Replace the old entry only once the new one is safely stored.
+  if (!(await saveYamlToLibrary(text, displayName, slot))) return false;
   const newHash = await sha256Hex(text);
   if (newHash !== oldHash) {
     await forgetSavedYaml(oldHash);
   }
-  return newHash;
+  return true;
 }
 
 export function renameSavedYaml(hash: string, newName: string) {
@@ -789,6 +890,14 @@ async function bootEmulatorAndUi() {
     disposeEmulator();
     const saveDb = await db();
     const seedId: string | null = app.seedId;
+    // Before the boot reads the seed's slot, and before the romHash below
+    // is overwritten with this ROM's: that is the key a save the upgrade
+    // couldn't move still lives under. Until adoption has settled, keep it.
+    let legacySettled = false;
+    if (saveDb && seedId) {
+      const entry = loadSessions().find((s: any) => s.id === seedId);
+      legacySettled = await adoptLegacySave(saveDb, seedId, entry?.romHash);
+    }
     const emu = await bootEmulator({
       canvas: $<HTMLCanvasElement>("#screen"),
       romBuf: app.patchedRom,
@@ -802,7 +911,7 @@ async function bootEmulatorAndUi() {
     if (app.seedId) {
       const list = loadSessions();
       const entry = list.find((s: any) => s.id === app.seedId);
-      if (entry && entry.romHash !== romHash) {
+      if (entry && entry.romHash !== romHash && (legacySettled || !entry.romHash)) {
         entry.romHash = romHash;
         saveSessions(list);
       }

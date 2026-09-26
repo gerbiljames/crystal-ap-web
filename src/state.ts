@@ -47,7 +47,14 @@ export const [app, setApp] = createStore({
   gen:   { visible: false, status: "queued", elapsed: "0.0s", error: null, done: false },
   rom:   { progressText: null, error: null },
   yamlErr: null,
+  // Display version of the apworld the current seed runs on, once resolved.
+  // The session's recorded version describes its cached ROM, which can lag.
+  runningApworld: null as string | null,
 });
+
+// A condition that makes this page unusable until it is reloaded (the site was
+// updated underneath it). Shown above everything, and never cleared.
+export const [pageNotice, setPageNotice] = createSignal<string | null>(null);
 
 export function persistHostPref(mode: HostPref) {
   try { localStorage.setItem(HOST_PREF_KEY, mode); } catch {}

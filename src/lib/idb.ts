@@ -64,9 +64,21 @@ function migrateSaveKeysToSeedIdsUnsafe(tx: IDBTransaction) {
   }
 }
 
+// Upgrades need every other connection closed. A tab still running an older
+// build holds one and, if that build predates onversionchange below, never lets
+// go: the open then waits until that tab closes. Tell the user rather than
+// hanging silently ("blocked", then "unblocked" once the open goes through).
+// "superseded" is the other side: a newer build upgraded the DB from another
+// tab, so this one has closed its connection and must reload.
+export type DbNotice = "blocked" | "unblocked" | "superseded";
+let onDbNotice: ((notice: DbNotice) => void) | null = null;
+export function setDbNoticeHandler(fn: typeof onDbNotice) { onDbNotice = fn; }
+
 export function openSaveDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(SAVE_DB_NAME, DB_VERSION);
+    let blocked = false;
+    req.onblocked = () => { blocked = true; onDbNotice?.("blocked"); };
     req.onupgradeneeded = (ev) => {
       const db = req.result;
       if (!db.objectStoreNames.contains(SAVE_STORE))      db.createObjectStore(SAVE_STORE);
@@ -78,7 +90,7 @@ export function openSaveDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(MHOST_SAVE_STORE)) db.createObjectStore(MHOST_SAVE_STORE);
       if (ev.oldVersion > 0 && ev.oldVersion < 8 && req.transaction) migrateSaveKeysToSeedIds(req.transaction);
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => { if (blocked) onDbNotice?.("unblocked"); resolve(req.result); };
     req.onerror   = () => reject(req.error);
   });
 }
@@ -91,11 +103,21 @@ export function idbGet<T = any>(db: IDBDatabase, k: IDBValidKey, store: string =
   });
 }
 
+// Writes resolve once their transaction commits, not when the request
+// succeeds: a transaction can still abort after that (Chrome reports quota
+// that way), and callers that record what they stored rely on it being there.
+function commit(tx: IDBTransaction): Promise<void> {
+  return new Promise((res, rej) => {
+    tx.oncomplete = () => res();
+    tx.onabort = tx.onerror = () => rej(tx.error ?? new DOMException("transaction aborted", "AbortError"));
+  });
+}
+
 export function idbPut(db: IDBDatabase, k: IDBValidKey, v: any, store: string = SAVE_STORE): Promise<void> {
   return new Promise((res, rej) => {
-    const t = db.transaction(store, "readwrite").objectStore(store).put(v, k);
-    t.onsuccess = () => res();
-    t.onerror   = () => rej(t.error);
+    const tx = db.transaction(store, "readwrite");
+    tx.objectStore(store).put(v, k);
+    commit(tx).then(res, rej);
   });
 }
 
@@ -111,9 +133,9 @@ export function idbHas(db: IDBDatabase, k: IDBValidKey, store: string = SAVE_STO
 
 export function idbDel(db: IDBDatabase, k: IDBValidKey, store: string = SAVE_STORE): Promise<void> {
   return new Promise((res, rej) => {
-    const t = db.transaction(store, "readwrite").objectStore(store).delete(k);
-    t.onsuccess = () => res();
-    t.onerror   = () => rej(t.error);
+    const tx = db.transaction(store, "readwrite");
+    tx.objectStore(store).delete(k);
+    commit(tx).then(res, rej);
   });
 }
 
@@ -121,6 +143,16 @@ export function idbDel(db: IDBDatabase, k: IDBValidKey, store: string = SAVE_STO
 // unavailable (private mode, quota, etc.) so callers can degrade gracefully.
 let _dbPromise: Promise<IDBDatabase | null> | null = null;
 export function db(): Promise<IDBDatabase | null> {
-  if (!_dbPromise) _dbPromise = openSaveDb().catch(err => { console.warn("IDB open failed:", err); return null; });
+  if (!_dbPromise) _dbPromise = openSaveDb().then((dbc) => {
+    // A newer build in another tab wants to upgrade: close so it isn't
+    // blocked on us. This tab's schema is now stale, so from here on it has
+    // no DB (callers already degrade on null) and must reload.
+    dbc.onversionchange = () => {
+      dbc.close();
+      _dbPromise = Promise.resolve(null);
+      onDbNotice?.("superseded");
+    };
+    return dbc;
+  }).catch(err => { console.warn("IDB open failed:", err); return null; });
   return _dbPromise;
 }

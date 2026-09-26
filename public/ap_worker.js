@@ -185,6 +185,9 @@ sys.stderr = _Tee()
 
 async function fetchBuf(url) {
   const res = await fetch(url);
+  // A bundle tar only disappears when a deploy drops that version, so a 404
+  // means this page predates the deploy.
+  if (res.status === 404) throw new Error(`fetch ${url}: not found — the site was probably updated since this page was opened; reload it`);
   if (!res.ok) throw new Error(`fetch ${url}: HTTP ${res.status}`);
   return res.arrayBuffer();
 }
@@ -385,16 +388,22 @@ function mhostDb() {
 }
 function mhostGet(seedId) {
   return mhostDb().then((db) => db && new Promise((res) => {
-    const t = db.transaction(MHOST_STORE, "readonly").objectStore(MHOST_STORE).get(seedId);
+    // transaction() throws if the main thread's upgrade closed us meanwhile.
+    let t;
+    try { t = db.transaction(MHOST_STORE, "readonly").objectStore(MHOST_STORE).get(seedId); }
+    catch { _mhostDbPromise = null; res(null); return; }
     t.onsuccess = () => res(t.result || null);
     t.onerror   = () => res(null);
   }));
 }
 function mhostPut(seedId, bytes) {
   return mhostDb().then((db) => db && new Promise((res) => {
-    const t = db.transaction(MHOST_STORE, "readwrite").objectStore(MHOST_STORE).put(bytes, seedId);
-    t.onsuccess = () => res(true);
-    t.onerror   = () => res(false);
+    let tx;
+    try { tx = db.transaction(MHOST_STORE, "readwrite"); tx.objectStore(MHOST_STORE).put(bytes, seedId); }
+    catch { _mhostDbPromise = null; res(false); return; }
+    // Committed, not merely accepted: the transaction can still abort.
+    tx.oncomplete = () => res(true);
+    tx.onabort = tx.onerror = () => res(false);
   }));
 }
 

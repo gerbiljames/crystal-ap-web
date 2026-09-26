@@ -1,5 +1,5 @@
-import { onMount, onCleanup } from "solid-js";
-import { app } from "./state.js";
+import { onMount, onCleanup, Show } from "solid-js";
+import { app, pageNotice } from "./state.js";
 import { teardownAndReload } from "./actions.js";
 import { Nav } from "./components/Nav.jsx";
 import { Home } from "./components/Home.jsx";
@@ -29,6 +29,12 @@ export function App() {
   return (
     <div class="app" data-step={app.step} data-session={app.session.state}>
       <Nav />
+      <Show when={pageNotice()}>
+        <div class="error-box" id="page-notice" role="alert">
+          <span class="err-title">reload needed</span>
+          <span>{pageNotice()} <button class="btn-primary" onClick={() => location.reload()}>reload</button></span>
+        </div>
+      </Show>
       <main>
         <Home />
         <PlayStep />

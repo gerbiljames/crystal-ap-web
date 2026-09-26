@@ -3,6 +3,7 @@
 // is registered via setBhHandler.
 
 import { logAnsi, logErr } from "./log.js";
+import { setPageNotice } from "../state.js";
 import { latestWorlds, runtimeFor, sameRuntime, type RuntimeConfig } from "./apworld.js";
 
 // Shape of a resolved call response. `out` is command-specific:
@@ -21,6 +22,13 @@ let worker: Worker | null = null;
 let wantedRuntime: RuntimeConfig = runtimeFor(latestWorlds());
 let workerRuntime: RuntimeConfig | null = null;
 let nextId = 1;
+// Whether the live worker has posted anything yet. An error before its first
+// message usually means the script itself failed to load.
+let heardFromWorker = false;
+// Set once the pinned worker script turns out to be gone from the server: this
+// page is from an older deploy and can't get a worker that matches it.
+let outdatedPage = false;
+const OUTDATED_PAGE_MSG = "this page is out of date — the site was updated since it was opened. Reload the page to continue.";
 const pending = new Map<number, { resolve: (v: CallResult) => void; reject: (e: Error) => void; onProgress: ProgressCb | null }>();
 let onBhReq: ((reqId: number, payload: string) => void) | null = null;
 let onTrackerDirty: (() => void) | null = null;
@@ -34,7 +42,7 @@ let onFatal: ((reason: string) => void) | null = null;
 // fail every in-flight call rather than leaving them hanging forever. Session,
 // host and tracker state all lived in the dead worker — onFatal owns rebuilding
 // them. The handler callbacks above are main-thread state and survive untouched.
-function killWorker(reason: string) {
+function killWorker(reason: string, recover = true) {
   const dead = worker;
   worker = null;
   if (dead) {
@@ -44,7 +52,9 @@ function killWorker(reason: string) {
   }
   const orphans = [...pending.values()];
   pending.clear();
-  for (const p of orphans) p.reject(new Error("ap worker restarted after a fatal error"));
+  const err = new Error(recover ? "ap worker restarted after a fatal error" : reason);
+  for (const p of orphans) p.reject(err);
+  if (!recover) return;
   // Defer so the rejections above settle before the handler starts issuing new
   // calls against the respawned worker.
   queueMicrotask(() => onFatal?.(reason));
@@ -84,12 +94,13 @@ async function restart(): Promise<void> {
 }
 
 function handle(ev: MessageEvent) {
+  heardFromWorker = true;
   const { id, event, phase, reqId, payload, ok, error, out, fatal } = ev.data;
   if (event === "progress")      { pending.get(id)?.onProgress?.(phase); return; }
   if (event === "bh-req")        { onBhReq?.(reqId, payload); return; }
   if (event === "py-log") {
-    // ap_worker.js is served unhashed from public/, so a cached copy can
-    // outlive the bundle by a deploy: accept the old per-line {msg} shape too.
+    // Accept the old per-line {msg} shape too, from workers that predate
+    // per-build pinning.
     const msgs: string[] = ev.data.msgs ?? (ev.data.msg !== undefined ? [ev.data.msg] : []);
     for (const msg of msgs) logAnsi("info", msg);
     return;
@@ -106,31 +117,68 @@ function handle(ev: MessageEvent) {
   if (fatal) killWorker(error || "pyodide fatal error");
 }
 
+// In a build the worker is emitted under a per-build name (vite.config.js) so
+// the bundle only ever talks to the worker it was built with. Dev serves the
+// live public/ap_worker.js.
+const WORKER_URL = import.meta.env.DEV ? "ap_worker.js" : `ap_worker.${__BUILD_ID__}.js`;
+
+// Tar paths as the worker should fetch them: with their content hash, so a
+// cached copy of different content under the same name is never used.
+const TAR_HASHES: Record<string, string> = __AP_TAR_HASHES__;
+function withTarHashes(runtime: RuntimeConfig): RuntimeConfig {
+  const q = (tar: string) => (TAR_HASHES[tar] ? `${tar}?h=${TAR_HASHES[tar]}` : tar);
+  return { coreTar: q(runtime.coreTar), worlds: runtime.worlds.map((w) => ({ ...w, tar: q(w.tar) })) };
+}
+
+async function workerScriptMissing(): Promise<boolean> {
+  // Bounded: every in-flight call waits on this answer.
+  try { return (await fetch(WORKER_URL, { method: "HEAD", cache: "no-store", signal: AbortSignal.timeout(5000) })).status === 404; }
+  catch { return false; }
+}
+
 function spawn(): Worker {
   if (worker) return worker;
-  // ap_worker.js is served unhashed from public/, so pin it to this build:
-  // the worker and the bundle share a protocol and a tar layout, and a cached
-  // worker from the previous deploy would understand neither.
-  worker = new Worker(`ap_worker.js?v=${__BUILD_ID__}`);
-  worker.onmessage = handle;
+  if (outdatedPage) throw new Error(OUTDATED_PAGE_MSG);
+  const w = worker = new Worker(WORKER_URL);
+  heardFromWorker = false;
+  w.onmessage = handle;
   // First message, ahead of any command that could boot Pyodide: the tars this
   // runtime is assembled from. The worker refuses to boot without it.
   workerRuntime = wantedRuntime;
-  worker.postMessage({ cmd: "configure", runtime: wantedRuntime });
+  w.postMessage({ cmd: "configure", runtime: withTarHashes(wantedRuntime) });
   // An error event means something escaped the worker's own try/catch — a failed
   // importScripts of the Pyodide CDN bundle, a 404 on the script itself, the
   // browser reaping the worker. No reply is ever coming for the calls in flight,
   // so treat it exactly like a Pyodide fatal: kill, respawn, recover. Without
   // this those calls hang forever and every guard keyed off them (connectInFlight)
   // latches shut.
-  worker.onerror = ev => {
-    logErr("ap worker error: " + ev.message);
-    killWorker(ev.message || "worker error");
+  w.onerror = ev => {
+    if (heardFromWorker) {
+      logErr("ap worker error: " + ev.message);
+      killWorker(ev.message || "worker error");
+      return;
+    }
+    // Nothing heard yet, so the script may not have loaded at all. If it is
+    // gone from the server this page predates a deploy: respawning would only
+    // 404 again, so fail everything with a reload prompt instead.
+    void workerScriptMissing().then((missing) => {
+      if (worker !== w) return;
+      if (missing) {
+        outdatedPage = true;
+        logErr(OUTDATED_PAGE_MSG);
+        setPageNotice(OUTDATED_PAGE_MSG);
+        killWorker(OUTDATED_PAGE_MSG, false);
+      } else {
+        logErr("ap worker error: " + (ev.message || "failed to start"));
+        killWorker(ev.message || "worker error");
+      }
+    });
   };
-  return worker;
+  return w;
 }
 
 function call(cmd: string, payload: Record<string, any> = {}, transfer: Transferable[] = [], cb: ProgressCb | null = null): Promise<CallResult> {
+  if (outdatedPage) return Promise.reject(new Error(OUTDATED_PAGE_MSG));
   const id = nextId++;
   // pending.set runs synchronously inside the Promise executor, so the entry
   // exists before postMessage — no reply (progress or result) can race ahead of
@@ -145,7 +193,7 @@ function call(cmd: string, payload: Record<string, any> = {}, transfer: Transfer
   return p;
 }
 
-function fire(cmd: string, payload: Record<string, any> = {}) { spawn().postMessage({ cmd, ...payload }); }
+function fire(cmd: string, payload: Record<string, any> = {}) { if (!outdatedPage) spawn().postMessage({ cmd, ...payload }); }
 
 export const apWorker = {
   init:            (cb?: ProgressCb)                                   => call("init", {}, [], cb ?? null),

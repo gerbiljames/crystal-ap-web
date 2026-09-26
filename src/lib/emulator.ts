@@ -294,22 +294,36 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
   if (persist) {
     const { db: pdb, key } = persist;
     const stateEnvelope = (): SavestateEnvelope => ({ romHash, state: extractState() });
+    // The connection is closed for good when another tab upgrades the DB (see
+    // idb.ts); retrying every tick would only flood the log. Stop saving and
+    // say so once — the page-wide notice asks for a reload.
+    let savesStopped = false;
+    const stopIfClosed = (err: unknown) => {
+      if ((err as DOMException)?.name !== "InvalidStateError") return false;
+      savesStopped = true;
+      if (saveTimer) { clearInterval(saveTimer); saveTimer = null; }
+      logErr("saves stopped: this page's storage connection was closed by an update in another tab");
+      return true;
+    };
     saveTimer = setInterval(async () => {
       if (disposed) return;
       if (sramDirty) {
         sramDirty = false;
         try { await idbPut(pdb, key, extractSram()); }
-        catch (err) { logErr("SRAM save failed: " + err); sramDirty = true; }
+        catch (err) { sramDirty = true; if (stopIfClosed(err)) return; logErr("SRAM save failed: " + err); }
+        // dispose() may have freed the emulator while that write committed.
+        if (disposed) return;
       }
       if (stateDirty) {
         stateDirty = false;
         try { await idbPut(pdb, key, stateEnvelope(), STATE_STORE); }
-        catch (err) { logErr("savestate save failed: " + err); stateDirty = true; }
+        catch (err) { stateDirty = true; if (stopIfClosed(err)) return; logErr("savestate save failed: " + err); }
       }
     }, 2000);
     onSavePagehide = () => {
-      try { if (sramDirty)  idbPut(pdb, key, extractSram()); } catch {}
-      try { if (stateDirty) idbPut(pdb, key, stateEnvelope(), STATE_STORE); } catch {}
+      if (savesStopped) return;
+      if (sramDirty)  idbPut(pdb, key, extractSram()).catch(() => {});
+      if (stateDirty) idbPut(pdb, key, stateEnvelope(), STATE_STORE).catch(() => {});
     };
     window.addEventListener("pagehide", onSavePagehide);
   }
