@@ -8,7 +8,7 @@
 
 import { idbGet, idbPutMany, idbDel } from "./idb.js";
 import { SAVE_STORE, STATE_STORE } from "./constants.js";
-import { isSavestateEnvelope, type SavestateEnvelope } from "./saves.js";
+import { isSavestateEnvelope, sramDigest, type SavestateEnvelope } from "./saves.js";
 import { log, logOk, logErr, logWarn } from "./log.js";
 import { getAudioContext } from "./audio.js";
 import { audioPrefs } from "../state.js";
@@ -263,6 +263,12 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
       if (existingState.romHash !== romHash) {
         log("ROM re-patched since the last savestate — resuming from the in-game save instead");
         idbDel(persist.db, persist.key, STATE_STORE).catch(() => {});
+      } else if (existingState.sramHash && existingSram
+                 && sramDigest(new Uint8Array(existingSram)) !== existingState.sramHash) {
+        // SRAM was written after this state was taken (an in-game save, an
+        // import, or scratch use the state never caught up with before the
+        // tab died): applying the state would roll it back.
+        log("the in-game save is newer than the last savestate — resuming from the in-game save");
       } else if (loadState(new Uint8Array(existingState.state))) {
         logOk("resumed from savestate");
       }
@@ -320,7 +326,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
   let onSaveHidden: (() => void) | null = null;
   if (persist) {
     const { db: pdb, key } = persist;
-    const stateEnvelope = (): SavestateEnvelope => ({ romHash, state: extractState() });
+    const stateEnvelope = (): SavestateEnvelope => ({ romHash, state: extractState(), sramHash: sramDigest(extractSram()) });
     // The connection is closed for good when another tab upgrades the DB (see
     // idb.ts); retrying every tick would only flood the log. Stop saving and
     // say so once — the page-wide notice asks for a reload.
@@ -332,27 +338,25 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
       logErr("saves stopped: this page's storage connection was closed by an update in another tab");
       return true;
     };
-    // SRAM and the savestate are written in one transaction, and SRAM never
-    // without the state. Boot applies the savestate over SRAM, so a stored
-    // state older than the stored SRAM would silently undo an in-game save.
-    // The state on its own (it's dirty every tick) only goes out every
-    // STATE_SAVE_MS, or when forced on hide/pagehide: rewriting it every 2s
-    // meant ~360MB/h of IDB writes.
+    // SRAM keeps the fast cadence; the savestate on its own (it's dirty every
+    // tick) only goes out every STATE_SAVE_MS, or when forced on
+    // hide/pagehide: rewriting it every 2s meant ~360MB/h of IDB writes. The
+    // state records which SRAM it holds (sramHash), so boot skips a state
+    // older than the stored SRAM instead of undoing an in-game save with it.
     const STATE_SAVE_MS = 15000;
     let lastStateSave = performance.now();
     const writeSaves = (force: boolean): Promise<void> | null => {
       const withSram = sramDirty;
-      const withState = withSram || (stateDirty && (force || performance.now() - lastStateSave >= STATE_SAVE_MS));
-      if (!withState) return null;
+      const withState = stateDirty && (force || performance.now() - lastStateSave >= STATE_SAVE_MS);
+      if (!withSram && !withState) return null;
       const puts: [string, IDBValidKey, unknown][] = [];
       if (withSram) puts.push([SAVE_STORE, key, extractSram()]);
-      puts.push([STATE_STORE, key, stateEnvelope()]);
-      sramDirty = false;
-      stateDirty = false;
-      lastStateSave = performance.now();
+      if (withState) puts.push([STATE_STORE, key, stateEnvelope()]);
+      if (withSram) sramDirty = false;
+      if (withState) { stateDirty = false; lastStateSave = performance.now(); }
       return idbPutMany(pdb, puts).catch((err) => {
         if (withSram) sramDirty = true;
-        stateDirty = true;
+        if (withState) stateDirty = true;
         throw err;
       });
     };
