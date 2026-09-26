@@ -1113,7 +1113,12 @@ export async function connectSession() {
 }
 
 async function runConnect() {
-  if (connectInFlight) { logWarn("already connecting — hold on"); return; }
+  if (connectInFlight) {
+    // After a Disconnect that stopped waiting on a stalled start, that start
+    // still holds the slot until it settles.
+    logWarn(sessionWanted ? "already connecting — hold on" : "the previous connection attempt is still winding down — try again once it finishes");
+    return;
+  }
   connectInFlight = true;
   try {
     await doConnectSession();
