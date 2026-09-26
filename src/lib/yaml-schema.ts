@@ -133,7 +133,7 @@ function defaultLiteral(opt: OptionDef): string {
     // AP's YAML uses 0/1 weights here, but a bare scalar works too.
     return emitScalar(d === 1 || d === true);
   }
-  if (opt.kind === "choice" && opt.choices && opt.choices.length) {
+  if ((opt.kind === "choice" || isTextChoice(opt)) && opt.choices && opt.choices.length) {
     // Choice options inherit AP's `default = 0` from NumericOption when they
     // don't declare one explicitly, so the schema may record `default: null`
     // (e.g. LockKantoGyms). Fall back to the first choice rather than emitting
@@ -177,6 +177,16 @@ function emitFormValue(opt: OptionDef, val: FormValue): string {
     return emitFlowList(Array.isArray(v) ? v : []);
   }
   if (opt.kind === "toggle" || opt.kind === "toggle_on") return emitScalar(!!v);
+  if (isTextChoice(opt)) {
+    // Never re-parsed as YAML: js-yaml (1.2) would read colour 80E040 as
+    // 8e41 and 008040 as 8040. A choice named or numbered goes out as its
+    // name; anything else is text, quoted whenever it could read as a number.
+    const text = typeof v === "string" ? v.trim() : String(v ?? "");
+    if (!text) return defaultLiteral(opt);
+    const named = opt.choices!.find((c) => c.toLowerCase() === text.toLowerCase())
+      ?? (/^(0|-?[1-9]\d*)$/.test(text) ? choiceForValue(opt, Number(text)) : null);  // 000001 is a colour
+    return emitScalar(named ?? text);
+  }
   if (opt.kind === "option_dict" || opt.kind === "option_counter" || opt.kind === "other") {
     // The textarea holds inline YAML. Re-parse → re-emit as flow style so
     // it sits on one line next to the option key (no awkward block-style
@@ -323,6 +333,14 @@ function coerceSingle(opt: OptionDef, raw: any): SingleValue | null {
   if (opt.kind === "free_text") {
     return { mode: "single", value: raw == null ? "" : String(raw) };
   }
+  if (isTextChoice(opt)) {
+    if (raw == null || raw === "") return initialValueFor(opt);
+    if (typeof raw === "string") return { mode: "single", value: raw };
+    // A number is a choice value; any other number is text js-yaml already
+    // misread (an unquoted colour like 80E040), which can't be recovered.
+    const name = typeof raw === "number" ? choiceForValue(opt, raw) : null;
+    return name ? { mode: "single", value: name } : null;
+  }
   // option_dict / option_counter / other — re-serialize whatever js-yaml gave us.
   if (raw === undefined || raw === null) return initialValueFor(opt);
   // Empty scalars (`""`, `null`) and empty mappings (`{}`) → treat as "use
@@ -439,6 +457,12 @@ export function choiceForValue(opt: OptionDef, n: number): string | null {
   return opt.choices[idx] ?? null;
 }
 
+// A TextChoice (trainer_palette): named choices, or any text (a hex colour).
+// The schema files it as "other" with choices attached.
+export function isTextChoice(opt: OptionDef): boolean {
+  return opt.kind === "other" && !!opt.choices?.length;
+}
+
 // The special name a named range gives `n`, if any.
 export function specialNameFor(opt: OptionDef, n: number): string | null {
   if (opt.kind !== "named_range") return null;
@@ -452,7 +476,7 @@ export function initialValueFor(opt: OptionDef): SingleValue {
   if (opt.kind === "toggle" || opt.kind === "toggle_on") {
     return { mode: "single", value: d === 1 || d === true };
   }
-  if (opt.kind === "choice" && opt.choices) {
+  if ((opt.kind === "choice" || isTextChoice(opt)) && opt.choices) {
     return { mode: "single", value: (typeof d === "number" ? choiceForValue(opt, d) : null) ?? opt.choices[0] ?? "" };
   }
   if (opt.kind === "named_range" || opt.kind === "range") {
