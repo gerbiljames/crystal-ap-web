@@ -866,7 +866,14 @@ let swapInFlight = false;
 // Called on canvas unmount (e.g. HMR replacing <ScreenFrame/>) so the worker
 // ticker, save interval, keyboard listeners, and wasm allocations don't
 // outlive the DOM they were bound to and keep emitting audio into the void.
+// Unbinders for the input and layout wiring each boot installs against its
+// emulator, run on dispose so a reboot doesn't leave the old ones driving
+// (and pinning) the freed instance.
+let emuUiDisposers: (() => void)[] = [];
+
 export function disposeEmulator() {
+  for (const off of emuUiDisposers) { try { off(); } catch {} }
+  emuUiDisposers = [];
   if (!currentEmu) return;
   try { currentEmu.dispose(); } catch {}
   currentEmu = null;
@@ -923,9 +930,11 @@ async function bootEmulatorAndUiNow() {
     }
   }
 
-  initPlayLayout();
-  bindGamepad($<HTMLElement>(".gamepad"), { emulator: e, module: Module });
-  bindController({ emulator: e, module: Module });
+  emuUiDisposers.push(
+    initPlayLayout(),
+    bindGamepad($<HTMLElement>(".gamepad"), { emulator: e, module: Module }),
+    bindController({ emulator: e, module: Module }),
+  );
   installBizHawkBridge(emu, apWorker);
   installTrackerDirtyHandler();
   // Hints refresh on their own too, so the tab's count is current before

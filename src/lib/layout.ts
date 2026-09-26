@@ -13,14 +13,15 @@
 // .play-game. Below this the log was collapsing to 0 and looking broken.
 const MIN_LOG_SLACK_PX = 90;
 
-export function initPlayLayout() {
+// Returns a disposer that unbinds every listener it installed.
+export function initPlayLayout(): () => void {
   const playGameEl     = document.querySelector<HTMLElement>(".play-game");
   const gamepadEl      = document.querySelector<HTMLElement>(".gamepad");
   const screenFrameEl  = document.querySelector<HTMLElement>(".screen-frame");
   const canvasEl       = document.querySelector<HTMLCanvasElement>("#screen");
   const logAreaEl      = document.querySelector<HTMLElement>(".log-area");
   const playControlsEl = document.querySelector<HTMLElement>(".play-controls");
-  if (!playGameEl || !gamepadEl || !screenFrameEl || !canvasEl) return;
+  if (!playGameEl || !gamepadEl || !screenFrameEl || !canvasEl) return () => {};
 
   const mobileMQ    = window.matchMedia("(max-width: 900px)");
   const landscapeMQ = window.matchMedia("(max-width: 1100px) and (max-height: 600px) and (orientation: landscape)");
@@ -129,12 +130,21 @@ export function initPlayLayout() {
   window.visualViewport?.addEventListener("resize", update);
   mobileMQ.addEventListener("change",    update);
   landscapeMQ.addEventListener("change", update);
-  new MutationObserver(update).observe(document.body, {
+  const stepObserver = new MutationObserver(update);
+  stepObserver.observe(document.body, {
     attributes: true, attributeFilter: ["data-step"], subtree: true,
   });
 
   // Exposed on window so setStep() can poke it from the step machine.
   window.__updateEmuMaxH = update;
 
-  return update;
+  return () => {
+    window.removeEventListener("resize", update);
+    window.removeEventListener("orientationchange", update);
+    window.visualViewport?.removeEventListener("resize", update);
+    mobileMQ.removeEventListener("change",    update);
+    landscapeMQ.removeEventListener("change", update);
+    stepObserver.disconnect();
+    if (window.__updateEmuMaxH === update) delete window.__updateEmuMaxH;
+  };
 }

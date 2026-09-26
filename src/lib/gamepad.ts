@@ -89,7 +89,7 @@ export function bindGamepad(rootEl, { emulator, module }) {
     mouseBindings.push([btn, press, release]);
   });
 
-  // Cleanup for HMR / teardown — not used today but cheap to expose.
+  // Cleanup, run when the emulator it drives is disposed.
   return () => {
     rootEl.removeEventListener("touchstart",  onTouchStart);
     rootEl.removeEventListener("touchmove",   onTouchMove);
