@@ -114,14 +114,16 @@ function emitWeighted(entries: { value: string; weight: number }[]): string {
   // Inline mapping: { v1: w1, v2: w2 }. Rows naming the same value merge
   // (a duplicate key would keep only the last weight, and js-yaml rejects
   // it); blank rows are skipped (`"": 50` fails generation).
-  const merged = new Map<string, number>();
+  // Integer keys go out as integers: a choice weighted by value ({0: 50})
+  // needs them unquoted, and ranges read either form. They merge by that
+  // number, so 5 and 05 can't come out as the same key twice.
+  const merged = new Map<string | number, number>();
   for (const e of entries) {
     if (e.value.trim() === "") continue;
-    merged.set(e.value, (merged.get(e.value) ?? 0) + (e.weight | 0));
+    const key = /^-?\d+$/.test(e.value) ? Number(e.value) : e.value;
+    merged.set(key, (merged.get(key) ?? 0) + (e.weight | 0));
   }
-  // Integer keys stay integers: a choice weighted by index ({0: 50}) needs
-  // them unquoted, and ranges read either form.
-  const parts = [...merged].map(([v, w]) => `${emitScalar(/^-?\d+$/.test(v) ? Number(v) : v)}: ${w}`);
+  const parts = [...merged].map(([v, w]) => `${emitScalar(v)}: ${w}`);
   return "{" + parts.join(", ") + "}";
 }
 
@@ -384,8 +386,8 @@ export function parseYamlToForm(text: string): FormState {
   let parsed: any = null;
   const lossy: string[] = [];
   try {
-    // json: duplicate keys keep the last value (as Archipelago's loader
-    // does) instead of throwing.
+    // json: duplicate keys keep the last value instead of throwing, so such a
+    // YAML still opens for fixing (Archipelago's own loader rejects it).
     parsed = yaml.load(text, { json: true });
   } catch {
     lossy.push("the YAML doesn't parse");
