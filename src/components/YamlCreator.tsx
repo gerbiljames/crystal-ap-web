@@ -240,10 +240,12 @@ function SetEditor(props: { opt: OptionDef; value: string[]; set: (v: string[]) 
             data-orderable={orderable()}
             draggable={orderable()}
             title={isValid(v) ? (orderable() ? "drag to reorder" : undefined) : "not a known value for this option"}
-            onDragStart={orderable() ? onDragStart(i()) : undefined}
-            onDragOver={orderable() ? onDragOver(i()) : undefined}
-            onDrop={orderable() ? onDrop(i()) : undefined}
-            onDragEnd={orderable() ? onDragEnd : undefined}
+            // Solid binds handlers once, and <For> keeps a chip's node when
+            // the list reorders: read the index when the event fires.
+            onDragStart={ev => { if (orderable()) onDragStart(i())(ev); }}
+            onDragOver={ev => { if (orderable()) onDragOver(i())(ev); }}
+            onDrop={ev => { if (orderable()) onDrop(i())(ev); }}
+            onDragEnd={() => { if (orderable()) onDragEnd(); }}
           >
             {v}
             <button class="yc-chip-x" onClick={() => remove(v)} aria-label="remove">×</button>
