@@ -285,7 +285,10 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
   ticker.onmessage = step;
   ticker.postMessage("start");
   const onTickerPagehide = () => ticker.postMessage("stop");
+  // Back/forward cache restore brings the page back without a reload.
+  const onTickerPageshow = (ev: PageTransitionEvent) => { if (ev.persisted) ticker.postMessage("start"); };
   window.addEventListener("pagehide", onTickerPagehide);
+  window.addEventListener("pageshow", onTickerPageshow);
   logOk("emulator running");
 
   // --- debounced SRAM + savestate commit ---
@@ -400,6 +403,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     ticker.terminate();
     URL.revokeObjectURL(tickerUrl);
     window.removeEventListener("pagehide", onTickerPagehide);
+    window.removeEventListener("pageshow", onTickerPageshow);
     if (saveTimer) clearInterval(saveTimer);
     if (onSavePagehide) {
       // One last flush so we don't lose the last few seconds of dirty state.
