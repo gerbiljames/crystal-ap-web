@@ -29,6 +29,7 @@ export type OptionDef = {
   range_start?: number | null;
   range_end?: number | null;
   choices?: string[] | null;                          // "choice"
+  choice_values?: (number | null)[] | null;           // parallel to choices
   special_range_names?: Record<string, number | null> | null;  // "named_range"
   valid_keys?: string[] | null;                       // "option_set"/"pokemon_set"
   valid_keys_computed?: boolean;
@@ -137,8 +138,7 @@ function defaultLiteral(opt: OptionDef): string {
     // don't declare one explicitly, so the schema may record `default: null`
     // (e.g. LockKantoGyms). Fall back to the first choice rather than emitting
     // an empty string, which fails generation with `Could not find option ""`.
-    const idx = typeof d === "number" && opt.choices[d] !== undefined ? d : 0;
-    return emitScalar(opt.choices[idx]);
+    return emitScalar((typeof d === "number" ? choiceForValue(opt, d) : null) ?? opt.choices[0]);
   }
   if (opt.kind === "named_range" && opt.special_range_names) {
     for (const [name, val] of Object.entries(opt.special_range_names)) {
@@ -292,7 +292,10 @@ function coerceSingle(opt: OptionDef, raw: any): SingleValue | null {
   }
   if (opt.kind === "choice" && opt.choices) {
     if (typeof raw === "string" && opt.choices.includes(raw)) return { mode: "single", value: raw };
-    if (typeof raw === "number" && opt.choices[raw] !== undefined) return { mode: "single", value: opt.choices[raw] };
+    if (typeof raw === "number") {
+      const name = choiceForValue(opt, raw);
+      if (name) return { mode: "single", value: name };
+    }
     return null;
   }
   if (opt.kind === "range") {
@@ -427,6 +430,15 @@ export function parseYamlToForm(text: string): FormState {
   return form;
 }
 
+// The choice named by numeric value `n` (a YAML can give a choice by value,
+// and defaults are values). Values aren't always positions: SharedPrimaryType
+// skips from rock = 6 to bug = 8. Schemas without values fall back to position.
+export function choiceForValue(opt: OptionDef, n: number): string | null {
+  if (!opt.choices) return null;
+  const idx = opt.choice_values ? opt.choice_values.indexOf(n) : n;
+  return opt.choices[idx] ?? null;
+}
+
 // The special name a named range gives `n`, if any.
 export function specialNameFor(opt: OptionDef, n: number): string | null {
   if (opt.kind !== "named_range") return null;
@@ -441,8 +453,7 @@ export function initialValueFor(opt: OptionDef): SingleValue {
     return { mode: "single", value: d === 1 || d === true };
   }
   if (opt.kind === "choice" && opt.choices) {
-    const idx = typeof d === "number" ? d : 0;
-    return { mode: "single", value: opt.choices[idx] ?? opt.choices[0] ?? "" };
+    return { mode: "single", value: (typeof d === "number" ? choiceForValue(opt, d) : null) ?? opt.choices[0] ?? "" };
   }
   if (opt.kind === "named_range" || opt.kind === "range") {
     // A named range's default is often a special value, even one below

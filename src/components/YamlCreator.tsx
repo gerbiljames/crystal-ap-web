@@ -4,7 +4,7 @@ import "prismjs/components/prism-yaml";
 import { yamlCreatorOpen, setYamlCreatorOpen, yamlEditTarget, setYamlEditTarget } from "../state.js";
 import { saveCreatedYaml, saveEditedYaml, useYamlText } from "../actions.js";
 import {
-  SCHEMAS, serializeFormToYaml, initialValueFor, parseYamlToForm, specialNameFor,
+  SCHEMAS, serializeFormToYaml, initialValueFor, parseYamlToForm, specialNameFor, choiceForValue,
   type FormState, type FormValue, type GameKey, type OptionDef, type SingleValue, type WeightedValue,
 } from "../lib/yaml-schema.js";
 import { backdropDismiss } from "../lib/backdrop.js";
@@ -316,8 +316,7 @@ function WeightedEditor(props: { opt: OptionDef; value: WeightedValue; setValue:
     const used = new Set(props.value.entries.map(e => e.value));
     const firstUnused = (vals: string[]) => vals.find(v => !used.has(v)) ?? vals[0];
     if (opt.kind === "choice" && opt.choices && opt.choices.length) {
-      const idx = typeof opt.default === "number" ? opt.default : 0;
-      const dflt = opt.choices[idx] ?? opt.choices[0];
+      const dflt = (typeof opt.default === "number" ? choiceForValue(opt, opt.default) : null) ?? opt.choices[0];
       return firstUnused([dflt, ...opt.choices]);
     }
     if (opt.kind === "toggle" || opt.kind === "toggle_on") {
@@ -393,8 +392,8 @@ function carryValue(opt: OptionDef, v: FormValue): FormValue | undefined {
   let accepts: ((x: string) => boolean) | null = null;
   if (opt.kind === "choice" && opt.choices) {
     const choices = opt.choices;
-    // A choice also takes its index (weighted tables keyed 0/1/…).
-    accepts = (x) => choices.includes(x) || (/^\d+$/.test(x) && Number(x) < choices.length);
+    // A choice also takes its value (weighted tables keyed 0/1/…).
+    accepts = (x) => choices.includes(x) || (/^-?\d+$/.test(x) && choiceForValue(opt, Number(x)) !== null);
   } else if (opt.kind === "range" || opt.kind === "named_range") {
     const names = Object.keys(opt.special_range_names ?? {}).map((k) => k.toLowerCase());
     accepts = (x) => {

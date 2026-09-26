@@ -331,12 +331,16 @@ def parse_class(node: ast.ClassDef) -> dict:
         "range_start": None,
         "range_end": None,
         "choices": None,        # list[str] for Choice
+        "choice_values": None,  # list[int | None], parallel to choices
         "special_range_names": None,
         "valid_keys": None,
         "valid_keys_computed": False,
         "hidden": False,        # `visibility = Visibility.none` → keep out of UI
     }
     choices: list[str] = []
+    # Choice values aren't always their position (SharedPrimaryType skips 7
+    # and jumps to 21), and YAMLs and defaults give choices by value.
+    choice_values: list[object] = []
 
     # First pass: collect plain scalar literals so later expressions can
     # resolve `Name` nodes (e.g. `valid_keys = [ELITE_FOUR, RED, ...]` or
@@ -395,6 +399,8 @@ def parse_class(node: ast.ClassDef) -> dict:
         val_node = stmt.value
         if attr.startswith("option_"):
             choices.append(attr[len("option_"):])
+            v = resolve(val_node)
+            choice_values.append(v if isinstance(v, int) and not isinstance(v, bool) else None)
         elif attr == "default":
             info["default"] = resolve(val_node)
         elif attr == "display_name":
@@ -434,6 +440,7 @@ def parse_class(node: ast.ClassDef) -> dict:
                 info["hidden"] = True
     if choices:
         info["choices"] = choices
+        info["choice_values"] = choice_values
     return info
 
 
@@ -519,6 +526,7 @@ def build_world_schema(options_path: Path, manifest_path: Path) -> dict:
             "range_start": cls["range_start"],
             "range_end": cls["range_end"],
             "choices": cls["choices"],
+            "choice_values": cls["choice_values"],
             "special_range_names": cls["special_range_names"],
             "valid_keys": valid_keys,
             "valid_keys_computed": valid_keys_computed,
