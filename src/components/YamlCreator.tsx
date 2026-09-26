@@ -109,13 +109,7 @@ function SingleEditor(props: {
       </Show>
 
       <Show when={opt().kind === "range"}>
-        <input
-          type="number"
-          min={opt().range_start ?? undefined}
-          max={opt().range_end ?? undefined}
-          value={Number(v())}
-          onInput={e => set(Number(e.currentTarget.value))}
-        />
+        <RangeInput opt={opt()} value={Number(v())} set={set} />
         <span class="yc-hint">{opt().range_start}..{opt().range_end}</span>
       </Show>
 
@@ -143,6 +137,39 @@ function SingleEditor(props: {
   );
 }
 
+// Whole number within the option's range. Typing only commits values that
+// already are one, so the field can sit empty or mid-edit; leaving it snaps
+// whatever's there into range (min/max attributes alone don't stop typing).
+function RangeInput(props: { opt: OptionDef; value: number; set: (v: number) => void }) {
+  const clamp = (n: number) => {
+    let x = Math.round(n);
+    if (typeof props.opt.range_start === "number") x = Math.max(props.opt.range_start, x);
+    if (typeof props.opt.range_end === "number") x = Math.min(props.opt.range_end, x);
+    return x;
+  };
+  return (
+    <input
+      type="number"
+      step="1"
+      min={props.opt.range_start ?? undefined}
+      max={props.opt.range_end ?? undefined}
+      value={props.value}
+      onInput={e => {
+        const raw = e.currentTarget.value;
+        if (raw === "") return;
+        const n = Number(raw);
+        if (Number.isFinite(n) && n === clamp(n)) props.set(n);
+      }}
+      onBlur={e => {
+        const n = Number(e.currentTarget.value);
+        const next = e.currentTarget.value === "" || !Number.isFinite(n) ? clamp(props.value) : clamp(n);
+        e.currentTarget.value = String(next);
+        props.set(next);
+      }}
+    />
+  );
+}
+
 function NamedRangeEditor(props: { opt: OptionDef; value: any; set: (v: any) => void }) {
   const names = () => Object.keys(props.opt.special_range_names ?? {});
   const isNamed = () => typeof props.value === "string" && names().includes(props.value);
@@ -162,13 +189,7 @@ function NamedRangeEditor(props: { opt: OptionDef; value: any; set: (v: any) => 
         </select>
       </Show>
       <Show when={!isNamed()}>
-        <input
-          type="number"
-          min={props.opt.range_start ?? undefined}
-          max={props.opt.range_end ?? undefined}
-          value={Number(props.value)}
-          onInput={e => props.set(Number(e.currentTarget.value))}
-        />
+        <RangeInput opt={props.opt} value={Number(props.value)} set={props.set} />
         <span class="yc-hint">{props.opt.range_start}..{props.opt.range_end ?? "?"}</span>
       </Show>
     </span>
