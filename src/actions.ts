@@ -672,13 +672,11 @@ async function handleYamlDropFlow(f: File) {
     } else if (!multiName && app.hostPref !== "off") {
       logWarn("hosting requested but no .archipelago was found — skip to ROM");
     }
-    if (!hosted && manifest.server && manifest.server.includes(":")) {
-      const [h, portStr] = manifest.server.split(":");
-      const p = Number(portStr);
-      if (h && Number.isInteger(p)) {
-        hosted = { kind: "remote", host: h, port: p, ws_url: `wss://${h}:${p}`, room_url: null };
-        log(`server from patch: ${h}:${p}`);
-      }
+    const fromPatch = !hosted && manifest.server ? parseHostPort(manifest.server) : null;
+    if (fromPatch) {
+      const { host: h, port: p } = fromPatch;
+      hosted = { kind: "remote", host: h, port: p, ws_url: `wss://${h}:${p}`, room_url: null };
+      log(`server from patch: ${h}:${p}`);
     }
     setApp("artifacts", artifacts);
     setApp("hosted", hosted);
@@ -1116,6 +1114,16 @@ async function runConnect() {
   }
 }
 
+// "host:port", as typed or as a patch records it, tolerating a ws:// or
+// wss:// scheme and a trailing slash. A bare host means Archipelago's default
+// port, as CommonClient reads it. null when it isn't a host at all.
+function parseHostPort(server: string): { host: string; port: number } | null {
+  const m = /^(?:wss?:\/\/)?([^/:\s]+)(?::(\d+))?\/?$/i.exec(server.trim());
+  if (!m) return null;
+  const port = m[2] ? Number(m[2]) : 38281;
+  return port > 0 && port < 65536 ? { host: m[1], port } : null;
+}
+
 async function doConnectSession() {
   // For loopback hosts the input shows "Self Hosted" as a label; the real
   // URI lives on app.hosted.ws_url. Substitute it before handing to the
@@ -1147,9 +1155,9 @@ async function doConnectSession() {
       if (server.startsWith("loopback://")) {
         entry.hosted = { kind: "loopback", host: null, port: null, ws_url: server, room_url: null };
       } else {
-        const [h, portStr] = server.split(":");
-        const port = Number(portStr);
-        if (h && Number.isInteger(port)) {
+        const parsed = parseHostPort(server);
+        if (parsed) {
+          const { host: h, port } = parsed;
           entry.hosted = { kind: "remote", host: h, port, ws_url: `wss://${h}:${port}`, room_url: entry.hosted?.room_url || null };
         }
       }
