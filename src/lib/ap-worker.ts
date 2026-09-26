@@ -29,7 +29,7 @@ let heardFromWorker = false;
 // page is from an older deploy and can't get a worker that matches it.
 let outdatedPage = false;
 const OUTDATED_PAGE_MSG = "this page is out of date — the site was updated since it was opened. Reload the page to continue.";
-const pending = new Map<number, { resolve: (v: CallResult) => void; reject: (e: Error) => void; onProgress: ProgressCb | null }>();
+const pending = new Map<number, { cmd: string; resolve: (v: CallResult) => void; reject: (e: Error) => void; onProgress: ProgressCb | null }>();
 let onBhReq: ((reqId: number, payload: string) => void) | null = null;
 let onTrackerDirty: (() => void) | null = null;
 let onHintsDirty: (() => void) | null = null;
@@ -188,8 +188,27 @@ function call(cmd: string, payload: Record<string, any> = {}, transfer: Transfer
   // stamped with the id of the *first* call to touch the worker. That first call
   // must be one that passes a cb (today: patch/generate, both do) or those boot
   // phases route to a null callback and are silently dropped.
-  const p = new Promise<CallResult>((resolve, reject) => pending.set(id, { resolve, reject, onProgress: cb }));
+  const p = new Promise<CallResult>((resolve, reject) => pending.set(id, { cmd, resolve, reject, onProgress: cb }));
   spawn().postMessage({ id, cmd, ...payload }, transfer);
+  return p;
+}
+
+// A ping only goes unanswered while synchronous Python holds the worker. A
+// real command can do that for a while (tracker init), so with one in flight
+// a late ping proves nothing; with only pings outstanding for this long, the
+// runtime is stuck in a loop it won't leave. Recover as from a fatal: without
+// this, a hung runtime never fails a call and nothing ever notices.
+const PING_TIMEOUT_MS = 60000;
+function ping(): Promise<CallResult> {
+  const p = call("ping");
+  const w = worker;
+  const timer = setTimeout(() => {
+    if (worker !== w) return;
+    if ([...pending.values()].some((c) => c.cmd !== "ping")) return;
+    logErr("python runtime stopped responding — restarting it");
+    killWorker("python runtime stopped responding");
+  }, PING_TIMEOUT_MS);
+  p.finally(() => clearTimeout(timer)).catch(() => {});
   return p;
 }
 
@@ -202,7 +221,7 @@ export const apWorker = {
   restart,
   patch:           (rom: Uint8Array, patch: Uint8Array, overrides?: Record<string, any>, cb?: ProgressCb) => call("patch",    { rom, patch, overrides: overrides ?? {} }, [rom.buffer, patch.buffer], cb ?? null),
   generate:        (yaml: string, cb?: ProgressCb)                     => call("generate", { yaml }, [], cb ?? null),
-  ping:            ()                                                  => call("ping"),
+  ping,
   startSession:    (server: string, slot: string, password: string)    => call("session-start", { server, slot, password }),
   stopSession:     ()                                                  => call("session-stop"),
   host:            (seedId: string, multidata: Uint8Array)             => call("host", { seedId, multidata }, [multidata.buffer]),
