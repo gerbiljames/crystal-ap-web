@@ -84,13 +84,17 @@ export type FormState = {
 // that need quoting are wrapped in double quotes; everything else is emitted
 // as a bare scalar / flow-style list / block mapping.
 
-const NEEDS_QUOTING = /[:#\-\[\]\{\},&*!|>'%@`?]|^\s|\s$|^(true|false|null|yes|no|on|off|~)$/i;
+// Plain only when it can't read as anything but this string: starts with a
+// letter or underscore (so no numbers, 0x10, .inf, quotes, indicators), holds
+// no YAML syntax, and isn't a YAML 1.1 bool/null (Archipelago loads 1.1).
+// Everything else is emitted as a JSON string, which is always a valid YAML
+// double-quoted scalar, newlines and control characters included.
+const PLAIN_SAFE = /^[A-Za-z_][\w .\-()']*$/;
+const RESERVED = /^(true|false|null|yes|no|on|off|y|n)$/i;
 
 function quoteIfNeeded(s: string): string {
-  if (s === "") return '""';
-  if (/^-?\d+(\.\d+)?$/.test(s)) return `"${s}"`;            // numeric-looking strings
-  if (NEEDS_QUOTING.test(s)) return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-  return s;
+  if (PLAIN_SAFE.test(s) && !RESERVED.test(s) && !/\s$/.test(s)) return s;
+  return JSON.stringify(s);
 }
 
 function emitScalar(v: unknown): string {
