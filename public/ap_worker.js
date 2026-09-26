@@ -297,10 +297,12 @@ for name in list(os.listdir(outdir)):
         with zipfile.ZipFile(os.path.join(outdir, name)) as zf:
             zf.extractall(outdir)
   `);
-  const names = (await pyodide.runPythonAsync(`
+  const namesPy = await pyodide.runPythonAsync(`
 import os
 sorted(os.listdir("/tmp/out"))
-  `)).toJs();
+  `);
+  const names = namesPy.toJs();
+  namesPy.destroy();
   const artifacts = {};
   const transfer = [];
   for (const name of names) {
@@ -538,7 +540,11 @@ async function trackerDeferredSetup() {
 
 async function trackerUpdate(id, checkedLocIds) {
   if (!pyodide || !trackerReady) return { out: { ok: false, locations: [], go: "no" } };
-  pyodide.globals.set("_ut_checked_in", pyodide.toPy(checkedLocIds || []));
+  // globals.set keeps its own reference: the JS-side proxy can go at once.
+  // These run on every tracker-dirty event, too often to leave to the GC.
+  const checkedPy = pyodide.toPy(checkedLocIds || []);
+  pyodide.globals.set("_ut_checked_in", checkedPy);
+  checkedPy.destroy();
   const result = await pyodide.runPythonAsync(TRACKER_UPDATE_PY);
   const tup = result?.toJs ? result.toJs() : result;
   const go = (tup && typeof tup[0] === "string") ? tup[0] : "no";
@@ -557,7 +563,9 @@ async function trackerUpdate(id, checkedLocIds) {
 
 async function trackerChecks(id) {
   if (!pyodide || !trackerReady || !sessionTasks) return { out: { checked: [] } };
-  pyodide.globals.set("_ut_ctx_q", pyodide.globals.get("ctx") ?? null);
+  const ctxPy = pyodide.globals.get("ctx");
+  pyodide.globals.set("_ut_ctx_q", ctxPy ?? null);
+  ctxPy?.destroy?.();
   const result = await pyodide.runPythonAsync(TRACKER_CHECKS_PY);
   const arr = result?.toJs ? result.toJs() : Array.from(result || []);
   if (result?.destroy) result.destroy();
