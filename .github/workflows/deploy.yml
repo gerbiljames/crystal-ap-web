@@ -18,19 +18,32 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # Actions are pinned to commit SHAs: this job can deploy the site.
       - name: Checkout (with submodules)
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          submodules: recursive
+          # Not recursive: binjgb's own submodules (imgui etc.) aren't used;
+          # the built binjgb.js/.wasm are committed under public/.
+          submodules: true
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 20
           cache: npm
 
+      # pack.sh imports Archipelago's option code to dump the YAML schema;
+      # pin the interpreter rather than take whatever ubuntu-latest ships.
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Build AP source tarball
         run: ./pack.sh
@@ -42,7 +55,7 @@ jobs:
           BASE_PATH: /${{ github.event.repository.name }}/
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: dist
 
@@ -55,4 +68,4 @@ jobs:
     steps:
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
