@@ -14,7 +14,7 @@ import { db, idbGet, idbPut, idbDel, idbHas, setDbNoticeHandler } from "./lib/id
 import { loadSessions, saveSessions, recordSession as recordSessionPure, removeSession } from "./lib/sessions.js";
 import { recordYaml, renameYaml as renameYamlPure, removeYaml, sha256Hex, loadYamls } from "./lib/yamls.js";
 import { tryHostMultidata } from "./lib/host.js";
-import { apWorker } from "./lib/ap-worker.js";
+import { apWorker, WorkerRestartedError } from "./lib/ap-worker.js";
 import { bindGamepad } from "./lib/gamepad.js";
 import { bindController } from "./lib/controller.js";
 import { initPlayLayout } from "./lib/layout.js";
@@ -1167,8 +1167,10 @@ async function doConnectSession() {
     }
   } catch (err: any) {
     if (!sessionWanted) return;
-    // Nothing came up, so there's nothing for fatal recovery to bring back.
-    sessionWanted = false;
+    // Nothing came up, so there's nothing for fatal recovery to bring back —
+    // unless the runtime died under this start, where recovery is about to
+    // retry and needs the session still wanted to do it.
+    if (!(err instanceof WorkerRestartedError)) sessionWanted = false;
     setSessionState("error", "error");
     logErr("session start failed: " + (err.message || err));
   }

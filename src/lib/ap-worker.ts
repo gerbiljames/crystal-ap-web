@@ -42,6 +42,10 @@ let onFatal: ((reason: string) => void) | null = null;
 // fail every in-flight call rather than leaving them hanging forever. Session,
 // host and tracker state all lived in the dead worker — onFatal owns rebuilding
 // them. The handler callbacks above are main-thread state and survive untouched.
+// What in-flight calls reject with when a fatal takes the worker down and
+// recovery is about to take over, so callers can leave that to recovery.
+export class WorkerRestartedError extends Error {}
+
 function killWorker(reason: string, recover = true) {
   const dead = worker;
   worker = null;
@@ -52,7 +56,7 @@ function killWorker(reason: string, recover = true) {
   }
   const orphans = [...pending.values()];
   pending.clear();
-  const err = new Error(recover ? "ap worker restarted after a fatal error" : reason);
+  const err = recover ? new WorkerRestartedError("ap worker restarted after a fatal error") : new Error(reason);
   for (const p of orphans) p.reject(err);
   if (!recover) return;
   // Defer so the rejections above settle before the handler starts issuing new
