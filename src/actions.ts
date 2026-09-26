@@ -491,6 +491,9 @@ export function continueToRom() { return guardedFlow("patching", continueToRomFl
 export function handleRomDrop(f: File) { return guardedFlow("patching", () => handleRomDropFlow(f)); }
 
 async function continueToRomFlow() {
+  // An error from an earlier seed's attempt (a failed runtime restart, say)
+  // mustn't greet this one on the ROM pane.
+  setApp("rom", "error", null);
   const dbc = await db();
   const cached = dbc ? await idbGet(dbc, "rom", VANILLA_STORE).catch(() => null) : null;
   if (cached && cached.byteLength === GB_ROM_SIZE) {
