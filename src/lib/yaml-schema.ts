@@ -186,6 +186,9 @@ function emitFormValue(opt: OptionDef, val: FormValue): string {
       if (parsed && typeof parsed === "object") {
         return yaml.dump(parsed, { flowLevel: 0, lineWidth: -1 }).trim();
       }
+      // A scalar keeps its type: "other" covers TextChoice options
+      // (trainer_palette), where 0 picks a choice but "0" is custom text.
+      if (parsed !== undefined) return emitScalar(parsed);
     } catch { /* fall through */ }
     return emitScalar(text);
   }
