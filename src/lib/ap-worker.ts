@@ -199,19 +199,26 @@ function call(cmd: string, payload: Record<string, any> = {}, transfer: Transfer
 
 // A ping only goes unanswered while synchronous Python holds the worker. A
 // real command can do that for a while (tracker init), so with one in flight
-// a late ping proves nothing; with only pings outstanding for this long, the
-// runtime is stuck in a loop it won't leave. Recover as from a fatal: without
-// this, a hung runtime never fails a call and nothing ever notices.
+// a late ping is given PING_BUSY_TIMEOUT_MS instead of PING_TIMEOUT_MS; past
+// either, the runtime is stuck in a loop it won't leave. Recover as from a
+// fatal: without this, a hung runtime never fails a call and nothing ever
+// notices. Pings are only sent during a live session, never under generate.
 const PING_TIMEOUT_MS = 60000;
+const PING_BUSY_TIMEOUT_MS = 5 * 60000;
 function ping(): Promise<CallResult> {
   const p = call("ping");
   const w = worker;
-  const timer = setTimeout(() => {
+  const sent = performance.now();
+  let timer: ReturnType<typeof setTimeout>;
+  const check = () => {
     if (worker !== w) return;
-    if ([...pending.values()].some((c) => c.cmd !== "ping")) return;
+    const busy = [...pending.values()].some((c) => c.cmd !== "ping");
+    const waited = performance.now() - sent;
+    if (busy && waited < PING_BUSY_TIMEOUT_MS) { timer = setTimeout(check, PING_BUSY_TIMEOUT_MS - waited); return; }
     logErr("python runtime stopped responding — restarting it");
     killWorker("python runtime stopped responding");
-  }, PING_TIMEOUT_MS);
+  };
+  timer = setTimeout(check, PING_TIMEOUT_MS);
   p.finally(() => clearTimeout(timer)).catch(() => {});
   return p;
 }
