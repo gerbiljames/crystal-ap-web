@@ -356,24 +356,31 @@ _bh_tasks.clear()
 // Persistence keyed by seedId, written directly from the worker so saves
 // don't depend on main-thread liveness around tab close. Mirror of constants
 // in src/lib/constants.ts; keep in sync if they change.
+//
+// Opened without a version: the main thread owns the schema and its upgrades
+// (which migrate data using localStorage, unavailable here). Pinning a version
+// here would either fail against a newer DB or run an upgrade that skips the
+// main thread's migration. If the DB or our store doesn't exist yet, give up
+// for now and retry on the next call.
 const MHOST_DB_NAME = "crystal-ap-saves";
-const MHOST_DB_VERSION = 7;
 const MHOST_STORE = "mhostsave";
 let _mhostDbPromise = null;
 function mhostDb() {
   if (_mhostDbPromise) return _mhostDbPromise;
   _mhostDbPromise = new Promise((resolve) => {
-    const req = indexedDB.open(MHOST_DB_NAME, MHOST_DB_VERSION);
-    req.onupgradeneeded = () => {
+    const req = indexedDB.open(MHOST_DB_NAME);
+    // Only fires when the DB doesn't exist: don't create it from here.
+    req.onupgradeneeded = () => req.transaction.abort();
+    req.onsuccess = () => {
       const db = req.result;
-      // The main thread owns the schema; only create our store if it's
-      // somehow missing so we don't clobber stores added by main.
-      if (!db.objectStoreNames.contains(MHOST_STORE)) db.createObjectStore(MHOST_STORE);
+      if (!db.objectStoreNames.contains(MHOST_STORE)) { db.close(); resolve(null); return; }
+      // Step aside when the main thread upgrades the schema.
+      db.onversionchange = () => { db.close(); _mhostDbPromise = null; };
+      resolve(db);
     };
-    req.onsuccess = () => resolve(req.result);
     req.onerror   = () => resolve(null);
     req.onblocked = () => resolve(null);
-  });
+  }).then((db) => { if (!db) _mhostDbPromise = null; return db; });
   return _mhostDbPromise;
 }
 function mhostGet(seedId) {

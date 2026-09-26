@@ -6,7 +6,7 @@ import { unwrap } from "solid-js/store";
 import { app, setApp, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setHints, setHintsStatus, setHintPoints, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen, romOverridePrefs, setVersionPick } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
-import { resolveWorldForPatch, latestWorlds, latestWorldForGame, bundledWorld, runtimeFor, type BundledWorld, type WorldResolution } from "./lib/apworld.js";
+import { resolveWorldForPatch, latestWorlds, latestWorldForGame, bundledWorld, bundledWorldByDisplay, runtimeFor, type BundledWorld, type WorldResolution } from "./lib/apworld.js";
 import { buildOverrides, overridesHash } from "./lib/overrides.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
 import { db, idbGet, idbPut, idbDel, idbHas } from "./lib/idb.js";
@@ -79,9 +79,11 @@ export async function forgetSession(id: string) {
   }
 }
 
-// One seed-opening flow at a time. Resume and import both resolve a version,
-// may ask the user, select a runtime and possibly restart it; two racing
-// would fight over all of that. A second click while one is running is dropped.
+// One seed-opening flow at a time. Resume, import and using a saved YAML all
+// resolve a version or select a runtime (possibly restarting it) and set
+// app.seedId; two racing would fight over all of that. Each flow is awaited
+// to the end, generation and patching included. A second click while one is
+// running is dropped.
 let flowInFlight = false;
 async function guardedFlow(label: string, fn: () => Promise<void>): Promise<void> {
   if (flowInFlight) { logWarn(`still ${label} — ignoring another request`); return; }
@@ -103,9 +105,12 @@ async function resumeSessionFlow(id: string) {
   // one that can still take its patch. If that differs from the version the
   // cached ROM was patched with — a compatible upgrade landed, or the recorded
   // version is gone — the cache is stale and we re-patch. A session with no
-  // recorded worldVersion (pre-versioning) is stale too.
+  // recorded worldVersion (pre-versioning) is matched by its display version.
   const patchName = savedArtifacts ? Object.keys(savedArtifacts).find(isPatchName) : undefined;
-  const recorded: BundledWorld | null = session.worldPackage && session.worldVersion ? bundledWorld(session.worldPackage, session.worldVersion) : null;
+  const recorded: BundledWorld | null =
+    session.worldPackage && session.worldVersion ? bundledWorld(session.worldPackage, session.worldVersion)
+    : session.apworldVersion ? bundledWorldByDisplay(session.apworldVersion, session.game)
+    : null;
   let target: BundledWorld | null = null;
   let resolvedFromPatch = false;
   if (patchName) {
@@ -164,6 +169,12 @@ async function resumeSessionFlow(id: string) {
       log("the new ROM will resume from your last in-game save (the exact moment you left only applies to the previous ROM)");
   }
   if (cachedRom && cachedRom.byteLength === GB_ROM_SIZE && !stale) {
+    // A pre-versioning session that still matches: record the exact world so
+    // later resumes don't have to go through the display version again.
+    if (!session.worldVersion && target) {
+      recordSessionPure({ id, game: target.game, worldPackage: target.package, worldVersion: target.world_version });
+      refreshSessions();
+    }
     setApp("patchedRom", cachedRom);
     if (savedArtifacts && Object.keys(savedArtifacts).length > 0) {
       setApp("artifacts", savedArtifacts);
@@ -470,29 +481,20 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
     }
     setApp("patchedRom", patched.buffer);
     logOk(`patched locally (${patched.byteLength} bytes)`);
-    recordSessionPure({
-      id: app.seedId,
-      slot: app.slotName,
-      hosted: app.hosted,
-      romCached: true,
-      game: world.game,
-      worldPackage: world.package,
-      worldVersion: world.world_version,
-      apworldVersion: world.display_version,
-      // The apworld that generated the seed, when the patch says (prerelease
-      // manifests do; stable is inferred from the basepatch). Shown on the
-      // session card when it differs from what the seed now plays on.
-      generatorVersion: generator,
-      overridesHash: ovHash,
-    });
-    refreshSessions();
+    // Cache first, then tag the session: the version and overrides tags
+    // describe the cached ROM, so they only move once the new ROM has landed.
+    // Tagging first would, on a failed write or a tab close in between, mark
+    // the previous version's ROM as current and it would never be re-patched.
+    let romCached = false;
     const dbc = await db();
     if (dbc) {
       // Await so we don't race a tab close; without this, a quick reload
       // after a fresh patch can resume with a cached ROM but no artifacts,
       // leaving the play screen without download links.
       await Promise.all([
-        idbPut(dbc, app.seedId, patched.buffer.slice(0), ROM_STORE).catch(err => logWarn("cache patched rom failed: " + err)),
+        idbPut(dbc, app.seedId, patched.buffer.slice(0), ROM_STORE)
+          .then(() => { romCached = true; })
+          .catch(err => logWarn("cache patched rom failed: " + err)),
         idbPut(dbc, "rom", vanillaBuf, VANILLA_STORE).catch(err => logWarn("cache vanilla rom failed: " + err)),
         app.artifacts
           // Solid store values are proxies; hand IDB the raw object so
@@ -501,6 +503,24 @@ async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") 
           : Promise.resolve(),
       ]);
     }
+    recordSessionPure({
+      id: app.seedId,
+      slot: app.slotName,
+      hosted: app.hosted,
+      game: world.game,
+      // The apworld that generated the seed, when the patch says (prerelease
+      // manifests do; stable is inferred from the basepatch). Shown on the
+      // session card when it differs from what the seed now plays on.
+      generatorVersion: generator,
+      ...(romCached ? {
+        romCached: true,
+        worldPackage: world.package,
+        worldVersion: world.world_version,
+        apworldVersion: world.display_version,
+        overridesHash: ovHash,
+      } : {}),
+    });
+    refreshSessions();
     setStep("play");
     setApp("rom", "progressText", null);
     await bootEmulatorAndUi();
@@ -584,7 +604,7 @@ async function handleYamlDropFlow(f: File) {
     setApp("artifacts", artifacts);
     setApp("hosted", hosted);
     logOk(`using uploaded ${isPatch ? "patch" : "zip"} — skipping generation` + (hosted ? "" : "; no host"));
-    continueToRom();
+    await continueToRom();
     return;
   }
 
@@ -603,7 +623,7 @@ async function handleYamlDropFlow(f: File) {
   await saveYamlToLibrary(text, f.name, slot);
 
   setStep("generating");
-  runGeneration(text);
+  await runGeneration(text);
 }
 
 async function saveYamlToLibrary(text: string, filename: string, slot: string | null) {
@@ -634,7 +654,9 @@ export async function fetchSavedYamlText(hash: string): Promise<string | null> {
   return stored?.text ?? null;
 }
 
-export async function useSavedYaml(hash: string) {
+export function useSavedYaml(hash: string) { return guardedFlow("opening a seed", () => useSavedYamlFlow(hash)); }
+
+async function useSavedYamlFlow(hash: string) {
   const dbc = await db();
   const stored = dbc ? await idbGet<{ text: string }>(dbc, hash, YAML_STORE).catch(() => null) : null;
   if (!stored?.text) {
@@ -647,7 +669,7 @@ export async function useSavedYaml(hash: string) {
   const slot = extractSlotNameFromYaml(stored.text);
   if (slot) { setApp("slotName", slot); log(`parsed slot name: ${slot}`); }
   setStep("generating");
-  runGeneration(stored.text);
+  await runGeneration(stored.text);
 }
 
 // Save a YAML built by the in-app creation UI. Returns the content hash so
@@ -657,11 +679,6 @@ export async function saveCreatedYaml(text: string, displayName: string): Promis
   const slot = extractSlotNameFromYaml(text);
   await saveYamlToLibrary(text, displayName, slot);
   return sha256Hex(text);
-}
-
-export async function createAndUseYaml(text: string, displayName: string) {
-  const hash = await saveCreatedYaml(text, displayName);
-  await useSavedYaml(hash);
 }
 
 // Open the YAML creator in raw-edit mode with the saved YAML loaded.

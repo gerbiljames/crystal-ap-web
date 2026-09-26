@@ -2,7 +2,7 @@ import { For, Index, Show, createSignal, createMemo, createEffect, onCleanup, un
 import Prism from "prismjs";
 import "prismjs/components/prism-yaml";
 import { yamlCreatorOpen, setYamlCreatorOpen, yamlEditTarget, setYamlEditTarget } from "../state.js";
-import { saveCreatedYaml, createAndUseYaml, saveEditedYaml, useSavedYaml } from "../actions.js";
+import { saveCreatedYaml, saveEditedYaml, useSavedYaml } from "../actions.js";
 import {
   SCHEMAS, serializeFormToYaml, initialValueFor, parseYamlToForm,
   type FormState, type FormValue, type GameKey, type OptionDef, type SingleValue, type WeightedValue,
@@ -452,15 +452,13 @@ export function YamlCreator() {
       const text = yamlText();
       const target = yamlEditTarget();
       const name = libraryName() ?? ((form().name || "Player1") + ".yaml");
-      if (target) {
-        const newHash = await saveEditedYaml(text, name, target.hash);
-        if (alsoUse) await useSavedYaml(newHash);
-      } else if (alsoUse) {
-        await createAndUseYaml(text, name);
-      } else {
-        await saveCreatedYaml(text, name);
-      }
+      const hash = target
+        ? await saveEditedYaml(text, name, target.hash)
+        : await saveCreatedYaml(text, name);
       setYamlCreatorOpen(false);
+      // Not awaited: the flow runs through generation, which shows its own
+      // progress once the creator is closed.
+      if (alsoUse) void useSavedYaml(hash);
     } finally {
       setBusy(null);
     }

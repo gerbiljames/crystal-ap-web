@@ -103,6 +103,14 @@ export function bundledWorld(pkg: string, worldVersion: string): BundledWorld | 
   return VERSIONS.worlds.find((w) => w.package === pkg && w.world_version === worldVersion) ?? null;
 }
 
+// Sessions from before worldPackage/worldVersion were recorded carry only the
+// display version they were patched with. Map it back to the bundled world
+// when it is still here, narrowed to the session's game when known.
+export function bundledWorldByDisplay(displayVersion: string, game?: string | null): BundledWorld | null {
+  const hits = VERSIONS.worlds.filter((w) => w.display_version === displayVersion && (!game || w.game === game));
+  return hits.length === 1 ? hits[0] : null;
+}
+
 export type WorldResolution =
   // A bundled version can play this seed. `generator` is the version that
   // produced it when known; `upgraded` when the pick is newer than that.
