@@ -118,7 +118,9 @@ function emitWeighted(entries: { value: string; weight: number }[]): string {
     if (e.value.trim() === "") continue;
     merged.set(e.value, (merged.get(e.value) ?? 0) + (e.weight | 0));
   }
-  const parts = [...merged].map(([v, w]) => `${emitScalar(v)}: ${w}`);
+  // Integer keys stay integers: a choice weighted by index ({0: 50}) needs
+  // them unquoted, and ranges read either form.
+  const parts = [...merged].map(([v, w]) => `${emitScalar(/^-?\d+$/.test(v) ? Number(v) : v)}: ${w}`);
   return "{" + parts.join(", ") + "}";
 }
 
@@ -344,6 +346,17 @@ function coerceWeighted(entries: [unknown, unknown][]): WeightedValue {
   };
 }
 
+// A top-level text field as the form holds it. Numbers read as their text
+// (name: 1234 is the name "1234"); anything else (a weighted name) can't be
+// shown and is recorded as lossy.
+function textField(v: unknown, key: string, lossy: string[]): string | null {
+  if (v == null) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return String(v);
+  lossy.push(`its \`${key}:\``);
+  return null;
+}
+
 const COLLECTION_KINDS = new Set<OptionKind>(["option_set", "pokemon_set", "option_list", "option_dict", "option_counter", "other"]);
 
 export function parseYamlToForm(text: string): FormState {
@@ -367,8 +380,8 @@ export function parseYamlToForm(text: string): FormState {
   const schema = SCHEMAS[game];
   const form: FormState = {
     game,
-    name: typeof parsed?.name === "string" ? parsed.name : "Player1",
-    description: typeof parsed?.description === "string" ? parsed.description : "",
+    name: textField(parsed?.name, "name", lossy) ?? "Player1",
+    description: textField(parsed?.description, "description", lossy) ?? "",
     values: {},
     lossy,
   };
