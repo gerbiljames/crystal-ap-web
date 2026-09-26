@@ -767,7 +767,10 @@ from pyodide.ffi import create_proxy, to_js
 # so the main thread's binjgb can service memory ops.
 import worlds._bizhawk as _bh
 _bh_pending = {}
-_bh_next = [0]
+# Ids keep counting across sessions, so a reply to a previous session's
+# request can never resolve one of this session's.
+if "_bh_next" not in globals():
+    _bh_next = [0]
 
 async def _send_message_shim(self, message):
     _bh_next[0] += 1
@@ -775,7 +778,17 @@ async def _send_message_shim(self, message):
     fut = asyncio.get_event_loop().create_future()
     _bh_pending[rid] = fut
     _js_self._bhEnqueue(rid, message)
-    return await fut
+    # Same failure as the TCP original's timeout: a request whose reply never
+    # comes (dropped while the emulator rebooted, say) makes the watcher
+    # reconnect instead of hanging item sync for good. 15s rather than its 5s,
+    # since synchronous Python in this worker (tracker init) can hold replies
+    # back for a few seconds.
+    try:
+        return await asyncio.wait_for(fut, timeout=15)
+    except asyncio.TimeoutError as exc:
+        _bh_pending.pop(rid, None)
+        self.connection_status = _bh.ConnectionStatus.NOT_CONNECTED
+        raise _bh.RequestFailedError("Connection timed out") from exc
 
 async def _connect_shim(ctx):
     ctx.connection_status = _bh.ConnectionStatus.CONNECTED
@@ -814,6 +827,12 @@ logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
 
 from CommonClient import server_loop
 from worlds._bizhawk.context import BizHawkClientContext, _game_watcher
+# context.py binds connect/disconnect by name at import, so the patches on
+# the package above only reach it when it's imported after them. Patch its
+# own names too, whichever came first.
+import worlds._bizhawk.context as _bh_context
+_bh_context.connect    = _connect_shim
+_bh_context.disconnect = _disconnect_shim
 
 _bh_tasks = {}
 _server_arg = ${j(server)}
