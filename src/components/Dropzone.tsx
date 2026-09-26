@@ -12,6 +12,9 @@ export function Dropzone(props) {
   };
   const onChange = ev => {
     const f = ev.target.files?.[0];
+    // Clear it so picking the same file again (after fixing it on disk, or
+    // after "start over") still fires change.
+    ev.target.value = "";
     if (f) props.onFile(f);
   };
   return (
