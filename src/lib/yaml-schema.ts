@@ -183,6 +183,11 @@ function emitFormValue(opt: OptionDef, val: FormValue): string {
   return emitScalar(v);
 }
 
+function emitFlow(v: unknown): string {
+  try { return yaml.dump(v, { flowLevel: 0, lineWidth: -1 }).trim(); }
+  catch { return "null"; }
+}
+
 // Block-style dump of a mapping, indented to sit under `indent`.
 function emitExtra(obj: Record<string, unknown>, indent: string): string[] {
   let text: string;
@@ -206,19 +211,26 @@ export function serializeFormToYaml(form: FormState): string {
   lines.push("");
   lines.push(`${emitScalar(schema.game)}:`);
 
+  // A carried-over key this schema does know (the form switched version)
+  // fills in for that option's default rather than being emitted twice.
+  const extraSection = { ...form.extraSection };
   for (const group of schema.groups) {
     lines.push("");
     lines.push(`  # --- ${group.name} ---`);
     for (const opt of group.options) {
       const user = form.values[opt.yaml_key];
-      const rendered = user ? emitFormValue(opt, user) : defaultLiteral(opt);
+      let rendered: string;
+      if (user) rendered = emitFormValue(opt, user);
+      else if (opt.yaml_key in extraSection) rendered = emitFlow(extraSection[opt.yaml_key]);
+      else rendered = defaultLiteral(opt);
+      delete extraSection[opt.yaml_key];
       lines.push(`  ${opt.yaml_key}: ${rendered}`);
     }
   }
-  if (form.extraSection && Object.keys(form.extraSection).length) {
+  if (Object.keys(extraSection).length) {
     lines.push("");
     lines.push("  # --- other options ---");
-    lines.push(...emitExtra(form.extraSection, "  "));
+    lines.push(...emitExtra(extraSection, "  "));
   }
   if (form.extraTop && Object.keys(form.extraTop).length) {
     lines.push("");

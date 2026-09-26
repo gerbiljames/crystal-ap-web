@@ -355,6 +355,23 @@ function WeightedEditor(props: { opt: OptionDef; value: WeightedValue; setValue:
   );
 }
 
+// v as the new version's `opt` will take it, or undefined to fall back to
+// the default. Weighted `random…` rows pass through: they name no choice.
+function carryValue(opt: OptionDef, v: FormValue): FormValue | undefined {
+  if (opt.kind === "choice" && opt.choices) {
+    const choices = opt.choices;
+    if (v.mode === "single") return choices.includes(String(v.value)) ? v : undefined;
+    const entries = v.entries.filter(e => choices.includes(e.value) || e.value.startsWith("random"));
+    return entries.length ? { mode: "weighted", entries } : undefined;
+  }
+  if ((opt.kind === "option_set" || opt.kind === "pokemon_set" || opt.kind === "option_list") &&
+      opt.valid_keys?.length && !opt.valid_keys_computed && v.mode === "single" && Array.isArray(v.value)) {
+    const valid = new Set(opt.valid_keys);
+    return { mode: "single", value: v.value.filter(x => valid.has(x)) };
+  }
+  return v;
+}
+
 export function YamlCreator() {
   const [form, setForm] = createSignal<FormState>(emptyForm("Pokemon Crystal"));
   const [openGroups, setOpenGroups] = createSignal<Record<string, boolean>>({});
@@ -413,24 +430,21 @@ export function YamlCreator() {
 
   const setGame = (g: GameKey) => {
     // Carry across every value whose yaml_key + kind survives in the new
-    // schema. Goal's kind flip between Choice (stable) and OptionSet
-    // (prerelease) is the main offender that benefits from the kind check.
+    // schema and that the new version still accepts. Goal's kind flip between
+    // Choice (stable) and OptionSet (prerelease) is the main offender the kind
+    // check catches; choices and set members that exist in only one version
+    // are the rest.
     const nextSchema = SCHEMAS[g];
-    const kindByKey = new Map<string, string>();
-    for (const grp of nextSchema.groups) {
-      for (const opt of grp.options) kindByKey.set(opt.yaml_key, opt.kind);
-    }
-    const prevSchema = SCHEMAS[form().game];
-    const prevKindByKey = new Map<string, string>();
-    for (const grp of prevSchema.groups) {
-      for (const opt of grp.options) prevKindByKey.set(opt.yaml_key, opt.kind);
-    }
+    const optsByKey = (sch: typeof nextSchema) =>
+      new Map(sch.groups.flatMap(grp => grp.options.map(o => [o.yaml_key, o] as const)));
+    const nextOpts = optsByKey(nextSchema);
+    const prevOpts = optsByKey(SCHEMAS[form().game]);
     const carried: Record<string, FormValue> = {};
     for (const [k, v] of Object.entries(form().values)) {
-      const nextKind = kindByKey.get(k);
-      if (!nextKind) continue;
-      if (prevKindByKey.get(k) !== nextKind) continue;
-      carried[k] = v;
+      const next = nextOpts.get(k);
+      if (!next || prevOpts.get(k)?.kind !== next.kind) continue;
+      const kept = carryValue(next, v);
+      if (kept) carried[k] = kept;
     }
     setForm({ ...form(), game: g, values: carried });
 
