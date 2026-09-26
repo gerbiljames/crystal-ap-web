@@ -22,7 +22,8 @@ const INPUT_ROWS: { name: InputName; label: string }[] = [
   { name: "right",  label: "right" },
 ];
 
-type Tab = "controller" | "keyboard" | "audio" | "overlay" | "ui" | "tracker" | "overrides";
+const TABS = ["controller", "keyboard", "audio", "overlay", "ui", "tracker", "overrides"] as const;
+type Tab = typeof TABS[number];
 
 export function Settings() {
   const [tab, setTab] = createSignal<Tab>("controller");
@@ -43,55 +44,15 @@ export function Settings() {
         <div class="modal" role="dialog" aria-modal="true" aria-label="settings">
           <div class="modal-head">
             <div class="modal-tabs" role="tablist">
-              <button
-                class="modal-tab"
-                role="tab"
-                aria-selected={tab() === "controller"}
-                data-active={tab() === "controller"}
-                onClick={() => setTab("controller")}
-              >controller</button>
-              <button
-                class="modal-tab"
-                role="tab"
-                aria-selected={tab() === "keyboard"}
-                data-active={tab() === "keyboard"}
-                onClick={() => setTab("keyboard")}
-              >keyboard</button>
-              <button
-                class="modal-tab"
-                role="tab"
-                aria-selected={tab() === "audio"}
-                data-active={tab() === "audio"}
-                onClick={() => setTab("audio")}
-              >audio</button>
-              <button
-                class="modal-tab"
-                role="tab"
-                aria-selected={tab() === "overlay"}
-                data-active={tab() === "overlay"}
-                onClick={() => setTab("overlay")}
-              >overlay</button>
-              <button
-                class="modal-tab"
-                role="tab"
-                aria-selected={tab() === "ui"}
-                data-active={tab() === "ui"}
-                onClick={() => setTab("ui")}
-              >ui</button>
-              <button
-                class="modal-tab"
-                role="tab"
-                aria-selected={tab() === "tracker"}
-                data-active={tab() === "tracker"}
-                onClick={() => setTab("tracker")}
-              >tracker</button>
-              <button
-                class="modal-tab"
-                role="tab"
-                aria-selected={tab() === "overrides"}
-                data-active={tab() === "overrides"}
-                onClick={() => setTab("overrides")}
-              >overrides</button>
+              <For each={TABS}>{(t) => (
+                <button
+                  class="modal-tab"
+                  role="tab"
+                  aria-selected={tab() === t}
+                  data-active={tab() === t}
+                  onClick={() => setTab(t)}
+                >{t}</button>
+              )}</For>
             </div>
             <button class="modal-close" onClick={() => setSettingsOpen(false)} aria-label="close">✕</button>
           </div>
