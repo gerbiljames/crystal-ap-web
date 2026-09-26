@@ -403,6 +403,9 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     if (isTextTarget(ev.target) || inDialog(ev.target)) return;
     const name = resolveInput(ev.code);
     if (!name) return;
+    // Rebound while held: the input it pressed before would never see a keyup.
+    const prev = heldKeys.get(ev.code);
+    if (prev && prev !== name) Module[`_set_joyp_${prev}`](e, false);
     heldKeys.set(ev.code, name);
     Module[`_set_joyp_${name}`](e, true);
     ev.preventDefault();

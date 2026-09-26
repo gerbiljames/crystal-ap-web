@@ -55,17 +55,20 @@ const MODIFIER_CODES = new Set([
 ]);
 
 // Capture the next keydown and report its `code`. Modifier-only presses are
-// ignored. Escape cancels capture without binding (and stops propagation so
-// the settings modal's own Esc-to-close handler doesn't fire).
-export function captureNextKey(onPress: (code: string) => void): () => void {
+// ignored, and so is auto-repeat from a key already held when capture began.
+// Escape cancels capture without binding, reported through onCancel (and
+// stops propagation so the settings modal's own Esc-to-close handler doesn't
+// fire).
+export function captureNextKey(onPress: (code: string) => void, onCancel?: () => void): () => void {
   const onKey = (ev: KeyboardEvent) => {
     if (ev.code === "Escape") {
       ev.preventDefault();
       ev.stopPropagation();
       cancel();
+      onCancel?.();
       return;
     }
-    if (MODIFIER_CODES.has(ev.code)) return;
+    if (MODIFIER_CODES.has(ev.code) || ev.repeat) return;
     ev.preventDefault();
     ev.stopPropagation();
     cancel();

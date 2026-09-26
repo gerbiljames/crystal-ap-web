@@ -231,6 +231,9 @@ function KeyboardPanel() {
       saveKeyBindings(next);
       setCapturing(null);
       cancelCapture = null;
+    }, () => {
+      setCapturing(null);
+      cancelCapture = null;
     });
   };
 
