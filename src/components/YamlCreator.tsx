@@ -4,7 +4,7 @@ import "prismjs/components/prism-yaml";
 import { yamlCreatorOpen, setYamlCreatorOpen, yamlEditTarget, setYamlEditTarget } from "../state.js";
 import { saveCreatedYaml, saveEditedYaml, useYamlText } from "../actions.js";
 import {
-  SCHEMAS, serializeFormToYaml, initialValueFor, parseYamlToForm,
+  SCHEMAS, serializeFormToYaml, initialValueFor, parseYamlToForm, specialNameFor,
   type FormState, type FormValue, type GameKey, type OptionDef, type SingleValue, type WeightedValue,
 } from "../lib/yaml-schema.js";
 import { backdropDismiss } from "../lib/backdrop.js";
@@ -142,7 +142,11 @@ function SingleEditor(props: {
 // already are one, so the field can sit empty or mid-edit; leaving it snaps
 // whatever's there into range (min/max attributes alone don't stop typing).
 function RangeInput(props: { opt: OptionDef; value: number; set: (v: number) => void }) {
+  // Special values of a named range are valid outside the range (vanilla =
+  // -1 below a range starting at 0); a non-number never is.
   const clamp = (n: number) => {
+    if (!Number.isFinite(n)) return props.opt.range_start ?? 0;
+    if (specialNameFor(props.opt, n) !== null) return n;
     let x = Math.round(n);
     if (typeof props.opt.range_start === "number") x = Math.max(props.opt.range_start, x);
     if (typeof props.opt.range_end === "number") x = Math.min(props.opt.range_end, x);
@@ -384,12 +388,27 @@ function WeightedEditor(props: { opt: OptionDef; value: WeightedValue; setValue:
 }
 
 // v as the new version's `opt` will take it, or undefined to fall back to
-// the default. Weighted `random…` rows pass through: they name no choice.
+// the default. `random…` values pass through: they name no choice or value.
 function carryValue(opt: OptionDef, v: FormValue): FormValue | undefined {
+  let accepts: ((x: string) => boolean) | null = null;
   if (opt.kind === "choice" && opt.choices) {
     const choices = opt.choices;
-    if (v.mode === "single") return choices.includes(String(v.value)) ? v : undefined;
-    const entries = v.entries.filter(e => choices.includes(e.value) || e.value.startsWith("random"));
+    // A choice also takes its index (weighted tables keyed 0/1/…).
+    accepts = (x) => choices.includes(x) || (/^\d+$/.test(x) && Number(x) < choices.length);
+  } else if (opt.kind === "range" || opt.kind === "named_range") {
+    const names = Object.keys(opt.special_range_names ?? {}).map((k) => k.toLowerCase());
+    accepts = (x) => {
+      if (names.includes(x.toLowerCase())) return true;
+      if (!/^-?\d+$/.test(x)) return false;
+      const n = Number(x);
+      return specialNameFor(opt, n) !== null
+        || ((opt.range_start == null || n >= opt.range_start) && (opt.range_end == null || n <= opt.range_end));
+    };
+  }
+  if (accepts) {
+    const ok = (x: string) => x.startsWith("random") || accepts(x);
+    if (v.mode === "single") return ok(String(v.value)) ? v : undefined;
+    const entries = v.entries.filter(e => ok(e.value));
     return entries.length ? { mode: "weighted", entries } : undefined;
   }
   if ((opt.kind === "option_set" || opt.kind === "pokemon_set" || opt.kind === "option_list") &&

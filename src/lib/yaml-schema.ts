@@ -292,8 +292,16 @@ function coerceSingle(opt: OptionDef, raw: any): SingleValue | null {
     return null;
   }
   if (opt.kind === "named_range") {
-    if (typeof raw === "number") return { mode: "single", value: raw };
-    if (typeof raw === "string") return { mode: "single", value: raw };
+    // Only what the editor can show: a number, or one of the option's special
+    // names (matched as NamedRange.from_text does, case-insensitively).
+    // `random-…` and unknown names fall to the caller's verbatim weighted row.
+    const n = typeof raw === "number" ? raw
+      : typeof raw === "string" && /^-?\d+$/.test(raw) ? Number(raw) : null;
+    if (n !== null) return { mode: "single", value: specialNameFor(opt, n) ?? n };
+    if (typeof raw === "string") {
+      const name = Object.keys(opt.special_range_names ?? {}).find((k) => k.toLowerCase() === raw.toLowerCase());
+      if (name) return { mode: "single", value: name };
+    }
     return null;
   }
   if (opt.kind === "option_set" || opt.kind === "pokemon_set" || opt.kind === "option_list") {
@@ -399,6 +407,13 @@ export function parseYamlToForm(text: string): FormState {
   return form;
 }
 
+// The special name a named range gives `n`, if any.
+export function specialNameFor(opt: OptionDef, n: number): string | null {
+  if (opt.kind !== "named_range") return null;
+  for (const [name, v] of Object.entries(opt.special_range_names ?? {})) if (v === n) return name;
+  return null;
+}
+
 // Default initial form value for an option, mirroring the documented default.
 export function initialValueFor(opt: OptionDef): SingleValue {
   const d = opt.default;
@@ -410,7 +425,9 @@ export function initialValueFor(opt: OptionDef): SingleValue {
     return { mode: "single", value: opt.choices[idx] ?? opt.choices[0] ?? "" };
   }
   if (opt.kind === "named_range" || opt.kind === "range") {
-    if (typeof d === "number") return { mode: "single", value: d };
+    // A named range's default is often a special value, even one below
+    // range_start (vanilla = -1): start on its name, which the editor shows.
+    if (typeof d === "number") return { mode: "single", value: specialNameFor(opt, d) ?? d };
     return { mode: "single", value: opt.range_start ?? 0 };
   }
   if (opt.kind === "option_set" || opt.kind === "pokemon_set" || opt.kind === "option_list") {
