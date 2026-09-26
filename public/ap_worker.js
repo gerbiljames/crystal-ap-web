@@ -365,6 +365,23 @@ for _n in ("server", "watcher"):
     try: await _t
     except (asyncio.CancelledError, Exception): pass
 _bh_tasks.clear()
+# After a drop, server_autoreconnect runs a fresh server_loop as
+# ctx.server_task, which the tasks above don't cover: left running, one
+# still opening its socket connects after the stop as a hidden session.
+try:
+    _st = getattr(ctx, "server_task", None)
+    if _st is not None and not _st.done():
+        _st.cancel()
+        try: await _st
+        except (asyncio.CancelledError, Exception): pass
+except Exception: pass
+# A server_loop that got connected resets disconnected_intentionally, so its
+# finally may have queued another reconnect: set the flag and cancel again.
+try:
+    ctx.disconnected_intentionally = True
+    _ar = getattr(ctx, "autoreconnect_task", None)
+    if _ar is not None: _ar.cancel()
+except Exception: pass
     `);
   } catch {}
   sessionTasks = null;
