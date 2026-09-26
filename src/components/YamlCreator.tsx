@@ -303,33 +303,35 @@ function WeightedEditor(props: { opt: OptionDef; value: WeightedValue; setValue:
   const add = () => props.setValue({ mode: "weighted", entries: [...props.value.entries, { value: defaultRowValue(), weight: 1 }] });
   const remove = (i: number) => props.setValue({ mode: "weighted", entries: props.value.entries.filter((_, j) => j !== i) });
 
-  const valueInput = (i: number, e: { value: string }) => {
+  // Builds a row's control once; only its value attribute tracks the entry,
+  // so typing doesn't swap the element (and focus) out from under the user.
+  const valueInput = (i: number, entry: () => { value: string }) => {
     const opt = props.opt;
     if (opt.kind === "choice" && opt.choices) {
       return (
-        <select value={e.value} onChange={ev => update(i, { value: ev.currentTarget.value })}>
+        <select value={entry().value} onChange={ev => update(i, { value: ev.currentTarget.value })}>
           <For each={opt.choices}>{c => <option value={c}>{c}</option>}</For>
-          <Show when={!opt.choices.includes(e.value)}><option value={e.value}>{e.value}</option></Show>
+          <Show when={!opt.choices.includes(entry().value)}><option value={entry().value}>{entry().value}</option></Show>
         </select>
       );
     }
     if (opt.kind === "toggle" || opt.kind === "toggle_on") {
       return (
-        <select value={e.value} onChange={ev => update(i, { value: ev.currentTarget.value })}>
+        <select value={entry().value} onChange={ev => update(i, { value: ev.currentTarget.value })}>
           <option value="true">true</option>
           <option value="false">false</option>
-          <Show when={e.value !== "true" && e.value !== "false"}><option value={e.value}>{e.value}</option></Show>
+          <Show when={entry().value !== "true" && entry().value !== "false"}><option value={entry().value}>{entry().value}</option></Show>
         </select>
       );
     }
-    return <input type="text" value={e.value} onInput={ev => update(i, { value: ev.currentTarget.value })} />;
+    return <input type="text" value={entry().value} onInput={ev => update(i, { value: ev.currentTarget.value })} />;
   };
 
   return (
     <div class="yc-weighted">
       <Index each={props.value.entries}>{(entry, i) => (
         <div class="yc-weighted-row">
-          {valueInput(i, entry())}
+          {untrack(() => valueInput(i, entry))}
           <input
             class="yc-weight"
             type="number"
