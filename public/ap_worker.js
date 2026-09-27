@@ -1687,14 +1687,20 @@ def _ut_compute():
     if _t is None or _slot is None: return ["no", []]
     try:
         from NetUtils import NetworkItem
-        if _mode == "ctx":
-            # Driven entirely by the live session ctx — what TrackerClient does
-            # in stock UT. items_received is the authoritative network list;
-            # missing/checked come straight off ctx.
-            _ctx = globals().get("ctx", None)
-            if _ctx is None: return ["no", []]
+        # The live session is authoritative whenever it's connected as this
+        # slot, however the tracker was built: its items_received holds what
+        # the server sent from anywhere (other players, start inventory,
+        # !getitem), which rebuilding from our own seed's checks misses — and
+        # a missing badge or HM hides everything behind it (the Eon Mail
+        # trade, via Released the Beasts). This is what stock UT's
+        # TrackerClient feeds the core.
+        _ctx = globals().get("ctx", None)
+        _live = (_ctx is not None and getattr(_ctx, "slot", None) == _slot
+                 and getattr(_ctx, "items_received", None) is not None)
+        if _mode == "ctx" and not _live: return ["no", []]
+        if _live:
             _missing = set(int(x) for x in (getattr(_ctx, "missing_locations", None) or set()))
-            _items = list(getattr(_ctx, "items_received", None) or [])
+            _items = list(_ctx.items_received)
         else:
             _md = getattr(_b, "_ut_multidata", None)
             if _md is None: return ["no", []]
