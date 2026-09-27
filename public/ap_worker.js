@@ -77,6 +77,27 @@ self._post = post;
 self.addEventListener("error", flushLog);
 self.addEventListener("unhandledrejection", flushLog);
 
+// Crash diagnostics. A fatal Pyodide error (a WASM trap like "index out of
+// bounds", an OOM) reports itself through console.error — the header, the
+// cause, and a dump of what Python was running — which only the worker's
+// devtools console would show; mirror it into the app log. An uncaught error
+// from a background task (the game watcher, the server loop) never passes
+// through a command's catch, so log its stack here before it propagates.
+const _consoleError = console.error.bind(console);
+console.error = (...args) => {
+  _consoleError(...args);
+  try {
+    self._pyLog("[worker] " + args.map((a) => (a instanceof Error ? (a.stack || a.message) : String(a))).join(" "));
+    flushLog();
+  } catch {}
+};
+self.addEventListener("error", (ev) => {
+  try {
+    self._pyLog("[worker] uncaught: " + (ev.error?.stack || ev.message));
+    flushLog();
+  } catch {}
+});
+
 // After a fatal error (OOM, a WASM abort, an exception crossing the JS↔WASM
 // boundary) Pyodide latches a dead flag: every later call throws "already
 // fatally failed" and the runtime can never be revived in place. ensureInit
@@ -124,7 +145,14 @@ async function ensureInit(id) {
     tarsPromise.catch(() => {});
 
     report("pyodide-boot");
-    pyodide = await loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/" });
+    pyodide = await loadPyodide({
+      indexURL: "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/",
+      // Output below sys.stdout/stderr (which _Tee reroutes once the runtime
+      // is up): boot messages and C-level dumps such as a fatal error's
+      // Python traceback. Into the app log rather than only the console.
+      stdout: (line) => self._pyLog(line),
+      stderr: (line) => self._pyLog(line),
+    });
     await pyodide.loadPackage(["pyyaml", "micropip", "typing-extensions", "orjson"]);
 
     await pyodide.loadPackage(["ssl"]);
@@ -743,7 +771,11 @@ except Exception: pass
     // runPyChecked gives us formatted Python tracebacks; fall back to .message
     // then to String() for anything else. No JS stack — it's always Pyodide internals.
     const msg = err?.message || String(err);
-    post({ id, error: msg, fatal: pyodideIsDead() });
+    const fatal = pyodideIsDead();
+    // A fatal is a crash inside the runtime, not a Python exception: say what
+    // was running and where, so a report can point somewhere.
+    if (fatal) self._pyLog(`[worker] fatal during ${cmd}: ${(err?.stack || msg).split("\n").slice(0, 12).join("\n")}`);
+    post({ id, error: msg, fatal });
   } finally {
     if (heavy) syncHeavyRuns--;
   }
