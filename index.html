@@ -1332,6 +1332,12 @@
   .hint-status[data-status="avoid"]    { color: var(--coral); border-color: var(--coral); }
   .hint-status[data-status="found"]    { color: var(--ink-2); border-color: var(--line); }
   .hint-feedback {
+    /* A !hint for an item with many copies answers with a line per copy: cap
+       it and scroll, or it grows over the list in this overflow:hidden panel
+       and the rest can't be reached. */
+    flex: 0 0 auto;
+    max-height: 9.5em;
+    overflow-y: auto;
     padding: 8px 12px;
     border-top: 1px solid var(--line);
     font-family: var(--mono);
