@@ -10,6 +10,19 @@
 
 importScripts("https://cdn.jsdelivr.net/pyodide/v0.29.5/full/pyodide.js");
 
+// Hide JSPI (WebAssembly stack switching) from Pyodide. Where the browser has
+// it, Pyodide runs every event-loop callback on a switchable stack, and under
+// Firefox 156 that corrupts the wasm heap within minutes: fatals with
+// "RuntimeError: index out of bounds" in whatever touches the damage next
+// (malloc, the JsProxy type cache). A bare Pyodide page with no app code
+// reproduces it with JSPI on and not with it off. Nothing here suspends — no
+// run_sync, no syncify — so JSPI buys us nothing. Pyodide has no option for
+// this; it only feature-detects, via `"Suspending" in WebAssembly` (and the
+// older Suspender API).
+delete WebAssembly.Suspending;
+delete WebAssembly.Suspender;
+delete WebAssembly.promising;
+
 let pyodide = null;
 // Only true once ensureInit has run all the way through. `pyodide` alone is a
 // bad readiness signal — it's assigned partway through boot, and it stays
@@ -84,16 +97,32 @@ self.addEventListener("unhandledrejection", flushLog);
 // from a background task (the game watcher, the server loop) never passes
 // through a command's catch, so log its stack here before it propagates.
 const _consoleError = console.error.bind(console);
+// Firefox's Error.stack is the frames alone — no "Name: message" header like
+// Chrome's — so a stack-only line loses what actually went wrong (the trap
+// kind, "out of memory", ...). Lead with the message whenever the stack lacks it.
+function describeError(e) {
+  const head = `${e.name || "Error"}: ${e.message}`;
+  if (!e.stack) return head;
+  return e.stack.includes(e.message) ? e.stack : head + "\n" + e.stack;
+}
+// The wasm heap at the moment of a fatal: one near its ceiling points at an
+// OOM rather than a bug, which the stack alone can't distinguish.
+function heapSize() {
+  try { return `${Math.round(pyodide._module.HEAP8.length / 1048576)} MiB`; }
+  catch { return "unknown"; }
+}
 console.error = (...args) => {
   _consoleError(...args);
   try {
-    self._pyLog("[worker] " + args.map((a) => (a instanceof Error ? (a.stack || a.message) : String(a))).join(" "));
+    let line = args.map((a) => (a instanceof Error ? describeError(a) : String(a))).join(" ");
+    if (/suffered a fatal error/.test(line)) line += ` (wasm heap ${heapSize()})`;
+    self._pyLog("[worker] " + line);
     flushLog();
   } catch {}
 };
 self.addEventListener("error", (ev) => {
   try {
-    self._pyLog("[worker] uncaught: " + (ev.error?.stack || ev.message));
+    self._pyLog("[worker] uncaught: " + (ev.error instanceof Error ? describeError(ev.error) : ev.message));
     flushLog();
   } catch {}
 });
@@ -774,7 +803,7 @@ except Exception: pass
     const fatal = pyodideIsDead();
     // A fatal is a crash inside the runtime, not a Python exception: say what
     // was running and where, so a report can point somewhere.
-    if (fatal) self._pyLog(`[worker] fatal during ${cmd}: ${(err?.stack || msg).split("\n").slice(0, 12).join("\n")}`);
+    if (fatal) self._pyLog(`[worker] fatal during ${cmd} (wasm heap ${heapSize()}): ${(err instanceof Error ? describeError(err) : msg).split("\n").slice(0, 12).join("\n")}`);
     post({ id, error: msg, fatal });
   } finally {
     if (heavy) syncHeavyRuns--;
