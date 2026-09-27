@@ -18,7 +18,7 @@
     "prerelease": {
       "repo": "vendor/archipelago-prerelease",
       "package": "pokemon_crystal_prerelease",
-      "older": ["6.0.0-alpha.31", "6.0.0-beta.12", "6.0.0-rc.2"]
+      "older": ["6.0.0-alpha.31", "6.0.0-beta.12", "6.0.0-rc.2", "6.0.0-rc.3"]
     }
   }
 }

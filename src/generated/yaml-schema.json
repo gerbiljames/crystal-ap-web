@@ -11163,7 +11163,7 @@
             "name": "AlwaysUnlockFly",
             "yaml_key": "always_unlock_fly_destinations",
             "kind": "toggle",
-            "docstring": "Always unlock Fly destinations when entering a town, even if Randomize Fly Unlocks is enabled",
+            "docstring": "Always unlock Fly destinations when entering a town, even if Randomize Fly Unlocks is enabled.\nThis does not work with Randomize Fly Destinations and is not considered by logic.",
             "default": 0,
             "display_name": "Always Unlock Fly Destinations",
             "range_start": null,

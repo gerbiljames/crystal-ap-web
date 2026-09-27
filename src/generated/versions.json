@@ -27,17 +27,17 @@
       "channel": "prerelease",
       "package": "pokemon_crystal_prerelease",
       "game": "Pokemon Crystal Prerelease",
-      "world_version": "1.32.0",
-      "display_version": "6.0.0-rc.3",
-      "minimum_patch_version": "1.32.0",
+      "world_version": "1.33.0",
+      "display_version": "6.0.0-rc.4",
+      "minimum_patch_version": "1.33.0",
       "minimum_ap_version": "0.6.7",
-      "rom_version": 59523,
-      "rom_version11": 59523,
+      "rom_version": 21689,
+      "rom_version11": 21689,
       "basepatch_sha256": {
-        "basepatch.bsdiff4": "47acd012999bd04c408543a6437500541dba832fda58452721e5c8cbaa1ffc71",
-        "basepatch11.bsdiff4": "56bcdbd7a1056b09fea076bcde158db19a2393c83c85498d1ad1c5d28f157c56"
+        "basepatch.bsdiff4": "ae0a44ec100a801c3ec61dd8e52cd15c277edd03be20d1c17bc551e785b4d199",
+        "basepatch11.bsdiff4": "7c2d4b94c49b9686e838db84f2a3cdaaf7a6c87f76e62850758a328523f1144d"
       },
-      "tar": "worlds/pokemon_crystal_prerelease-1.32.0.tar",
+      "tar": "worlds/pokemon_crystal_prerelease-1.33.0.tar",
       "size": 4188160,
       "latest": true,
       "ref": null
@@ -98,6 +98,25 @@
       "size": 4188160,
       "latest": false,
       "ref": "6.0.0-rc.2"
+    },
+    {
+      "channel": "prerelease",
+      "package": "pokemon_crystal_prerelease",
+      "game": "Pokemon Crystal Prerelease",
+      "world_version": "1.32.0",
+      "display_version": "6.0.0-rc.3",
+      "minimum_patch_version": "1.32.0",
+      "minimum_ap_version": "0.6.7",
+      "rom_version": 59523,
+      "rom_version11": 59523,
+      "basepatch_sha256": {
+        "basepatch.bsdiff4": "47acd012999bd04c408543a6437500541dba832fda58452721e5c8cbaa1ffc71",
+        "basepatch11.bsdiff4": "56bcdbd7a1056b09fea076bcde158db19a2393c83c85498d1ad1c5d28f157c56"
+      },
+      "tar": "worlds/pokemon_crystal_prerelease-1.32.0.tar",
+      "size": 4188160,
+      "latest": false,
+      "ref": "6.0.0-rc.3"
     }
   ]
 }
