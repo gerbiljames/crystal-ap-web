@@ -8,7 +8,7 @@
 //   { id, cmd, ...payload }     → { id, ok, out? } | { id, error }
 //   progress events stream as    { id, event: "progress", phase }
 
-importScripts("https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js");
+importScripts("https://cdn.jsdelivr.net/pyodide/v0.29.5/full/pyodide.js");
 
 let pyodide = null;
 // Only true once ensureInit has run all the way through. `pyodide` alone is a
@@ -146,7 +146,7 @@ async function ensureInit(id) {
 
     report("pyodide-boot");
     pyodide = await loadPyodide({
-      indexURL: "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/",
+      indexURL: "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/",
       // Output below sys.stdout/stderr (which _Tee reroutes once the runtime
       // is up): boot messages and C-level dumps such as a fatal error's
       // Python traceback. Into the app log rather than only the console.
