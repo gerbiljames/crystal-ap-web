@@ -8,30 +8,26 @@
           {
             "name": "Goal",
             "yaml_key": "goal",
-            "kind": "choice",
-            "docstring": "Elite Four: Defeat the Champion and enter the Hall of Fame\nRed: Defeat Red in Mt. Silver\nDiploma: Catch all logically available Pokemon and receive the diploma in Celadon City\nRival: Win all possible rival battles\nDefeat Team Rocket: Vanquish Team Rocket in Slowpoke Well, Mahogany Town, Radio Tower and defeat the grunt\non Route 24 (if Kanto is accessible)\nUnown Hunt: Catch all 26 Unown forms that are attached to signs across the region(s) and show the completed Unown dex\n to the scientist in Ruins of Alph. In order to encounter the Unown you'll need to solve their corresponding tile puzzle.\n Each puzzle requires 16 pieces which must be found first.",
-            "default": 0,
+            "kind": "option_set",
+            "docstring": "Select one or more goals. All selected goals must be completed to win.\n\n- Elite Four: Defeat the Champion and enter the Hall of Fame\n- Red: Defeat Red in Mt. Silver\n- Diploma: Catch all logically available Pokemon and receive the diploma in Celadon City\n- Rival: Win all possible rival battles\n- Defeat Team Rocket: Vanquish Team Rocket in Slowpoke Well, Mahogany Town, Radio Tower and defeat the grunt\n   on Route 24 (if Kanto is accessible)\n- Unown Hunt: Catch all 26 Unown forms that are attached to signs across the region(s) and show the completed Unown dex\n   to the scientist in Ruins of Alph. In order to encounter the Unown you'll need to solve their corresponding tile puzzle.\n   Each puzzle requires 16 pieces which must be found first.\n- Battle Tower: Beat all 10 Battle Tower tiers (7 trainers each).",
+            "default": [
+              "Elite Four"
+            ],
             "display_name": "Goal",
             "range_start": null,
             "range_end": null,
-            "choices": [
-              "elite_four",
-              "red",
-              "diploma",
-              "rival",
-              "defeat_team_rocket",
-              "unown_hunt"
-            ],
-            "choice_values": [
-              0,
-              1,
-              2,
-              3,
-              4,
-              5
-            ],
+            "choices": null,
+            "choice_values": null,
             "special_range_names": null,
-            "valid_keys": null,
+            "valid_keys": [
+              "Battle Tower",
+              "Defeat Team Rocket",
+              "Diploma",
+              "Elite Four",
+              "Red",
+              "Rival",
+              "Unown Hunt"
+            ],
             "valid_keys_computed": false
           },
           {
@@ -51,7 +47,7 @@
             "name": "RandomizeStartingTown",
             "yaml_key": "randomize_starting_town",
             "kind": "toggle",
-            "docstring": "Randomly chooses a town to start in.\nAny Pokemon Center except Indigo Plateau, Cinnabar Island and Silver Cave can be chosen.\nLake of Rage can also be chosen.\n\nOther settings may additionally restrict which Pokemon Centers can be chosen.\n\nWARNING: Some starting towns without level scaling may produce difficult starts.",
+            "docstring": "Randomly chooses a town to start in.\nAny Pokemon Center except Indigo Plateau, Cinnabar Island and Silver Cave can be chosen. The Pokemon Centers at Union Cave and Rock Tunnel can also be chosen.\nLake of Rage will start you at its flypoint and cannot be chosen if gate entrances are randomized. Pallet Town will start you in front of Red's House.\nWhen Pokemon Center entrances are randomized, the Pokemon Centers of Cherrygrove City, Viridian City, and Mahogany Town will be vanilla when the starting town is New Bark Town, Pallet Town, or Lake of Rage respectively.\n\nOther settings may additionally restrict which Pokemon Centers can be chosen.\n\nWARNING: Some starting towns without level scaling may produce difficult starts.",
             "default": 0,
             "display_name": "Randomize Starting Town",
             "range_start": null,
@@ -66,7 +62,7 @@
             "name": "StartingTownBlocklist",
             "yaml_key": "starting_town_blocklist",
             "kind": "option_set",
-            "docstring": "Specify places which cannot be chosen as a starting town. If you block every valid option, this list will do\nnothing.\nIndigo Plateau, Cinnabar Island and Silver Cave cannot be chosen as starting towns and are not valid options\n\"_Johto\" and \"_Kanto\" are shortcuts for all Johto and Kanto towns respectively",
+            "docstring": "Specify places which cannot be chosen as a starting town. If you block every valid option, this list will do nothing.\nIndigo Plateau, Cinnabar Island and Silver Cave cannot be chosen as starting towns and are not valid options.\n\"_Johto\" and \"_Kanto\" are shortcuts for all Johto and Kanto towns respectively.\n\"Union Cave\" and \"Rock Tunnel\" are valid starting towns.",
             "default": null,
             "display_name": "Starting Town Blocklist",
             "range_start": null,
@@ -106,7 +102,7 @@
             "name": "JohtoOnly",
             "yaml_key": "johto_only",
             "kind": "choice",
-            "docstring": "Excludes all of Kanto, disables Kanto access\nForces Goal to Elite Four unless Silver Cave is included\nGoal badges will be limited to 8 if badges are shuffled or vanilla",
+            "docstring": "Excludes Kanto and disables Kanto access. Include Silver Cave keeps Silver Cave and Mt. Silver available.\n\n- The Diploma goal is removed; the Red goal is also removed unless Silver Cave is included\n  (Elite Four is used if no goals remain)\n- Gym count requirements are capped at 8 (7 for Radio Tower)\n- Badge count requirements are capped at 8 (7 for Radio Tower and Route 44) unless badges are completely\n  random, in which case extra Kanto badges are added to the pool",
             "default": 0,
             "display_name": "Johto Only",
             "range_start": null,
@@ -124,6 +120,169 @@
             "special_range_names": null,
             "valid_keys": null,
             "valid_keys_computed": false
+          },
+          {
+            "name": "RandomizeEntrances",
+            "yaml_key": "randomize_entrances",
+            "kind": "option_set",
+            "docstring": "Categories of entrances to include in the entrance randomization pool.\nLeave empty (default) to disable entrance randomization.\n\nCategories:\n- Dungeon: Entrances to multi-floor areas with trainers/items (towers, caves, hideouts). Gyms excluded.\n- Dungeon Interior: Entrances between two interior regions of a dungeon (internal stairs/ladders/warps).\n- Gym: Entrances to gyms.\n- Gym Interior: Entrances between two interior regions of a gym (Blackthorn Gym and Saffron Gym).\n- Mart: Entrances to Pokemarts, department stores, and other shop-like buildings.\n- Mart Interior: Entrances between two interior regions of a department store (inter-floor stairs).\n- Building: Entrances to generic buildings.\n- Building Interior: Entrances between two interior regions of a building.\n- Gate: Entrances to route gates.\n- Pokecenter: Entrances to pokecenters.\n- Elevator: Entrances to elevators for each floor.\n- Pokemon League: Entrances involving Elite Four chambers.\n- One-Way: One-way entrances. Will not be shuffled with other entrances.\n\n_All includes all categories.\n_Random has a 50% chance to include each category not already included.",
+            "default": [],
+            "display_name": "Randomize Entrances",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": [
+              "Building",
+              "Building Interior",
+              "Dungeon",
+              "Dungeon Interior",
+              "Elevator",
+              "Gate",
+              "Gym",
+              "Gym Interior",
+              "Mart",
+              "Mart Interior",
+              "One-Way",
+              "Pokecenter",
+              "Pokemon League"
+            ],
+            "valid_keys_computed": false
+          },
+          {
+            "name": "MixEntrances",
+            "yaml_key": "mix_entrances",
+            "kind": "option_set",
+            "docstring": "Categories that shuffle together in a single combined pool. Defaults to all\ncategories (everything mixes). Any category removed from this set becomes\nits own isolated pool and shuffles only among itself.\n\nHas no effect on categories not also present in randomize_entrances.\nOne-Ways are always isolated regardless of this setting.\n\n_All includes all categories (the default).",
+            "default": null,
+            "display_name": "Mix Entrances",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": [
+              "Building",
+              "Building Interior",
+              "Dungeon",
+              "Dungeon Interior",
+              "Elevator",
+              "Gate",
+              "Gym",
+              "Gym Interior",
+              "Mart",
+              "Mart Interior",
+              "One-Way",
+              "Pokecenter",
+              "Pokemon League"
+            ],
+            "valid_keys_computed": false
+          },
+          {
+            "name": "CoupledEntrances",
+            "yaml_key": "coupled_entrances",
+            "kind": "toggle_on",
+            "docstring": "If enabled, entrance randomization is coupled: if door A leads to location B,\nthen the exit of location B leads back to door A. Recommended for navigation.\nIf disabled, exits are randomized independently.\n\nHas no effect on one way entrances.",
+            "default": 1,
+            "display_name": "Coupled Entrances",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "RandomizeFlyDestinations",
+            "yaml_key": "randomize_fly_destinations",
+            "kind": "toggle",
+            "docstring": "Randomizes the destinations of the game's flypoints\n\nIf Randomize Fly Unlocks is on \"Exclude Silver Cave\", Silver Cave / Route 28 are not included and the flypoint remains vanilla.",
+            "default": 0,
+            "display_name": "Randomize Fly Destinations",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "FlyDestinationBlocklist",
+            "yaml_key": "fly_destination_blocklist",
+            "kind": "option_set",
+            "docstring": "Prevents a specific warp or map from being selected as a random flypoint.\n\nYou can find a complete list of accepted values at:\nhttps://github.com/gerbiljames/Archipelago-Crystal/blob/pokecrystal/worlds/pokemon_crystal/docs/fly_plando.md",
+            "default": [],
+            "display_name": "Fly Destination Blocklist",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": true
+          },
+          {
+            "name": "FlyDestinationPlando",
+            "yaml_key": "fly_destination_plando",
+            "kind": "option_dict",
+            "docstring": "Pins one or more fly unlock to a specific warp or map.\n\nYou can find a guide to accepted values and formatting at:\nhttps://github.com/gerbiljames/Archipelago-Crystal/blob/pokecrystal/worlds/pokemon_crystal/docs/fly_plando.md",
+            "default": {},
+            "display_name": "Fly Destination Plando",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": true
+          },
+          {
+            "name": "CrystalPlandoConnections",
+            "yaml_key": "plando_connections",
+            "kind": "other",
+            "docstring": "Force specific entrance randomization pairings before randomization.\nAccepts friendly connection names (e.g. \"Azalea Gym Entrance\") or internal\nconnection names of the form \"REGION_A -> REGION_B\" from entrance_data.json.\n\nThe \"entrance\" is the door walked through. The \"exit\" is the connection at the\narrival side: the player ends up on the far side of that door.\n\nDirection \"both\" forces the reverse pairing too; \"entrance\" forces only one direction.\nWith coupled_entrances enabled every pairing is forced to \"both\", since coupling already\nmakes the return trip mirror the way in.\nRequires randomize_entrances to include the relevant categories.\n\nExample (cafe door leads to the elevator room):\n  plando_connections:\n    - entrance: \"Celadon Cafe Entrance\"\n      exit: \"Celadon Dept. Store 1F Elevator Entrance\"\n      direction: both\n\nTo pin an entrance to its vanilla destination, use the same connection name for\nboth \"entrance\" and \"exit\":\n  plando_connections:\n    - entrance: \"Silver Cave Entrance\"\n      exit: \"Silver Cave Entrance\"\n      direction: both",
+            "default": null,
+            "display_name": "CrystalPlandoConnections",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "FloodedMine",
+            "yaml_key": "flooded_mine",
+            "kind": "toggle",
+            "docstring": "Adds the Flooded Mine, a small cave connecting Cherrygrove City and\nRoute 32, with new wild encounters, three hidden items, and a TM.",
+            "default": 0,
+            "display_name": "Flooded Mine",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "Route23Restored",
+            "yaml_key": "route_23_restored",
+            "kind": "toggle",
+            "docstring": "Inserts a restored Route 23 (the cut Kanto area) between Victory Road's\nsouthern exit and Victory Road Gate. Adds new wild encounters, a berry\ntree, and two hidden items.",
+            "default": 0,
+            "display_name": "Route 23 Restored",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
           }
         ]
       },
@@ -131,10 +290,63 @@
         "name": "Roadblocks",
         "options": [
           {
+            "name": "VictoryRoadRequirement",
+            "yaml_key": "victory_road_requirement",
+            "kind": "choice",
+            "docstring": "Sets the requirement to pass the Victory Road badge check",
+            "default": 0,
+            "display_name": "Victory Road Requirement",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "badges",
+              "gyms",
+              "johto_badges"
+            ],
+            "choice_values": [
+              0,
+              1,
+              2
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "VictoryRoadCount",
+            "yaml_key": "victory_road_count",
+            "kind": "range",
+            "docstring": "Sets the number of badges/gyms required to pass the Victory Road badge check\n\nThis will be limited to 8 if the requirement is Johto Badges",
+            "default": 8,
+            "display_name": "Victory Road Count",
+            "range_start": 0,
+            "range_end": 16,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "VictoryRoadStrength",
+            "yaml_key": "victory_road_strength",
+            "kind": "toggle",
+            "docstring": "If enabled, Strength is required to pass through Victory Road to Indigo Plateau.",
+            "default": 0,
+            "display_name": "Victory Road Strength",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
             "name": "EliteFourRequirement",
             "yaml_key": "elite_four_requirement",
             "kind": "choice",
-            "docstring": "Sets the requirement to pass the Victory Road badge check",
+            "docstring": "Sets the requirement go between Indigo Pokecenter 1F and Will's room",
             "default": 0,
             "display_name": "Elite Four Requirement",
             "range_start": null,
@@ -157,11 +369,26 @@
             "name": "EliteFourCount",
             "yaml_key": "elite_four_count",
             "kind": "range",
-            "docstring": "Sets the number of badges/gyms required to enter Victory Road\n\nThis will be limited to 8 if the requirement is Johto Badges",
+            "docstring": "Sets the number of badges/gyms required to go between Indigo Pokecenter 1F and Will's room\n\nThis will be limited to 8 if the requirement is Johto Badges",
             "default": 8,
             "display_name": "Elite Four Count",
             "range_start": 0,
             "range_end": 16,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "LanceRequiresEliteFour",
+            "yaml_key": "lance_requires_elite_four",
+            "kind": "toggle",
+            "docstring": "Lance's room kicks you out unless you have beaten all four Elite Four members.\n\nHas no effect if Skip Elite Four is enabled.",
+            "default": 0,
+            "display_name": "Lance Requires Elite Four",
+            "range_start": null,
+            "range_end": null,
             "choices": null,
             "choice_values": null,
             "special_range_names": null,
@@ -204,6 +431,107 @@
             "valid_keys": null,
             "valid_keys_computed": false
           },
+          {
+            "name": "DarkAreas",
+            "yaml_key": "dark_areas",
+            "kind": "option_set",
+            "docstring": "Sets which areas are dark until Flash is used\n\n- _All includes all areas\n- _Random has a 50% chance to include each area that is not already included",
+            "default": null,
+            "display_name": "Dark Areas",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": [
+              "Burned Tower",
+              "Dark Cave",
+              "Digletts Cave",
+              "Dragons Den",
+              "Flooded Mine",
+              "Goldenrod Underground",
+              "Ice Path",
+              "Ilex Forest",
+              "Mount Moon",
+              "Mount Mortar",
+              "Olivine Lighthouse",
+              "Rock Tunnel",
+              "Silver Cave",
+              "Slowpoke Well",
+              "Tohjo Falls",
+              "Union Cave",
+              "Victory Road",
+              "Whirl Islands"
+            ],
+            "valid_keys_computed": false
+          },
+          {
+            "name": "MagnetTrainAccess",
+            "yaml_key": "magnet_train_access",
+            "kind": "choice",
+            "docstring": "Sets the requirement to ride the Magnet Train\n\n- Pass requires only the Pass\n- Pass and Power requires the Pass and restoring power to Kanto by returning the Machine Part",
+            "default": 0,
+            "display_name": "Magnet Train Access",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "pass",
+              "pass_and_power"
+            ],
+            "choice_values": [
+              0,
+              1
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "SSAquaAccess",
+            "yaml_key": "ss_aqua_access",
+            "kind": "choice",
+            "docstring": "Sets the requirement to sail on the S.S. Aqua\n- Vanilla: S.S. Ticket is required\n- Lighthouse and Ticket: Healing Amphy in the Olivine lighthouse and the S.S Ticket are required",
+            "default": 0,
+            "display_name": "S.S. Aqua Access",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "vanilla",
+              "lighthouse_and_ticket"
+            ],
+            "choice_values": [
+              0,
+              1
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "VanillaEventChains",
+            "yaml_key": "vanilla_event_chains",
+            "kind": "option_set",
+            "docstring": "Restores the selected vanilla event chains instead of the streamlined Archipelago behaviour.\n\nMisty: Misty is not in her gym at the start. You must meet the Power Plant manager, witness the Rocket\n flee the Cerulean Gym, then find Misty on her date on Route 25 before she returns to her gym. The Cerulean Gym\n Machine Part cannot be picked up until the Power Plant manager step.\n\nClair: Clair refuses to give you the Rising Badge until you prove your worth to the Elders in the\n Dragon's Den Shrine, which requires Whirlpool to access.\n\nJasmine: the Cianwood Pharmacy only hands over the SecretPotion after you've visited Jasmine tending\n her sick Amphy atop the Olivine Lighthouse. (Curing Amphy to bring Jasmine back to her gym is always\n required; this just gates the SecretPotion behind meeting her first.)\n\nCopycat: the guy in the Vermilion Pokemon Fan Club only gives you the Lost Item after you've spoken to\n the Copycat in Saffron and learned she lost it.\n\n- _All includes all event chains\n- _Random has a 50% chance to include each event chain that is not already included",
+            "default": null,
+            "display_name": "Vanilla Event Chains",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": [
+              "Clair",
+              "Copycat",
+              "Jasmine",
+              "Misty"
+            ],
+            "valid_keys_computed": false
+          }
+        ]
+      },
+      {
+        "name": "Johto Roadblocks",
+        "options": [
           {
             "name": "MtSilverRequirement",
             "yaml_key": "mt_silver_requirement",
@@ -313,100 +641,6 @@
             "valid_keys_computed": false
           },
           {
-            "name": "KantoAccessRequirement",
-            "yaml_key": "kanto_access_requirement",
-            "kind": "choice",
-            "docstring": "Sets the requirement to pass between Victory Road gate and Kanto\n- Wake Snorlax: Wake the Snorlax outside of Diglett's Cave\n- Badges: Requires the number of badges specified by kanto_access_count\n- Gyms: Requires beating the number of gyms specified by kanto_access_count\n- Become Champion: Defeat Lance and enter the Hall of Fame\n\nThis setting does nothing if Johto Only is enabled",
-            "default": 0,
-            "display_name": "Kanto Access Requirement",
-            "range_start": null,
-            "range_end": null,
-            "choices": [
-              "wake_snorlax",
-              "badges",
-              "gyms",
-              "become_champion"
-            ],
-            "choice_values": [
-              0,
-              1,
-              2,
-              3
-            ],
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "KantoAccessCount",
-            "yaml_key": "kanto_access_count",
-            "kind": "range",
-            "docstring": "Sets the number of badges/gyms required to pass between Victory Road gate and Kanto\nOnly applies if Kanto Access Condition is set to badges or gyms",
-            "default": 8,
-            "display_name": "Kanto Access Count",
-            "range_start": 0,
-            "range_end": 16,
-            "choices": null,
-            "choice_values": null,
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "VictoryRoadAccess",
-            "yaml_key": "victory_road_access",
-            "kind": "choice",
-            "docstring": "Sets the requirement to pass through Victory Road to Indigo Plateau\n- Vanilla: No requirement\n- Strength: Strength is required",
-            "default": 0,
-            "display_name": "Victory Road Access",
-            "range_start": null,
-            "range_end": null,
-            "choices": [
-              "vanilla",
-              "strength"
-            ],
-            "choice_values": [
-              0,
-              1
-            ],
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "DarkAreas",
-            "yaml_key": "dark_areas",
-            "kind": "option_set",
-            "docstring": "Sets which areas are dark until Flash is used\n\n- _All includes all areas\n- _Random has a 50% chance to include each area that is not already included",
-            "default": null,
-            "display_name": "Dark Areas",
-            "range_start": null,
-            "range_end": null,
-            "choices": null,
-            "choice_values": null,
-            "special_range_names": null,
-            "valid_keys": [
-              "Burned Tower",
-              "Dark Cave",
-              "Digletts Cave",
-              "Dragons Den",
-              "Goldenrod Underground",
-              "Ice Path",
-              "Ilex Forest",
-              "Mount Moon",
-              "Mount Mortar",
-              "Olivine Lighthouse",
-              "Rock Tunnel",
-              "Silver Cave",
-              "Slowpoke Well",
-              "Tohjo Falls",
-              "Union Cave",
-              "Victory Road",
-              "Whirl Islands"
-            ],
-            "valid_keys_computed": false
-          },
-          {
             "name": "Route32Condition",
             "yaml_key": "route_32_condition",
             "kind": "choice",
@@ -428,50 +662,6 @@
               2,
               3,
               4
-            ],
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "Route2Access",
-            "yaml_key": "route_2_access",
-            "kind": "choice",
-            "docstring": "Sets the roadblock for moving between the west of Route 2 and Diglett's cave\n- Vanilla: Cut is required\n- Ledge: A ledge is added north of Diglett's cave allowing east -> west access without Cut\n- Open: No requirement",
-            "default": 1,
-            "display_name": "Route 2 Access",
-            "range_start": null,
-            "range_end": null,
-            "choices": [
-              "vanilla",
-              "ledge",
-              "open"
-            ],
-            "choice_values": [
-              0,
-              1,
-              2
-            ],
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "Route3Access",
-            "yaml_key": "route_3_access",
-            "kind": "choice",
-            "docstring": "Sets the roadblock for moving between Pewter City and Route 3\n- Vanilla: No requirement\n- Boulder Badge: The Boulder Badge is required to pass",
-            "default": 0,
-            "display_name": "Route 3 Access",
-            "range_start": null,
-            "range_end": null,
-            "choices": [
-              "vanilla",
-              "boulder_badge"
-            ],
-            "choice_values": [
-              0,
-              1
             ],
             "special_range_names": null,
             "valid_keys": null,
@@ -589,154 +779,16 @@
             "valid_keys_computed": false
           },
           {
-            "name": "SaffronGatehouseTea",
-            "yaml_key": "saffron_gatehouse_tea",
-            "kind": "option_set",
-            "docstring": "Sets which Saffron City gatehouses require Tea to pass. Obtaining the Tea will unlock them all.\nIf any gatehouses are enabled, adds a new location in Celadon Mansion 1F and adds Tea to the item pool.\nValid options are: North, East, South and West in any combination.\n_Random gives each gate that is not already included a 50% chance to be included.\n_All is shorthand for all valid options except _Random of course.",
-            "default": null,
-            "display_name": "Saffron Gatehouse Tea",
-            "range_start": null,
-            "range_end": null,
-            "choices": null,
-            "choice_values": null,
-            "special_range_names": null,
-            "valid_keys": [
-              "East",
-              "North",
-              "South",
-              "West"
-            ],
-            "valid_keys_computed": false
-          },
-          {
             "name": "RemoveIlexCutTree",
             "yaml_key": "remove_ilex_cut_tree",
-            "kind": "toggle_on",
+            "kind": "toggle",
             "docstring": "Removes the Cut tree in Ilex Forest",
-            "default": 1,
+            "default": 0,
             "display_name": "Remove Ilex Forest Cut Tree",
             "range_start": null,
             "range_end": null,
             "choices": null,
             "choice_values": null,
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "UndergroundsRequirePower",
-            "yaml_key": "undergrounds_require_power",
-            "kind": "choice",
-            "docstring": "Specifies which of the Kanto Underground Passes require the Machine Part to be returned to access.",
-            "default": 0,
-            "display_name": "Undergrounds Require Power",
-            "range_start": null,
-            "range_end": null,
-            "choices": [
-              "both",
-              "north_south",
-              "east_west",
-              "neither"
-            ],
-            "choice_values": [
-              0,
-              1,
-              2,
-              3
-            ],
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "EastWestUnderground",
-            "yaml_key": "east_west_underground",
-            "kind": "toggle",
-            "docstring": "Adds an Underground Pass between Route 7 and Route 8 in Kanto.",
-            "default": 0,
-            "display_name": "East - West Underground",
-            "range_start": null,
-            "range_end": null,
-            "choices": null,
-            "choice_values": null,
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "VanillaClair",
-            "yaml_key": "vanilla_clair",
-            "kind": "toggle",
-            "docstring": "Clair refuses to give you the Rising Badge until you prove your worth\nto the Elders in the Dragon's Den Shrine, which requires Whirlpool to access.",
-            "default": 0,
-            "display_name": "Vanilla Clair",
-            "range_start": null,
-            "range_end": null,
-            "choices": null,
-            "choice_values": null,
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "Route12Access",
-            "yaml_key": "route_12_access",
-            "kind": "choice",
-            "docstring": "Sets the requirement to pass between the north and south parts of Route 12\n- Vanilla: No requirement\n- Weird Tree: Requires Squirtbottle\n\nThe roadblock is north of the path to Route 11 and can be bypassed with Surf",
-            "default": 0,
-            "display_name": "Route 12 Access",
-            "range_start": null,
-            "range_end": null,
-            "choices": [
-              "vanilla",
-              "weird_tree"
-            ],
-            "choice_values": [
-              0,
-              1
-            ],
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "MagnetTrainAccess",
-            "yaml_key": "magnet_train_access",
-            "kind": "choice",
-            "docstring": "Sets the requirement to ride the Magnet Train\n\n- Pass requires only the Pass\n- Pass and Power requires the Pass and restoring power to Kanto by returning the Machine Part",
-            "default": 0,
-            "display_name": "Magnet Train Access",
-            "range_start": null,
-            "range_end": null,
-            "choices": [
-              "pass",
-              "pass_and_power"
-            ],
-            "choice_values": [
-              0,
-              1
-            ],
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "SSAquaAccess",
-            "yaml_key": "ss_aqua_access",
-            "kind": "choice",
-            "docstring": "Sets the requirement to sail on the S.S. Aqua\n- Vanilla: S.S. Ticket is required\n- Lighthouse and Ticket: Healing Amphy in the Olivine lighthouse and the S.S Ticket are required",
-            "default": 0,
-            "display_name": "S.S. Aqua Access",
-            "range_start": null,
-            "range_end": null,
-            "choices": [
-              "vanilla",
-              "lighthouse_and_ticket"
-            ],
-            "choice_values": [
-              0,
-              1
-            ],
             "special_range_names": null,
             "valid_keys": null,
             "valid_keys_computed": false
@@ -782,12 +834,184 @@
             "special_range_names": null,
             "valid_keys": null,
             "valid_keys_computed": false
+          }
+        ]
+      },
+      {
+        "name": "Kanto Roadblocks",
+        "options": [
+          {
+            "name": "Route22AccessRequirement",
+            "yaml_key": "route_22_access_requirement",
+            "kind": "choice",
+            "docstring": "Sets the requirement to pass between Victory Road gate and Kanto\n- Wake Snorlax: Wake the Snorlax outside of Diglett's Cave\n- Badges: Requires the number of badges specified by route_22_access_count\n- Gyms: Requires beating the number of gyms specified by route_22_access_count\n- Become Champion: Defeat Lance and enter the Hall of Fame\n\nThis setting does nothing if Johto Only is enabled",
+            "default": 0,
+            "display_name": "Route 22 Access Requirement",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "wake_snorlax",
+              "badges",
+              "gyms",
+              "become_champion"
+            ],
+            "choice_values": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "Route22AccessCount",
+            "yaml_key": "route_22_access_count",
+            "kind": "range",
+            "docstring": "Sets the number of badges/gyms required to pass between Victory Road gate and Kanto\nOnly applies if Route 22 Access Requirement is set to badges or gyms",
+            "default": 8,
+            "display_name": "Route 22 Access Count",
+            "range_start": 0,
+            "range_end": 16,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "Route2Access",
+            "yaml_key": "route_2_access",
+            "kind": "choice",
+            "docstring": "Sets the roadblock for moving between the west of Route 2 and Diglett's cave\n- Vanilla: Cut is required\n- Ledge: A ledge is added north of Diglett's cave allowing east -> west access without Cut\n- Open: No requirement",
+            "default": 1,
+            "display_name": "Route 2 Access",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "vanilla",
+              "ledge",
+              "open"
+            ],
+            "choice_values": [
+              0,
+              1,
+              2
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "Route3Access",
+            "yaml_key": "route_3_access",
+            "kind": "choice",
+            "docstring": "Sets the roadblock for moving between Pewter City and Route 3\n- Vanilla: No requirement\n- Boulder Badge: The Boulder Badge is required to pass",
+            "default": 0,
+            "display_name": "Route 3 Access",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "vanilla",
+              "boulder_badge"
+            ],
+            "choice_values": [
+              0,
+              1
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "SaffronGatehouseTea",
+            "yaml_key": "saffron_gatehouse_tea",
+            "kind": "option_set",
+            "docstring": "Sets which Saffron City gatehouses require Tea to pass. Obtaining the Tea will unlock them all.\nIf any gatehouses are enabled, adds a new location in Celadon Mansion 1F and adds Tea to the item pool.\nValid options are: North, East, South and West in any combination.\n_Random gives each gate that is not already included a 50% chance to be included.\n_All is shorthand for all valid options except _Random of course.",
+            "default": null,
+            "display_name": "Saffron Gatehouse Tea",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": [
+              "East",
+              "North",
+              "South",
+              "West"
+            ],
+            "valid_keys_computed": false
+          },
+          {
+            "name": "UndergroundsRequirePower",
+            "yaml_key": "undergrounds_require_power",
+            "kind": "choice",
+            "docstring": "Specifies which of the Kanto Underground Passes require the Machine Part to be returned to access.",
+            "default": 0,
+            "display_name": "Undergrounds Require Power",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "both",
+              "north_south",
+              "east_west",
+              "neither"
+            ],
+            "choice_values": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "EastWestUnderground",
+            "yaml_key": "east_west_underground",
+            "kind": "toggle",
+            "docstring": "Adds an Underground Pass between Route 7 and Route 8 in Kanto.",
+            "default": 0,
+            "display_name": "East - West Underground",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "Route12Access",
+            "yaml_key": "route_12_access",
+            "kind": "choice",
+            "docstring": "Sets the requirement to pass between the north and south parts of Route 12\n- Vanilla: No requirement\n- Weird Tree: Requires Squirtbottle, but can be bypassed with Surf\n- Weird Tree Surf Block: Requires Squirtbottle and adds boulders to prevent surfing around\n\nThe roadblock is north of the path to Route 11",
+            "default": 0,
+            "display_name": "Route 12 Access",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "vanilla",
+              "weird_tree",
+              "weird_tree_surf_block"
+            ],
+            "choice_values": [
+              0,
+              1,
+              2
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
           },
           {
             "name": "SouthKantoAccess",
             "yaml_key": "south_kanto_access",
             "kind": "choice",
-            "docstring": "Sets where the landslide that is normally south of Fuchsia City is located",
+            "docstring": "Sets where the landslide that is normally south of Fuchsia City is located\n\nBoth can only be used if the condition is power restored.",
             "default": 0,
             "display_name": "South Kanto Access",
             "range_start": null,
@@ -795,12 +1019,14 @@
             "choices": [
               "route_19",
               "route_21",
-              "neither"
+              "neither",
+              "both"
             ],
             "choice_values": [
               0,
               1,
-              2
+              2,
+              3
             ],
             "special_range_names": null,
             "valid_keys": null,
@@ -952,7 +1178,7 @@
             "name": "RandomizeFlyUnlocks",
             "yaml_key": "randomize_fly_unlocks",
             "kind": "choice",
-            "docstring": "Shuffles Fly destination unlocks into the pool\n\nIndigo Plateau is not included.",
+            "docstring": "Shuffles Fly destination unlocks into the pool",
             "default": 0,
             "display_name": "Randomize Fly Unlocks",
             "range_start": null,
@@ -997,24 +1223,31 @@
             "valid_keys_computed": false
           },
           {
-            "name": "RandomizePhoneCalls",
+            "name": "RandomizePhoneCallItems",
             "yaml_key": "randomize_phone_call_items",
-            "kind": "choice",
-            "docstring": "Shuffles items given by trainers after registering their phone numbers into the pool\n- On Vanilla: Trainers will only call you and allow you to call them at specific times and after their\n  condition has been met. Whether the correct phone call triggers can be random depending on the trainer.\n  IMPORTANT: Triggering phone calls this way can require resetting the clock, toggling DST and a lot of patience.\n\n- On Simple: Trainers will allow you to call them for their item any time after their condition has been met.\n  They will always have an item ready in this case.\n\nThe Pokegear is required to register trainer phone numbers and the Phone Card is required to make and receive calls.\n\nTrainers that need you to show them a Pokemon require both this option and Randomize Pokemon Requests to be enabled.",
+            "kind": "toggle",
+            "docstring": "Shuffles gift items from phone trainers into the item pool.\n\nYou need the Pokegear to register phone numbers and the Phone Card to make and receive calls.\n\nTrainers that ask to see a Pokemon to exchange numbers are only included if Randomize Pokemon Requests is also on.",
             "default": 0,
-            "display_name": "Randomize Phone Calls",
+            "display_name": "Randomize Phone Call Items",
             "range_start": null,
             "range_end": null,
-            "choices": [
-              "off",
-              "on_vanilla",
-              "on_simple"
-            ],
-            "choice_values": [
-              0,
-              1,
-              2
-            ],
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "Momsanity",
+            "yaml_key": "momsanity",
+            "kind": "toggle",
+            "docstring": "Adds 10 locations for the items Mom buys you at different money thresholds\nwhile she's saving your money.\n\nLogically requires access to Mom, and either giving the Mystery Egg to Elm or\nreaching Route 31 (where Mom calls you). Each item logically requires an\nincreasing number of accessible gyms, starting at zero.\n\nItems that go in your bag will be deposited into the PC. Items which do not go\nin your bag will be in the BANK OF MOM collection box in the PC.\n\nYou can deposit money into the BANK OF MOM by talking to Mom after giving Elm\nthe Mystery Egg or her having called you on Route 31.",
+            "default": 0,
+            "display_name": "Momsanity",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
             "special_range_names": null,
             "valid_keys": null,
             "valid_keys_computed": false
@@ -1061,7 +1294,7 @@
             "name": "ItemPoolFill",
             "yaml_key": "item_pool_fill",
             "kind": "choice",
-            "docstring": "Changes how non-progression items are put into the pool.\n\n- Vanilla: item pool filled similarly to vanilla.\n- Balanced: all filler items uniformly randomized.\n- Youngster: item pool filled with items reflecting that of a young trainer.\n- Cooltrainer: item pool filled with items reflecting that of a cooltrainer.\n- Shuckle: item pool filled with items reflecting that of a Shuckle.",
+            "docstring": "Changes the weight of non-progression items in the pool.\n\n- Vanilla: weighted similarly to vanilla.\n- Balanced: all weighted equally.\n- Youngster: weighted to reflect a young trainer (weak items).\n- Cooltrainer: weighted to reflect a cooltrainer (strong items).\n- Shuckle: weighted to reflect a Shuckle (\ud83d\udc22).",
             "default": 0,
             "display_name": "Item Pool Fill",
             "range_start": null,
@@ -1118,7 +1351,7 @@
             "name": "Grasssanity",
             "yaml_key": "grasssanity",
             "kind": "choice",
-            "docstring": "Adds Cutting grass tiles as locations, each one adds a Grass to the item pool, Grass smells good and sells for \u00a51\nLong grass tiles in National Park must be Cut twice and as such contribute two locations\n\n- One Per Area: Selects a random grass tile in each Route or Area to be a location\n- Full: Every grass tile is a location\n\nWARNING: This option is dumb, it can add over 700 locations and over 700 useless filler items",
+            "docstring": "Adds Cutting grass tiles as locations, each one adds a Grass to the item pool, Grass smells good and sells for \u00a51\nLong grass tiles in National Park must be Cut twice and as such contribute two locations\n\n- One Per Area: Selects a random grass tile in each Route or Area to be a location\n- Full: Every grass tile is a location\n\nWARNING: This option is dumb, it can add over 800 locations and over 800 useless filler items",
             "default": 0,
             "display_name": "Grasssanity",
             "range_start": null,
@@ -1181,6 +1414,21 @@
             "special_range_names": null,
             "valid_keys": null,
             "valid_keys_computed": false
+          },
+          {
+            "name": "ItemValuePlando",
+            "yaml_key": "item_value_plando",
+            "kind": "option_dict",
+            "docstring": "Specify the base value of individual items.\nThis applies even when Randomize Item Values is off, and takes priority over randomized values.\nValues must be between 0 and 10000.\n\nA single value or a weighted dict of values can be provided per item:\nitem_value_plando:\n  Poke Ball: 150\n  Rare Candy:\n    5000: 50\n    10000: 50",
+            "default": null,
+            "display_name": "Item Value Plando",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": true
           }
         ]
       },
@@ -1334,19 +1582,38 @@
         "name": "HMs",
         "options": [
           {
-            "name": "HMCompatibility",
-            "yaml_key": "hm_compatibility",
+            "name": "HMSameTypeCompatibility",
+            "yaml_key": "hm_same_type_compatibility",
             "kind": "named_range",
-            "docstring": "Percent chance for Pokemon to be compatible with each HM\nHeadbutt and Rock Smash are considered HMs when applying compatibility\n\nMinimal compatibility will ensure only the minimum required number of Pokemon can learn each HM, usually one\n\nYou can look up HM compatible Pokemon in the Pokedex using the search function",
+            "docstring": "Percent chance for Pokemon to be compatible with each HM whose move type matches one of the Pokemon's types.\nHeadbutt and Rock Smash are considered HMs when applying compatibility.\n\nYou can look up HM compatible Pokemon in the Pokedex using the search function.",
             "default": -1,
-            "display_name": "HM Compatibility",
-            "range_start": -1,
+            "display_name": "HM Same Type Compatibility",
+            "range_start": 0,
             "range_end": 100,
             "choices": null,
             "choice_values": null,
             "special_range_names": {
               "vanilla": -1,
-              "minimal": 0,
+              "none": 0,
+              "fully_compatible": 100
+            },
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "HMOtherTypeCompatibility",
+            "yaml_key": "hm_other_type_compatibility",
+            "kind": "named_range",
+            "docstring": "Percent chance for Pokemon to be compatible with each HM whose move type does not match any of the Pokemon's types.\nHeadbutt and Rock Smash are considered HMs when applying compatibility.\n\nYou can look up HM compatible Pokemon in the Pokedex using the search function.",
+            "default": -1,
+            "display_name": "HM Other Type Compatibility",
+            "range_start": 0,
+            "range_end": 100,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": {
+              "vanilla": -1,
+              "none": 0,
               "fully_compatible": 100
             },
             "valid_keys": null,
@@ -1457,7 +1724,7 @@
             "name": "FreeFlyLocation",
             "yaml_key": "free_fly_location",
             "kind": "choice",
-            "docstring": "- Free Fly: Unlocks a random Fly destination when Fly is obtained.\n- Free Fly and Map Card: Additionally unlocks a random Fly destination after obtaining both the Pokegear and Map Card.\n- Map Card: Unlocks a single random Fly destination only after obtaining both the Pokegear and Map card.\n\nIndigo Plateau cannot be chosen as a free Fly location.",
+            "docstring": "- Free Fly: Unlocks a random Fly destination when Fly is obtained.\n- Free Fly and Map Card: Additionally unlocks a random Fly destination after obtaining both the Pokegear and Map Card.\n- Map Card: Unlocks a single random Fly destination only after obtaining both the Pokegear and Map card.",
             "default": 0,
             "display_name": "Free Fly Location",
             "range_start": null,
@@ -1482,7 +1749,7 @@
             "name": "FlyLocationBlocklist",
             "yaml_key": "free_fly_blocklist",
             "kind": "option_set",
-            "docstring": "These locations won't be given to you as fly locations, either as your free one or from receiving the map card.\nLocations should be provided in the form: \"Ecruteak City\"\nIndigo Plateau cannot be chosen as a free fly location and is not a valid option\nIf you blocklist enough locations that there aren't enough locations left for your total number of free fly locations, the blocklist will simply do nothing\n\"_Johto\" and \"_Kanto\" are shortcuts for all Johto and Kanto towns respectively",
+            "docstring": "These locations won't be given to you as fly locations, either as your free one or from receiving the map card.\nLocations should be provided in the form: \"Ecruteak City\"\nIf you blocklist enough locations that there aren't enough locations left for your total number of free fly locations, the blocklist will simply do nothing\n\"_Johto\" and \"_Kanto\" are shortcuts for all Johto and Kanto towns respectively",
             "default": null,
             "display_name": "Fly Location Blocklist",
             "range_start": null,
@@ -1501,6 +1768,7 @@
               "Ecruteak City",
               "Fuchsia City",
               "Goldenrod City",
+              "Indigo Plateau",
               "Lake of Rage",
               "Lavender Town",
               "Mahogany Town",
@@ -1532,29 +1800,6 @@
             "special_range_names": null,
             "valid_keys": null,
             "valid_keys_computed": false
-          },
-          {
-            "name": "FlyCheese",
-            "yaml_key": "fly_cheese",
-            "kind": "choice",
-            "docstring": "Determines whether the Vermilion and Mahogany Fly unlocks can be accessed from behind Snorlax and the\nRagecandybar salesman respectively\n- Out of logic allows access but does not consider them in logic\n- Disallow prevents access to Fly unlocks beyond the roadblocks\n- In logic allows access and considers them in logic",
-            "default": 0,
-            "display_name": "Fly Cheese",
-            "range_start": null,
-            "range_end": null,
-            "choices": [
-              "out_of_logic",
-              "disallow",
-              "in_logic"
-            ],
-            "choice_values": [
-              0,
-              1,
-              2
-            ],
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
           }
         ]
       },
@@ -1565,7 +1810,7 @@
             "name": "RandomizeWilds",
             "yaml_key": "randomize_wilds",
             "kind": "choice",
-            "docstring": "Randomizes species of wild Pokemon\n\nBase Forms: Ensures that at least every Pokemon that cannot be obtained through evolution is available in the wild\nEvolution Lines: Ensures that at least one Pokemon from each evolutionary line can be obtained in the wild\nCatch 'em All: Ensures that every Pokemon will be obtainable in the wild\n\nIf this setting is anything other than vanilla, bug catching contest encounters will be completely random.",
+            "docstring": "Randomizes species of wild Pokemon\n\n- Base Forms: Ensures that at least every Pokemon that cannot be obtained through evolution is available in the wild\n- Evolution Lines: Ensures that at least one Pokemon from each evolutionary line can be obtained in the wild\n- Catch 'em All: Ensures that every Pokemon will be obtainable in the wild\n\nIf this setting is anything other than vanilla, bug catching contest encounters will be completely random.",
             "default": 0,
             "display_name": "Randomize Wilds",
             "range_start": null,
@@ -1589,10 +1834,25 @@
             "valid_keys_computed": false
           },
           {
+            "name": "SharedWildEncounters",
+            "yaml_key": "shared_wild_encounters",
+            "kind": "toggle",
+            "docstring": "Requires Wild Match Mode to be None, and has no effect otherwise or if wild Pokemon are not randomized.\n\nWild and bug catching contest encounters are generated from the multiworld seed instead of your own slot,\nso every player who enables this will have identical wild encounters.\n\nFor identical tables, players must also match on: Randomize Wilds, Wild Encounter Blocklist, Encounter Grouping,\nTime of Day Encounters, Encounter Slot Distribution and Dexsanity Starters,\nand all must have or lack the Unown Hunt goal.\nUnique Static Pokemon must be disabled, and type shortcuts in the blocklist require Randomize Types to be off.\nPokemon required by a player's own logic (for example trade requests or Ditto) may still differ.",
+            "default": 0,
+            "display_name": "Shared Wild Encounters",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
             "name": "WildEncounterBlocklist",
             "yaml_key": "wild_encounter_blocklist",
             "kind": "pokemon_set",
-            "docstring": "These Pokemon will not appear in the wild\nDoes nothing if wild Pokemon are not randomized\nBlocklists are best effort, other constraints may cause them to be ignored\nThis setting does not affect the bug catching contest.",
+            "docstring": "These Pokemon will not appear in the wild\nDoes nothing if wild Pokemon are not randomized\nBlocklists are best effort, other constraints may cause them to be ignored\nThis setting also applies to bug catching contest encounters",
             "default": null,
             "display_name": "Wild Encounter Blocklist",
             "range_start": null,
@@ -1875,12 +2135,37 @@
             "valid_keys_computed": false
           },
           {
-            "name": "RandomizeStaticPokemon",
-            "yaml_key": "randomize_static_pokemon",
-            "kind": "toggle",
-            "docstring": "Randomizes species of static Pokemon encounters\nThis includes overworld Pokemon, gift Pokemon and gift egg Pokemon\n\nNOTE: If this setting is disabled, the Odd Egg will still be fixed to a single possible Pokemon",
+            "name": "WildMatchMode",
+            "yaml_key": "wild_match_mode",
+            "kind": "choice",
+            "docstring": "Controls how randomized wild Pokemon are matched to the vanilla encounters they replace.\n\n- None: Wild Pokemon are replaced with no regard for the encounter they replace\n- Match Types: Wild Pokemon are replaced with Pokemon of the same type\n- Match Base Stats: Wild Pokemon are replaced with Pokemon of similar base stat totals\n- Match Types and Base Stats: Wild Pokemon are replaced with Pokemon of the same type and similar base stat totals\n\nThis setting has no effect if wild Pokemon are not randomized.",
             "default": 0,
-            "display_name": "Randomize Static Pokemon",
+            "display_name": "Wild Match Mode",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "none",
+              "match_types",
+              "match_base_stats",
+              "match_types_and_base_stats"
+            ],
+            "choice_values": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "TimeOfDayEncounters",
+            "yaml_key": "time_of_day_encounters",
+            "kind": "toggle",
+            "docstring": "When enabled, land encounters vary by time of day (morning/day/night), and\nfishing encounters that vary by time of day in vanilla vary by day/night.\nEach time period is randomized independently.\n\nWhen disabled, all time periods use the same encounters.",
+            "default": 0,
+            "display_name": "Time of Day Encounters",
             "range_start": null,
             "range_end": null,
             "choices": null,
@@ -1890,10 +2175,37 @@
             "valid_keys_computed": false
           },
           {
+            "name": "RandomizeStaticPokemon",
+            "yaml_key": "randomize_static_pokemon",
+            "kind": "choice",
+            "docstring": "Randomizes species of static Pokemon encounters\nThis includes overworld Pokemon, gift Pokemon and gift egg Pokemon\n\nMatch Types: Pokemon are replaced with Pokemon of the same type\nMatch Base Stats: Pokemon are replaced with Pokemon of similar base stat totals\nMatch Types and Base Stats: Pokemon are replaced with Pokemon of the same type and similar base stat totals\nCompletely Random: Pokemon are replaced with completely random Pokemon\n\nNOTE: If this setting is disabled, the Odd Egg will still be fixed to a single possible Pokemon",
+            "default": 0,
+            "display_name": "Randomize Static Pokemon",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "vanilla",
+              "completely_random",
+              "match_types",
+              "match_base_stats",
+              "match_types_and_base_stats"
+            ],
+            "choice_values": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
             "name": "StaticBlocklist",
             "yaml_key": "static_blocklist",
             "kind": "pokemon_set",
-            "docstring": "These Pokemon will not appear as static overworld encounters, gift eggs or gift Pokemon\nDoes nothing if static Pokemon are not randomized\nBlocklists are best effort, other constraints may cause them to be ignored",
+            "docstring": "These Pokemon will not appear as static overworld encounters, gift eggs, gift Pokemon or received trade Pokemon\nOnly applies to static Pokemon or received trade Pokemon that are randomized\nBlocklists are best effort, other constraints may cause them to be ignored",
             "default": null,
             "display_name": "Static Blocklist",
             "range_start": null,
@@ -2176,6 +2488,31 @@
             "valid_keys_computed": false
           },
           {
+            "name": "UniqueStaticPokemon",
+            "yaml_key": "unique_static_pokemon",
+            "kind": "choice",
+            "docstring": "Makes static encounter species globally unique. A species rolled into a static slot will not\nappear in another static slot, and will be excluded from wild encounters. If evolution methods\nare logically required, pre-evolutions of the static species (along logically-required evolution\npaths) are also excluded from wilds. If breeding methods are logically required, any Pokemon\nwhose egg produces a static species is also excluded from wilds.\n\nOnly applies to static slots that are in logic. Does nothing if static Pokemon are not randomized or not required.\n\n- Legendaries Only: only applies to the four legendary static slots (Suicune, Lugia, Ho-Oh, Celebi)\n- Legendaries and Uniques: the legendary slots plus the unique overworld encounters\n(Sudowoodo, Red Gyarados, Snorlax, Lapras)\n- All: applies to every static slot",
+            "default": 0,
+            "display_name": "Unique Static Pokemon",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "disabled",
+              "legendaries_only",
+              "legendaries_and_uniques",
+              "all"
+            ],
+            "choice_values": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
             "name": "RandomizeBaseStats",
             "yaml_key": "randomize_base_stats",
             "kind": "choice",
@@ -2209,6 +2546,27 @@
             "range_end": null,
             "choices": null,
             "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "BaseStatsEvolutionMode",
+            "yaml_key": "base_stats_evolution_mode",
+            "kind": "choice",
+            "docstring": "- Independent: Base stats are randomized separately for every Pokemon, so evolving can be a downgrade\n- Follow Evolutions: Pokemon inherit their pre-evolution's stat spread, and evolving always increases BST\n\nHas no effect when Randomize Evolution is enabled, as random evolutions already increase base stat total.",
+            "default": 0,
+            "display_name": "Base Stats Evolution Mode",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "independent",
+              "follow_evolutions"
+            ],
+            "choice_values": [
+              0,
+              1
+            ],
             "special_range_names": null,
             "valid_keys": null,
             "valid_keys_computed": false
@@ -2953,7 +3311,7 @@
             "name": "RandomizeTrades",
             "yaml_key": "randomize_trades",
             "kind": "choice",
-            "docstring": "Randomizes species of in-game trades",
+            "docstring": "Randomizes species of in-game trades\nReceived species respect the Static Blocklist",
             "default": 0,
             "display_name": "Randomize Trades",
             "range_start": null,
@@ -2978,7 +3336,7 @@
             "name": "EncounterGrouping",
             "yaml_key": "encounter_grouping",
             "kind": "choice",
-            "docstring": "Determines how randomized wild Pokemon are grouped in encounter tables.\n\n- All Split: Each encounter area will have each slot randomized separately. For example, grass areas will have seven\nrandomized encounter slots.\n- One to One: Each encounter area will retain its vanilla slot grouping. For example, if an area has two encounters\nin vanilla, it will be randomized as two slots.\n- One per Method: Each encounter method on a route will be treated as a single slot. For example, the grass on a route\nwill contain only a single encounter. Each rod is a separate encounter.\n\nThis setting has no effect if wild Pokemon are not randomized.\nThis setting does not affect the bug catching contest.",
+            "docstring": "Determines how randomized wild Pokemon are grouped in encounter tables.\n\n- All Split: Each encounter area will have each slot randomized separately. For example, grass areas will have seven\n  randomized encounter slots.\n- One to One: Each encounter area will retain its vanilla slot grouping. For example, if an area has two encounters\n  in vanilla, it will be randomized as two slots.\n- One per Method: Each encounter method on a route will be treated as a single slot. For example, the grass on a route\n  will contain only a single encounter. Each rod is a separate encounter.\n\nThis setting has no effect if wild Pokemon are not randomized.\nThis setting does not affect the bug catching contest.",
             "default": 0,
             "display_name": "Encounter Grouping",
             "range_start": null,
@@ -2993,6 +3351,21 @@
               1,
               2
             ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "UnlockableTimeOfDay",
+            "yaml_key": "unlockable_time_of_day",
+            "kind": "toggle",
+            "docstring": "When enabled, the player must find Morn, Day and Nite items to access\nland and fishing encounters for those time periods. You start with one of these at random.\n\nRequires Time of Day Encounters to be enabled.\n\nTime of day can be adjusted using the Pokegear.",
+            "default": 0,
+            "display_name": "Unlockable Time of Day",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
             "special_range_names": null,
             "valid_keys": null,
             "valid_keys_computed": false
@@ -3421,7 +3794,7 @@
             "name": "RandomizeMoves",
             "yaml_key": "randomize_moves",
             "kind": "option_set",
-            "docstring": "Randomizes the properties of moves.\n\nThe following options can be provided:\n- Power Restricted: Multiplies the power of each move by a random number between 0.5 and 1.5\n- PP Restricted: Adds or subtracts 0, 5 or 10 from original move PP. Base PP is limited to 5-40.\n- Power Full: Randomizes the power of each move in the range 20-150.\n  Multi hit moves have their power divided by average hit count.\n- PP Full: Randomizes the PP of each move in the range 5-40.\n- Accuracy: Randomizes the accuracy of each move. Accuracy has a 70% chance to be 100% for each move,\n  otherwise it is linearly distributed in the range 30-100.\n- Type: Randomizes the type of each move.\n- _All includes all options.\n- _Random has a 50% chance to include each option that is not already included.\n\nFull options override Restricted options.",
+            "docstring": "Randomizes the properties of moves.\n\nThe following options can be provided:\n- Power Restricted: Multiplies the power of each move by a random number between 0.5 and 1.5\n- PP Restricted: Adds or subtracts 0, 5 or 10 from original move PP. Base PP is limited to 5-40.\n- Power Full: Randomizes the power of each move in the range 20-150.\n  Multi hit moves have their power divided by average hit count.\n- PP Full: Randomizes the PP of each move in the range 5-40.\n- Accuracy: Randomizes the accuracy of each move. Accuracy has a 70% chance to be 100% for each move,\n  otherwise it is linearly distributed in the range 30-100.\n- Type: Randomizes the type of each move.\n- _All includes all options.\n- _Random has a 50% chance to include each option that is not already included.\n- _RandomExcludingAccuracy has a 50% chance to include each option except Accuracy.\n\nFull options override Restricted options.",
             "default": [],
             "display_name": "Randomize Moves",
             "range_start": null,
@@ -3435,7 +3808,8 @@
               "PP Restricted",
               "Power Full",
               "Power Restricted",
-              "Type"
+              "Type",
+              "_RandomExcludingAccuracy"
             ],
             "valid_keys_computed": false
           },
@@ -3535,13 +3909,32 @@
             "valid_keys_computed": true
           },
           {
-            "name": "TMCompatibility",
-            "yaml_key": "tm_compatibility",
+            "name": "TMSameTypeCompatibility",
+            "yaml_key": "tm_same_type_compatibility",
             "kind": "named_range",
-            "docstring": "Percent chance for Pokemon to be compatible with each TM\nHeadbutt and Rock Smash are considered HMs when applying compatibility",
+            "docstring": "Percent chance for Pokemon to be compatible with each TM whose move type matches one of the Pokemon's types.\nHeadbutt and Rock Smash are considered HMs when applying compatibility.",
             "default": -1,
-            "display_name": "TM Compatibility",
-            "range_start": -1,
+            "display_name": "TM Same Type Compatibility",
+            "range_start": 0,
+            "range_end": 100,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": {
+              "vanilla": -1,
+              "none": 0,
+              "fully_compatible": 100
+            },
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "TMOtherTypeCompatibility",
+            "yaml_key": "tm_other_type_compatibility",
+            "kind": "named_range",
+            "docstring": "Percent chance for Pokemon to be compatible with each TM whose move type does not match any of the Pokemon's types.\nHeadbutt and Rock Smash are considered HMs when applying compatibility.",
+            "default": -1,
+            "display_name": "TM Other Type Compatibility",
+            "range_start": 0,
             "range_end": 100,
             "choices": null,
             "choice_values": null,
@@ -4112,7 +4505,8 @@
             "choices": null,
             "choice_values": null,
             "special_range_names": {
-              "disabled": 0
+              "disabled": 0,
+              "newest": 9
             },
             "valid_keys": null,
             "valid_keys_computed": false
@@ -4149,7 +4543,7 @@
             "name": "RandomizeTrainerParties",
             "yaml_key": "randomize_trainer_parties",
             "kind": "choice",
-            "docstring": "Randomizes Pokemon in enemy trainer parties",
+            "docstring": "Randomizes Pokemon in enemy trainer parties\n\n- Match Types: Pokemon are replaced with Pokemon of the same type\n- Match Base Stats: Pokemon are replaced with Pokemon of similar base stat totals\n- Match Types and Base Stats: Pokemon are replaced with Pokemon of the same type and similar base stat totals\n- Completely Random: Pokemon are replaced with completely random Pokemon",
             "default": 0,
             "display_name": "Randomize Trainer Parties",
             "range_start": null,
@@ -4157,12 +4551,16 @@
             "choices": [
               "vanilla",
               "match_types",
-              "completely_random"
+              "completely_random",
+              "match_base_stats",
+              "match_types_and_base_stats"
             ],
             "choice_values": [
               0,
               1,
-              2
+              2,
+              3,
+              4
             ],
             "special_range_names": null,
             "valid_keys": null,
@@ -4496,7 +4894,7 @@
             "name": "ForceFullyEvolved",
             "yaml_key": "force_fully_evolved",
             "kind": "named_range",
-            "docstring": "When an opponent uses a Pokemon of the specified level or higher, restricts the species to only fully evolved Pokemon.\n\nOnly applies when trainer parties are randomized.",
+            "docstring": "When an opponent uses a Pokemon of the specified level or higher, restricts the species to only fully evolved Pokemon.\n\nEvolution Level instead evolves each opponent Pokemon into the species it would naturally have become at its level,\nso a species is never used at or above the level it would evolve at. Species that do not evolve by level are\nunaffected.\n\nOnly applies when trainer parties are randomized.",
             "default": 0,
             "display_name": "Force Fully Evolved",
             "range_start": 0,
@@ -4504,7 +4902,8 @@
             "choices": null,
             "choice_values": null,
             "special_range_names": {
-              "disabled": 0
+              "disabled": 0,
+              "evolution_level": -1
             },
             "valid_keys": null,
             "valid_keys_computed": false
@@ -4530,6 +4929,33 @@
               "full": 251
             },
             "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "DexsanityLogic",
+            "yaml_key": "dexsanity_logic",
+            "kind": "option_set",
+            "docstring": "Restricts which encounter sources may provide Pokemon for Dexsanity and Dexcountsanity locations.\n\nOnly applies when Dexsanity or Dexcountsanity is enabled.\nSelected sources are further restricted by their own logic settings (e.g. Wild Encounter Methods Required).\nIf no Pokemon are available from the selected sources, falls back to the full logically available pool.\n\n_Random has a 50% chance to include types which are not already included\n_All will include all types",
+            "default": null,
+            "display_name": "Dexsanity Logic",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": [
+              "Breeding",
+              "Bug Catching Contest",
+              "Evolution",
+              "Fishing",
+              "Headbutt",
+              "Land",
+              "Rock Smash",
+              "Statics",
+              "Surfing",
+              "Swarm",
+              "Trades"
+            ],
             "valid_keys_computed": false
           },
           {
@@ -4584,7 +5010,7 @@
             "name": "DexsanityStarters",
             "yaml_key": "dexsanity_starters",
             "kind": "choice",
-            "docstring": "Controls how Dexsanity treats starter Pokemon\n- Allow: Starter Pokemon will be allowed as Dexsanity checks\n- Block: Starter Pokemon will not be allowed as Dexsanity Checks\n- Available Early: Starter Pokemon will all be obtainable in the wild immediately, unless there is nowhere to obtain\nwild Pokemon immediately",
+            "docstring": "Controls how Dexsanity treats starter Pokemon\n\n- Allow: Starter Pokemon will be allowed as Dexsanity checks\n- Block: Starter Pokemon will not be allowed as Dexsanity Checks\n- Available Early: Starter Pokemon will all be obtainable in the wild immediately, unless there is nowhere to obtain\nwild Pokemon immediately",
             "default": 0,
             "display_name": "Dexsanity Starters",
             "range_start": null,
@@ -4643,6 +5069,64 @@
             },
             "valid_keys": null,
             "valid_keys_computed": false
+          },
+          {
+            "name": "Rematchsanity",
+            "yaml_key": "rematchsanity",
+            "kind": "toggle",
+            "docstring": "Adds the phone-trainer rematch fights as checks.\n\nRematches unlock in order as you hit story milestones (visiting Goldenrod / Olivine /\netc., clearing the Radio Tower, beating the Elite Four, restoring power to Kanto).\nAll rematches need the Pokegear and a Phone Card.\n\nPicnicker Tiffany's rematches only count if Randomize Pokemon Requests is also on.\n\nJoey's HP Up is given after his last rematch.",
+            "default": 0,
+            "display_name": "Rematchsanity",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          }
+        ]
+      },
+      {
+        "name": "Battle Tower",
+        "options": [
+          {
+            "name": "BattleTowerSanity",
+            "yaml_key": "battle_tower_sanity",
+            "kind": "choice",
+            "docstring": "Adds locations in the Battle Tower.\n\n- off: no Battle Tower locations.\n- tiers: 10 locations, one for completing each tier.\n- tiers_and_trainers: the 10 tier locations plus one location per Battle Tower trainer (70 extra).\n\nTier N is logically gated behind access to N of the following: gyms, E4 and Red. Trainer locations share the gate\nof whichever tier they are shuffled into for the seed.\n\nWARNING: The Battle Tower is legit. Your team will be levelled down to match your tier, if needed. You cannot\nuse items from your bag, held items must all be different and the trainers have the best possible AI. Bringing in Pokemon with >= 600 BST requires the Battle Tower\nUber Pass, which will be shuffled into the item pool.",
+            "default": 0,
+            "display_name": "Battle Tower Sanity",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "off",
+              "tiers",
+              "tiers_and_trainers"
+            ],
+            "choice_values": [
+              0,
+              1,
+              2
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "BattleTowerProgressiveTierUnlocks",
+            "yaml_key": "battle_tower_progressive_tier_unlocks",
+            "kind": "toggle",
+            "docstring": "Locks Battle Tower tiers behind progressive unlock items.\nEach item received unlocks the next tier in order; without them, all tiers\nare immediately accessible. Only takes effect when battle_tower_sanity is on\nor the Battle Tower goal is selected.",
+            "default": 0,
+            "display_name": "Battle Tower Progressive Tier Unlocks",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
           }
         ]
       },
@@ -4653,7 +5137,7 @@
             "name": "WildEncounterMethodsRequired",
             "yaml_key": "wild_encounter_methods_required",
             "kind": "option_set",
-            "docstring": "Sets which wild encounter types may be logically required\n\n_Random has a 50% chance to include types which are not already included\n_All will include all types\n\nSwarms and roamers are NEVER in logic",
+            "docstring": "Sets which wild encounter types may be logically required\n\n- Land: Pokemon encountered in grass and caves\n- Surfing: Pokemon encountered while surfing\n- Fishing: Pokemon encountered with any rod\n- Headbutt: Pokemon encountered by headbutting trees\n- Rock Smash: Pokemon encountered by smashing rocks\n- Bug Catching Contest: Pokemon encountered in the National Park contest\n- Swarm: Pokemon encountered during a swarm\n\n_Random has a 50% chance to include types which are not already included\n_All will include all types\n\nSwarm encounters require Randomize Phone Calls to be enabled.\nRoamers are NEVER in logic.",
             "default": [
               "Land",
               "Surfing",
@@ -4674,7 +5158,8 @@
               "Headbutt",
               "Land",
               "Rock Smash",
-              "Surfing"
+              "Surfing",
+              "Swarm"
             ],
             "valid_keys_computed": false
           },
@@ -4724,14 +5209,30 @@
             "valid_keys_computed": false
           },
           {
+            "name": "RandomizeLuckyNumberShow",
+            "yaml_key": "randomize_lucky_number_show",
+            "kind": "toggle",
+            "docstring": "Adds the Radio Tower Lucky Number Show as three locations.\n\nThree in-game trades are chosen at random; obtaining each traded Pokemon wins the\nmatching prize (1st/2nd/3rd).",
+            "default": 0,
+            "display_name": "Randomize Lucky Number Show",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
             "name": "EvolutionMethodsRequired",
             "yaml_key": "evolution_methods_required",
             "kind": "option_set",
             "docstring": "Sets which types of evolutions may be logically required\n\n_Random has a 50% chance to include types which are not already included\n_All will include all types",
             "default": [
               "Level",
-              "Level Tyrogue",
+              "Level and Stat",
               "Use Item",
+              "Held Item",
               "Happiness"
             ],
             "display_name": "Evolution Methods Required",
@@ -4742,8 +5243,9 @@
             "special_range_names": null,
             "valid_keys": [
               "Happiness",
+              "Held Item",
               "Level",
-              "Level Tyrogue",
+              "Level and Stat",
               "Use Item"
             ],
             "valid_keys_computed": false
@@ -4800,6 +5302,33 @@
             "special_range_names": null,
             "valid_keys": null,
             "valid_keys_computed": false
+          },
+          {
+            "name": "PokemonRequestLogic",
+            "yaml_key": "pokemon_request_logic",
+            "kind": "option_set",
+            "docstring": "Restricts which encounter sources may provide Pokemon for randomized requests and trades\n(Bill's Grandpa, phone call trainers, in-game trades, etc.)\n\nOnly applies when Pokemon requests or trades are randomized.\nSelected sources are further restricted by their own logic settings (e.g. Wild Encounter Methods Required).\nIf no Pokemon are available from the selected sources, falls back to the full logically available pool.\n\n_Random has a 50% chance to include types which are not already included\n_All will include all types",
+            "default": null,
+            "display_name": "Pokemon Request Logic",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": [
+              "Breeding",
+              "Bug Catching Contest",
+              "Evolution",
+              "Fishing",
+              "Headbutt",
+              "Land",
+              "Rock Smash",
+              "Statics",
+              "Surfing",
+              "Swarm",
+              "Trades"
+            ],
+            "valid_keys_computed": false
           }
         ]
       },
@@ -4825,7 +5354,7 @@
             "name": "TrapWeights",
             "yaml_key": "trap_weights",
             "kind": "option_counter",
-            "docstring": "Specifies the weights at which traps become each trap type\n\n- Burn, Paralysis, Sleep, Poison and Freeze traps afflict the corresponding status on your party\n- Phone Traps trigger random Pokegear calls (NOTE: Phone Traps loop after you receive 32 of them)\n- Tutorial Traps trigger the catch tutorial\n- Teleport Traps use the move Teleport (both in battle and out of battle)\n- Whirlpool Traps spin you around in the overworld or trap you in Whirlpool for 99 turns in battle\n- Ice Traps make the overworld slippery for 40-60 steps\n- Explosion Traps faint a party member in the overworld or use Explosion in battle\n- Sandstorm Traps slow you in the overworld for 20-40 steps or activate Sandstorm for 99 turns in battle\n- Metronome Traps trigger a random other move trap in the overworld or use Metronome in battle",
+            "docstring": "Specifies the weights at which traps become each trap type\n\n- Burn, Paralysis, Sleep, Poison and Freeze traps afflict the corresponding status on your party\n- Phone Traps trigger random Pokegear calls (NOTE: Phone Traps loop after you receive 32 of them)\n- Tutorial Traps trigger the catch tutorial\n- Teleport Traps use the move Teleport (both in battle and out of battle)\n- Whirlpool Traps spin you around in the overworld or trap you in Whirlpool for 99 turns in battle\n- Ice Traps make the overworld slippery for 40-60 steps\n- Explosion Traps faint a party member in the overworld or use Explosion in battle\n- Sandstorm Traps slow you in the overworld for 20-40 steps or activate Sandstorm for 99 turns in battle\n- Metronome Traps trigger a random other move trap in the overworld or use Metronome in battle\n- Shuffle Traps randomize the order of items in your Items and Balls pockets",
             "default": null,
             "display_name": "TrapWeights",
             "range_start": null,
@@ -4860,7 +5389,7 @@
             "name": "GameOptions",
             "yaml_key": "game_options",
             "kind": "option_dict",
-            "docstring": "Presets in-game options. These can be changed in-game later. Any omitted options will use their default.\n\nAllowed options and values, with default first:\n\nap_item_sound: on/off - Sets whether a sound is played when a remote item is received\nauto_hms: off/on - HMs will be used automatically where possible, if their usage conditions are met\nauto_run: off/on - Sets whether run activates automatically, if on you can hold B to walk\nbattle_animations: all/no_scene/no_bars/speedy - Sets which battle animations are played:\n    all: All animations play, including entry and moves\n    no_scene: Entry and move animations do not play\n    no_bars: Entry, move and HP/EXP bar animations do not play\n    speedy: No battle animations play and many delays are removed to make battles faster\nbattle_move_stats: off/on - Sets whether or not to display power and accuracy of moves in battle\nbattle_shift: shift/set - Sets whether you are asked to switch between trainer Pokemon\nbike_music: on/off - Sets whether the bike music will play\nblind_trainers: off/on - Sets whether trainers will see you without talking to them directly\ncatch_exp: off/on - Sets whether or not you get EXP for catching a Pokemon\ndex_area_beep: off/on - Sets whether the Pokedex beeps for land and Surf encounters in the current area\nexp_distribution: gen2/gen6/gen8/no_exp - Sets the EXP distribution method:\n    gen2: EXP is split evenly among battle participants, EXP Share splits evenly between participants and non-participants\n    gen6: Participants earn 100% of EXP, non-participants earn 50% of EXP when EXP Share is enabled\n    gen8: Participants earn 100% of EXP, non-participants earn 100% of EXP when EXP Share is enabled\n    no_exp: EXP is disabled\nfast_egg_hatch: off/on - Sets whether eggs take a single cycle to hatch\nfast_egg_make: off/on - Sets whether eggs are guaranteed after one cycle at the day care\nfast_surf: off/on - Sets whether Surfing is bike speed\nguaranteed_catch: off/on - Sets whether balls have a 100% success rate\nhms_require_teaching: on/off - Sets whether it is required to teach field moves to use them in the field\nitem_notification: popup/sound/none - Sets how Trainersanity, Dex(count)sanity and Grasssanity locations show item notifications\nlow_hp_beep: on/off - Sets whether the low HP beep is played in battle\nmenu_account: on/off - Sets whether extra information is shown on the Start menu\nmore_uncaught_encounters: on/off - Sets whether wild encounters of Pokemon you have not caught are more likely\npoison_flicker: on/off - Sets whether the overworld poison flash effect is played\nrods_always_work: off/on - Sets whether the fishing rods always succeed\nshort_fanfares: off/on - Sets whether item receive fanfares are shortened\nskip_dex_registration: off/on - Sets whether the Pokedex registration screen is skipped\nskip_nicknames: off/on - Sets whether you are asked to nickname a Pokemon upon receiving it\nsound: mono/stereo - Sets the sound mode\nspinners: normal/rotators/heck/hell - Sets the overworld behaviour of trainers\n    normal: Trainers will behave as they do in vanilla\n    rotators: Trainers that spin randomly will rotate consistently\n    heck: All trainers with vision rotate consistently, they have their original vision range but can spot you through obstacles\n    hell: All trainers with vision will spin randomly, have max vision and can spot you through obstacles\nsurf_music: on/off - Sets whether the surf music will play\ntext_frame: 1-8 - Sets the textbox frame, \"random\" will pick a random frame\ntext_speed: mid/slow/fast/instant - Sets the speed at which text advances\ntime_of_day: auto/morn/day/nite - Sets a time of day override, auto follows the clock, \"random\" will pick a random time\ntracker_slot: 0-255 - Sets which tracker slot is used for map tracking, used for co-op seeds\ntrainersanity_indication: off/on - Sets whether Trainersanity trainers have grayscale sprites until they are beaten\nturbo_button: none/a/b/a_or_b - Sets which buttons auto advance text when held",
+            "docstring": "Presets in-game options. These can be changed in-game later. Any omitted options will use their default.\n\nAllowed options and values, with default first:\n\nap_item_notification: popup_sound/popup/sound/none - Sets how items received from AP are announced (popup_sound shows the popup and plays the sound)\nauto_hms: off/on - HMs will be used automatically where possible, if their usage conditions are met\nauto_run: off/on - Sets whether run activates automatically, if on you can hold B to walk\nbattle_always_run: off/on - Sets whether running from wild battles always succeeds, including through trapping moves like Mean Look and Wrap\nbattle_animations: all/no_scene/no_bars/speedy - Sets which battle animations are played:\n    all: All animations play, including entry and moves\n    no_scene: Entry and move animations do not play\n    no_bars: Entry, move and HP/EXP bar animations do not play\n    speedy: No battle animations play and many delays are removed to make battles faster\nbattle_move_stats: off/on - Sets whether or not to display power and accuracy of moves in battle\nbattle_shift: shift/set - Sets whether you are asked to switch between trainer Pokemon\nbike_music: on/off - Sets whether the bike music will play\nblind_trainers: off/on - Sets whether trainers will see you without talking to them directly\ncatch_exp: off/on - Sets whether or not you get EXP for catching a Pokemon\ndex_area_beep: off/on - Sets whether the Pokedex beeps for land and Surf encounters in the current area\nexp_distribution: gen2/gen6/gen8/no_exp - Sets the EXP distribution method:\n    gen2: EXP is split evenly among battle participants, Exp All splits evenly between participants and non-participants\n    gen6: Participants earn 100% of EXP, non-participants earn 50% of EXP when Exp All is enabled\n    gen8: Participants earn 100% of EXP, non-participants earn 100% of EXP when Exp All is enabled\n    no_exp: EXP is disabled\nfast_egg_hatch: off/on - Sets whether eggs take a single cycle to hatch\nfast_egg_make: off/on - Sets whether eggs are guaranteed after one cycle at the day care\nguaranteed_catch: off/on - Sets whether balls have a 100% success rate\nhms_require_teaching: on/off - Sets whether it is required to teach field moves to use them in the field\nlocal_item_notification: text/sound/none - Sets how Trainersanity, Dex(count)sanity and Grasssanity locations show item notifications\nlow_hp_beep: on/off - Sets whether the low HP beep is played in battle\nmenu_account: on/off - Sets whether extra information is shown on the Start menu\nmore_uncaught_encounters: off/on - Sets whether wild encounters of Pokemon you have not caught are more likely\nmusic: on/off - Sets whether music will play\npoison_flicker: on/off - Sets whether the overworld poison flash effect is played\nrods_always_work: off/on - Sets whether the fishing rods always succeed\nscaling_exp: off/on - Sets whether EXP scales based on level difference as in Generation 5\nshort_fanfares: off/on - Sets whether item receive fanfares are shortened\nskip_dex_registration: off/on - Sets whether the Pokedex registration screen is skipped\nskip_nicknames: off/on - Sets whether you are asked to nickname a Pokemon upon receiving it\nsound: mono/stereo - Sets the sound mode\nspinners: normal/rotators/heck/hell - Sets the overworld behaviour of trainers\n    normal: Trainers will behave as they do in vanilla\n    rotators: Trainers that spin randomly will rotate consistently\n    heck: All trainers with vision rotate consistently, they have their original vision range but can spot you through obstacles\n    hell: All trainers with vision will spin randomly, have max vision and can spot you through obstacles\nsurf_music: on/off - Sets whether the surf music will play\ntext_frame: 1-8 - Sets the textbox frame, \"random\" will pick a random frame\ntext_speed: mid/slow/fast/instant - Sets the speed at which text advances\ntime_of_day: auto/morn/day/nite - Sets a time of day override, auto follows the clock, \"random\" will pick a random time\ntracker_slot: 0-255 - Sets which tracker slot is used for map tracking, used for co-op seeds\ntrainersanity_indication: off/on - Sets whether Trainersanity trainers have grayscale sprites until they are beaten\nturbo_button: none/a/b/a_or_b - Sets which buttons auto advance text when held",
             "default": {
               "text_speed": "mid",
               "battle_shift": "shift",
@@ -4876,6 +5405,7 @@
               "fast_egg_hatch": "off",
               "fast_egg_make": "off",
               "rods_always_work": "off",
+              "scaling_exp": "off",
               "exp_distribution": "gen2",
               "catch_exp": "off",
               "poison_flicker": "on",
@@ -4888,14 +5418,15 @@
               "skip_dex_registration": "off",
               "blind_trainers": "off",
               "guaranteed_catch": "off",
-              "ap_item_sound": "on",
+              "ap_item_notification": "popup_sound",
               "trainersanity_indication": "off",
               "more_uncaught_encounters": "off",
               "auto_hms": "off",
               "hms_require_teaching": "on",
-              "item_notification": "popup",
+              "local_item_notification": "text",
               "tracker_slot": 0,
-              "fast_surf": "off"
+              "music": "on",
+              "battle_always_run": "off"
             },
             "display_name": "Game Options",
             "range_start": null,
@@ -5058,7 +5589,7 @@
             "name": "BuildAMart",
             "yaml_key": "build_a_mart",
             "kind": "option_list",
-            "docstring": "Create a custom shop in place of the final upgraded Pokecenter 2F mart.\nThe first two shop items will always be Poke Ball and Escape Rope.\nMaximum of 14 items, any extra items will be discarded.\n\nAvailable items: Antidote, Awakening, Burn Heal, Calcium, Carbos, Dire Hit, Elixer, Ether, Fresh Water, \nFull Heal, Full Restore, Great Ball, Guard Spec, HP Up, Hyper Potion, Ice Heal, Iron, Lemonade, Max Elixer, \nMax Ether, Max Potion, Max Repel, Max Revive, Park Ball, Parlyz Heal, Potion, Protein, PP Up, Rare Candy, Repel, \nRevive, Soda Pop, Super Potion, Super Repel, Ultra Ball, X Accuracy, X Attack, X Defend, X Special, X Speed.",
+            "docstring": "Create a custom shop in place of the final upgraded Pokecenter 2F mart.\nThe first two shop items will always be Poke Ball and Escape Rope.\nMaximum of 14 items, any extra items will be discarded.\n\nAvailable items: Antidote, Awakening, Burn Heal, Calcium, Carbos, Dire Hit, Dragon Scale, Elixer, Ether,\nFast Ball, Fire Stone, Fresh Water, Friend Ball, Full Heal, Full Restore, Great Ball, Guard Spec, Heavy Ball,\nHP Up, Hyper Potion, Ice Heal, Iron, Kings Rock, Leaf Stone, Lemonade, Level Ball, Link Cable, Love Ball,\nLure Ball, Master Ball, Max Elixer, Max Ether, Max Potion, Max Repel, Max Revive, Metal Coat, Moon Ball,\nMoon Stone, Park Ball, Parlyz Heal, Potion, Protein, PP Up, Rare Candy, Repel, Revive, Soda Pop, Sun Stone,\nSuper Potion, Super Repel, Thunderstone, Ultra Ball, Up-Grade, Water Stone, X Accuracy, X Attack, X Defend,\nX Special, X Speed.",
             "default": null,
             "display_name": "Build-a-Mart",
             "range_start": null,
@@ -5073,23 +5604,38 @@
               "Calcium",
               "Carbos",
               "Dire Hit",
+              "Dragon Scale",
               "Elixer",
               "Ether",
+              "Fast Ball",
+              "Fire Stone",
               "Fresh Water",
+              "Friend Ball",
               "Full Heal",
               "Full Restore",
               "Great Ball",
               "Guard Spec",
               "HP Up",
+              "Heavy Ball",
               "Hyper Potion",
               "Ice Heal",
               "Iron",
+              "Kings Rock",
+              "Leaf Stone",
               "Lemonade",
+              "Level Ball",
+              "Link Cable",
+              "Love Ball",
+              "Lure Ball",
+              "Master Ball",
               "Max Elixer",
               "Max Ether",
               "Max Potion",
               "Max Repel",
               "Max Revive",
+              "Metal Coat",
+              "Moon Ball",
+              "Moon Stone",
               "PP Up",
               "Park Ball",
               "Parlyz Heal",
@@ -5099,15 +5645,40 @@
               "Repel",
               "Revive",
               "Soda Pop",
+              "Sun Stone",
               "Super Potion",
               "Super Repel",
+              "Thunderstone",
               "Ultra Ball",
+              "Up-Grade",
+              "Water Stone",
               "X Accuracy",
               "X Attack",
               "X Defend",
               "X Special",
               "X Speed"
             ],
+            "valid_keys_computed": false
+          },
+          {
+            "name": "GrowthRates",
+            "yaml_key": "growth_rates",
+            "kind": "choice",
+            "docstring": "Controls the experience growth rate curves for Pokemon.\n- Vanilla: Use the original growth rate for each Pokemon species.\n- Normalized: Legendary Pokemon use the Slow growth rate.\n  All other Pokemon use Medium Fast.\n\nThis option is ignored when evolution randomization is enabled;\nall Pokemon will use Medium Fast in that case.",
+            "default": 1,
+            "display_name": "Growth Rates",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "vanilla",
+              "normalized"
+            ],
+            "choice_values": [
+              0,
+              1
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
             "valid_keys_computed": false
           },
           {
@@ -5132,6 +5703,27 @@
               "septuple": null,
               "octuple": null
             },
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "ExpShareType",
+            "yaml_key": "exp_share_type",
+            "kind": "choice",
+            "docstring": "Sets which experience-sharing item is placed in the multiworld.\n\n- Exp Share: The vanilla Exp Share.\n- Exp All: A key item that toggles on/off. When on, all non-participating party Pokemon earn\nexperience.",
+            "default": 0,
+            "display_name": "Exp Share Type",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "exp_share",
+              "exp_all"
+            ],
+            "choice_values": [
+              0,
+              1
+            ],
+            "special_range_names": null,
             "valid_keys": null,
             "valid_keys_computed": false
           },
@@ -5169,24 +5761,9 @@
             "name": "AlwaysUnlockFly",
             "yaml_key": "always_unlock_fly_destinations",
             "kind": "toggle",
-            "docstring": "Always unlock Fly destinations when entering a town, even if Randomize Fly Unlocks is enabled",
+            "docstring": "Always unlock Fly destinations when entering a town, even if Randomize Fly Unlocks is enabled.\nThis does not work with Randomize Fly Destinations and is not considered by logic.",
             "default": 0,
             "display_name": "Always Unlock Fly Destinations",
-            "range_start": null,
-            "range_end": null,
-            "choices": null,
-            "choice_values": null,
-            "special_range_names": null,
-            "valid_keys": null,
-            "valid_keys_computed": false
-          },
-          {
-            "name": "TrainerName",
-            "yaml_key": "trainer_name",
-            "kind": "free_text",
-            "docstring": "Preset your trainer name, this skips the name prompt.\n\nOnly the first seven characters will be used, unsupported characters will be replaced with '?'.",
-            "default": null,
-            "display_name": "Trainer Name",
             "range_start": null,
             "range_end": null,
             "choices": null,
@@ -5277,6 +5854,42 @@
             "valid_keys_computed": false
           },
           {
+            "name": "PhoneCallMode",
+            "yaml_key": "phone_call_mode",
+            "kind": "choice",
+            "docstring": "Controls how in-game phone calls work.\n\n- Vanilla: Calling a trainer only does something useful at the right day and time of day.\n  Trainers calling you is random. WARNING: triggering specific phone calls this way can\n  require resetting the clock, toggling DST, and a lot of patience.\n\n- Simple: Calling any trainer always does something useful if available. Trainers calling\n  you skip the random roll and offer their action directly.",
+            "default": 1,
+            "display_name": "Phone Call Mode",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "vanilla",
+              "simple"
+            ],
+            "choice_values": [
+              0,
+              1
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "WonderTrading",
+            "yaml_key": "wonder_trading",
+            "kind": "toggle_on",
+            "docstring": "Allows participation in wonder trading with other players in your current multiworld. Speak with the wonder trade receptionist on the second floor of any Pokemon Center.\n\nWonder trading NEVER affects logic.\n\nPokemon traded this way may come from other Pokemon games. Stat experience, DVs, and similar species-specific data may not survive the trip perfectly across generations.\n\nReceived Pokemon are not marked as caught in your Pokedex.",
+            "default": 1,
+            "display_name": "Wonder Trading",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
             "name": "PokemonCrystalDeathLink",
             "yaml_key": "death_link",
             "kind": "toggle",
@@ -5294,26 +5907,105 @@
         ]
       },
       {
+        "name": "Intro Presets",
+        "options": [
+          {
+            "name": "TrainerGender",
+            "yaml_key": "trainer_gender",
+            "kind": "choice",
+            "docstring": "Preset your trainer's gender, this skips the in-game prompt.",
+            "default": 0,
+            "display_name": "Trainer Gender",
+            "range_start": null,
+            "range_end": null,
+            "choices": [
+              "vanilla",
+              "boy",
+              "girl",
+              "randomize"
+            ],
+            "choice_values": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "TrainerName",
+            "yaml_key": "trainer_name",
+            "kind": "free_text",
+            "docstring": "Preset your trainer name, this skips the name prompt.\n\nOnly the first seven characters will be used, unsupported characters will be replaced with '?'.",
+            "default": null,
+            "display_name": "Trainer Name",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "RivalName",
+            "yaml_key": "rival_name",
+            "kind": "free_text",
+            "docstring": "Preset your rival's name, this skips the name prompt in Elm's Lab.\n\nOnly the first seven characters will be used, unsupported characters will be replaced with '?'.\nAlternatively (only at Multiworld generation), you can enter the values \"random_player\" and \"random_crystal\" to use the name of a random player in the multiworld, respectively from any game and from Pokemon Crystal specifically.",
+            "default": null,
+            "display_name": "Rival Name",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "StartTime",
+            "yaml_key": "start_time",
+            "kind": "free_text",
+            "docstring": "Preset the game's start time, this skips the introduction's prompt.\n\nMust have the format \"HH:MM\", with hours going from 0 to 23.\nAlternatively, you can enter the value \"now\", which will automatically use the multiworld generation time (or patch time when using option overrides)",
+            "default": null,
+            "display_name": "Start Time",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          }
+        ]
+      },
+      {
         "name": "Cosmetic",
         "options": [
           {
-            "name": "RandomizePalettes",
-            "yaml_key": "randomize_palettes",
+            "name": "ModifyPalettes",
+            "yaml_key": "modify_palettes",
             "kind": "choice",
-            "docstring": "- Vanilla: Vanilla Pokemon color palettes\n- Match Types: Color palettes match Pokemon Type\n- Completely Random: Color palettes are completely random",
+            "docstring": "- Vanilla: Vanilla Pokemon color palettes\n- Match Types: Color palettes match Pokemon Type\n- Randomize: Color palettes are completely random\n- Swap Shiny: Regular Pokemon use shiny palettes and vice versa\n- Gold and Silver: For the Pokemon whose palettes changed between Gold/Silver and Crystal, restores their old palette",
             "default": 0,
-            "display_name": "Randomize Palettes",
+            "display_name": "Modify Palettes",
             "range_start": null,
             "range_end": null,
             "choices": [
               "vanilla",
               "match_types",
-              "completely_random"
+              "randomize",
+              "swap_shiny",
+              "gold_and_silver"
             ],
             "choice_values": [
               0,
               1,
-              2
+              2,
+              3,
+              4
             ],
             "special_range_names": null,
             "valid_keys": null,
@@ -5345,8 +6037,8 @@
           {
             "name": "TrainerPalette",
             "yaml_key": "trainer_palette",
-            "kind": "choice",
-            "docstring": "Sets the palette used for the player character",
+            "kind": "other",
+            "docstring": "Sets the palette used for the player character.\nCan also be set to a hex color code (e.g. #FF8040) for a custom palette.",
             "default": 0,
             "display_name": "Trainer Palette",
             "range_start": null,
@@ -5365,6 +6057,21 @@
               3,
               4
             ],
+            "special_range_names": null,
+            "valid_keys": null,
+            "valid_keys_computed": false
+          },
+          {
+            "name": "ColoredItemBalls",
+            "yaml_key": "colored_item_balls",
+            "kind": "toggle",
+            "docstring": "Tints overworld item ball sprites by the AP classification of the item they hold:\ngreen for progression, blue for useful, red for filler, and a random one of the three\nfor traps.\nRemote items are colored by their classification in the receiving slot's world.",
+            "default": 0,
+            "display_name": "Colored Item Balls",
+            "range_start": null,
+            "range_end": null,
+            "choices": null,
+            "choice_values": null,
             "special_range_names": null,
             "valid_keys": null,
             "valid_keys_computed": false

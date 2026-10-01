@@ -13,7 +13,7 @@
     "stable": {
       "repo": "vendor/archipelago",
       "package": "pokemon_crystal",
-      "older": []
+      "older": ["5.4.6"]
     },
     "prerelease": {
       "repo": "vendor/archipelago-prerelease",

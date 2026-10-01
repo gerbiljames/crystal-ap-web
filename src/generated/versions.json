@@ -8,6 +8,25 @@
       "channel": "stable",
       "package": "pokemon_crystal",
       "game": "Pokemon Crystal",
+      "world_version": "6.0.0",
+      "display_version": "6.0.0",
+      "minimum_patch_version": "6.0.0",
+      "minimum_ap_version": "0.6.7",
+      "rom_version": 25594,
+      "rom_version11": 25594,
+      "basepatch_sha256": {
+        "basepatch.bsdiff4": "8fceb6f636dc05a00b3f64a329cee4393fb4462e7e253f3adbbd61676e9e71c5",
+        "basepatch11.bsdiff4": "81f6057346f5565b0e406a2e9191201193847279a7ed538afa36cd28bb4e91ea"
+      },
+      "tar": "worlds/pokemon_crystal-6.0.0.tar",
+      "size": 4198400,
+      "latest": true,
+      "ref": null
+    },
+    {
+      "channel": "stable",
+      "package": "pokemon_crystal",
+      "game": "Pokemon Crystal",
       "world_version": "5.4.6",
       "display_version": "5.4.6",
       "minimum_patch_version": null,
@@ -20,8 +39,8 @@
       },
       "tar": "worlds/pokemon_crystal-5.4.6.tar",
       "size": 2396160,
-      "latest": true,
-      "ref": null
+      "latest": false,
+      "ref": "5.4.6"
     },
     {
       "channel": "prerelease",
