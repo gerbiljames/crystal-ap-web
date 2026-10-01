@@ -162,17 +162,25 @@ def compute_dynamic_valid_keys(world_dir: Path) -> dict[str, list[str]]:
     if data_path.is_file():
         data_json = json.loads(data_path.read_text())
 
-        # MoveBlocklist / TMBlocklist — `move.name.title()` for every move
-        # except NO_MOVE and STRUGGLE.
+        # MoveBlocklist — `move.name.title()` for every move except NO_MOVE
+        # and STRUGGLE. TMBlocklist further drops ROCK_SMASH, HEADBUTT and
+        # the HMs, which never go on a TM.
         moves = data_json.get("moves", {})
         move_names = sorted({
             move["name"].title()
             for mid, move in moves.items()
             if mid not in ("NO_MOVE", "STRUGGLE") and move.get("name")
         })
+        tm_names = sorted({
+            move["name"].title()
+            for mid, move in moves.items()
+            if mid not in ("NO_MOVE", "STRUGGLE", "ROCK_SMASH", "HEADBUTT")
+            and not move.get("is_hm") and move.get("name")
+        })
         if move_names:
             out["MoveBlocklist"] = move_names
-            out["TMBlocklist"] = move_names
+        if tm_names:
+            out["TMBlocklist"] = tm_names
 
         # PokemonSet — Pokemon friendly_names + _Legendaries/_Non-Legendaries
         # + _<Type> shortcuts (matching the runtime construction in options.py).
