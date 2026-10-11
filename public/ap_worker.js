@@ -517,7 +517,7 @@ async function hostStart(id, seedId, multidataBytes) {
   // Pre-load any persisted .apsave for this seed into MEMFS at the path
   // MultiServer.init_save expects: it does os.path.splitext on the multidata
   // path and replaces the extension, so /tmp/seed.archipelago → /tmp/seed.apsave
-  // (NOT /tmp/seed.archipelago.apsave). See vendor/archipelago/MultiServer.py:611.
+  // (NOT /tmp/seed.archipelago.apsave). See Context.init_save in vendor/archipelago/MultiServer.py.
   if (_hostSeedId) {
     try {
       const stored = await mhostGet(_hostSeedId);
@@ -1241,7 +1241,7 @@ logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
 
 import MultiServer as _ms
 
-# Defaults match settings.ServerOptions (vendor/archipelago/settings.py:612).
+# Defaults match settings.ServerOptions in vendor/archipelago/settings.py.
 _host_ctx = _ms.Context(
     host="loopback",
     port=0,
@@ -1260,7 +1260,7 @@ _host_ctx = _ms.Context(
 )
 _host_ctx.load("/tmp/seed.archipelago", False)
 
-# MultiServer's stock _start_async_saving spins a real OS thread (line 649 of
+# MultiServer's stock _start_async_saving spins a real OS thread (Context._start_async_saving in
 # vendor/archipelago/MultiServer.py). Pyodide is single-threaded, so we
 # replace it with an asyncio task that runs on the same event loop the
 # request handlers use. After each successful _save(), the freshly-written
