@@ -1260,7 +1260,7 @@ _host_ctx = _ms.Context(
 )
 _host_ctx.load("/tmp/seed.archipelago", False)
 
-# MultiServer's stock _start_async_saving spins a real OS thread (Context._start_async_saving in
+# MultiServer's stock Context._start_async_saving spins a real OS thread (in
 # vendor/archipelago/MultiServer.py). Pyodide is single-threaded, so we
 # replace it with an asyncio task that runs on the same event loop the
 # request handlers use. After each successful _save(), the freshly-written
