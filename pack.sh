@@ -75,6 +75,8 @@ tar -cf "$OUT/core.tar" -C "$STAGE" \
     Fill.py \
     Main.py \
     Generate.py \
+    Launcher.py \
+    apmw \
     CommonClient.py \
     MultiServer.py \
     rule_builder \

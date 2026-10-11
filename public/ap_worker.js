@@ -1241,22 +1241,6 @@ logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
 
 import MultiServer as _ms
 
-# Context._load_game_data mutates the shared worlds.network_data_package by
-# del'ing keys (vendor/archipelago/MultiServer.py:347). Re-hosting (a second
-# Context()) would KeyError on the already-removed keys. Patch once with a
-# pop-safe variant so re-host is idempotent.
-def _safe_load_game_data(self):
-    import worlds as _w
-    self.gamespackage = _w.network_data_package["games"]
-    self.item_name_groups = {n: w.item_name_groups for n, w in _w.AutoWorldRegister.world_types.items()}
-    self.location_name_groups = {n: w.location_name_groups for n, w in _w.AutoWorldRegister.world_types.items()}
-    for n, w in _w.AutoWorldRegister.world_types.items():
-        self.non_hintable_names[n] = w.hint_blacklist
-    for game_package in self.gamespackage.values():
-        game_package.pop("item_name_groups", None)
-        game_package.pop("location_name_groups", None)
-_ms.Context._load_game_data = _safe_load_game_data
-
 # Defaults match settings.ServerOptions (vendor/archipelago/settings.py:612).
 _host_ctx = _ms.Context(
     host="loopback",
