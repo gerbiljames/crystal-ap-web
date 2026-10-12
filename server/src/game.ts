@@ -89,7 +89,6 @@ export class Game {
   private active: Active | null = null;
   private offer: { userId: string; expiresAt: number; timer: ReturnType<typeof setTimeout> } | null = null;
   private paused: boolean;
-  private goalPending: boolean;
   private complete: boolean;
   // Ended sessions' checks the server hadn't confirmed when they ended, by
   // session: whenever one lands, it's that session's, not the one running.
@@ -132,7 +131,7 @@ export class Game {
     this.log = log;
     this.paused = db.get("paused") === "1";
     this.complete = db.get("complete") === "1";
-    this.goalPending = db.get("goal_claim") !== null;
+    this.settleOldGoalClaim();
     this.restore();
     // Everyone queued (including an offered player restore() put back) gets
     // the absence allowance from now: nobody had a chance to reconnect while
@@ -218,6 +217,22 @@ export class Game {
         if (!this.active) this.requeueFront(userId);
       } catch { this.db.set("offer", null); }
     }
+  }
+
+  // Goals used to wait for an admin to confirm them: one still waiting from
+  // then counts, as it would now.
+  private settleOldGoalClaim() {
+    const raw = this.db.get("goal_claim");
+    if (raw === null) return;
+    this.db.set("goal_claim", null);
+    try {
+      const { sessionId } = JSON.parse(raw);
+      if (typeof sessionId === "string") this.db.setSessionOutcome(sessionId, "goal", null);
+    } catch {}
+    this.complete = true;
+    this.db.set("complete", "1");
+    this.db.set("goal_unreported", "1");
+    this.db.clearQueue();
   }
 
   // Once per run, when the observer first sees the slot: anything checked
@@ -721,23 +736,25 @@ export class Game {
     this.broadcast();
   }
 
-  // The game said it reached the goal. Nothing a player sends can end the
-  // event by itself: the turn ends, the queue pauses, and an admin decides.
+  // The game said it reached the goal: the event is complete. The turn ends,
+  // nobody else is offered one, and MultiServer is told. (An admin who finds
+  // it wasn't really reached can roll back to a checkpoint from before.)
   claimGoal(conn: ProxyConn) {
     const s = this.active;
     if (!s || s.conns.game !== conn) return;
-    // Remember whether an admin had paused already, so dismissing the claim
-    // puts the queue back how it was.
-    this.db.set("goal_claim", JSON.stringify({ sessionId: s.id, userId: s.userId, at: Date.now(), wasPaused: this.paused }));
-    this.goalPending = true;
-    this.log(`${this.db.user(s.userId)?.name ?? s.userId}'s game reported the goal — waiting for an admin to confirm`);
-    this.paused = true;
-    this.db.set("paused", "1");
-    this.end("goal-reported", null);
+    this.log(`${this.db.user(s.userId)?.name ?? s.userId}'s game reported the goal — the event is complete`);
+    // Complete before the turn ends, so ending it offers nobody the next.
+    this.complete = true;
+    this.db.set("complete", "1");
+    this.db.set("goal_unreported", "1");
+    this.clearOffer();
+    this.db.clearQueue();
+    this.end("goal", null);
+    this.reportGoal();
   }
 
-  // Tell MultiServer about the confirmed goal; until it has heard, try again
-  // whenever the game server is back.
+  // Tell MultiServer about the goal; until it has heard, try again whenever
+  // the game server is back.
   private reportingGoal = false;
   private goalRetry: ReturnType<typeof setTimeout> | null = null;
   private reportGoal() {
@@ -751,41 +768,6 @@ export class Game {
     });
   }
 
-  private goalClaim(): (NonNullable<AdminState["goalClaim"]> & { wasPaused: boolean }) | null {
-    const raw = this.db.get("goal_claim");
-    if (!raw) return null;
-    try {
-      const { sessionId, userId, at, wasPaused } = JSON.parse(raw);
-      return { sessionId, at, user: this.db.publicUser(userId), wasPaused: !!wasPaused };
-    } catch { return null; }
-  }
-
-  confirmGoal() {
-    const claim = this.goalClaim();
-    if (!claim) throw new HttpError(409, "no goal is waiting to be confirmed");
-    this.complete = true;
-    this.db.set("complete", "1");
-    this.db.set("goal_claim", null);
-    this.goalPending = false;
-    this.db.setSessionOutcome(claim.sessionId, "goal", null);
-    this.log("the goal is complete");
-    this.db.set("goal_unreported", "1");
-    this.reportGoal();
-    this.clearOffer();
-    this.db.clearQueue();
-    this.broadcast();
-  }
-
-  dismissGoal() {
-    const claim = this.goalClaim();
-    if (!claim) throw new HttpError(409, "no goal is waiting to be confirmed");
-    this.db.set("goal_claim", null);
-    this.goalPending = false;
-    this.db.setSessionOutcome(claim.sessionId, "goal-dismissed", null);
-    this.log("goal claim dismissed");
-    this.setPaused(claim.wasPaused);
-  }
-
   endSession(sessionId: string, detail: string) {
     if (this.active?.id !== sessionId) throw new HttpError(409, "that turn has already ended");
     this.end("admin", detail);
@@ -795,7 +777,6 @@ export class Game {
   // admin
   // ---------------------------------------------------------------------------
   setPaused(paused: boolean) {
-    if (!paused && this.db.get("goal_claim")) throw new HttpError(409, "confirm or dismiss the reported goal first");
     if (!paused && this.rollingBack) throw new HttpError(409, "wait for the rollback to finish");
     this.paused = paused;
     // A turn on offer waits too: back to the head of the line, not used up.
@@ -921,7 +902,6 @@ export class Game {
     if (!target) throw new HttpError(404, "no such checkpoint");
     if (this.rollingBack) throw new HttpError(409, "a rollback is already under way");
     if (this.active) throw new HttpError(409, "end the running turn first");
-    if (this.goalPending) throw new HttpError(409, "confirm or dismiss the reported goal first");
     if (!this.observer.ready) throw new HttpError(503, "the game server isn't ready — try again in a moment");
     return target;
   }
@@ -986,7 +966,6 @@ export class Game {
       checkLimit: this.config.checkLimit,
       paused: this.paused,
       complete: this.complete,
-      goalPending: this.goalPending,
       queueAbsentSeconds: Math.round(this.config.queueAbsentMs / 1000),
       serverReady: this.observer.ready,
       serverProblem: this.observer.problem,
@@ -1135,11 +1114,9 @@ export class Game {
   }
 
   adminState(): AdminState {
-    const claim = this.goalClaim();
     return {
       sessions: this.db.sessions(),
       users: this.db.adminUsers(),
-      goalClaim: claim && { sessionId: claim.sessionId, at: claim.at, user: claim.user },
       checkpoints: this.checkpoints?.list() ?? [],
       checkpointBusy: this.rollingBack,
     };

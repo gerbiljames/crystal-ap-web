@@ -24,13 +24,12 @@ The game runs in each player's browser, so the browser holds the credentials for
 
 - At most `CHECK_LIMIT` new checks per turn, and one turn per Discord account.
 - No hints, chat, `!` commands, release or collect.
-- The goal only counts once an admin confirms it.
 - Only one PopTracker alongside the game. Anything else using the turn's details ends the turn.
 - Data storage only takes the writes the Crystal client makes: its own keys, operations and value shapes, all bounded in size. So a turn can't stall MultiServer, fill its memory or corrupt what later players read.
 
 Scouting locations reveals nothing new either: with `remote_items` the patched ROM already names every location's item for its in-game text.
 
-What the server can't check is whether the progress a game reports is real. Story events, fly points, the Pokédex, EnergyLink and wonder trades pass from turn to turn through data storage. That's how each player picks up where the last one left off, and later players' games load it. A player who edits their emulator's memory (or scripts the connection) can therefore hand later players progress nobody earned, or a wonder-trade Pokémon nobody caught. Location checks stay capped either way. The admin page shows every turn's finds, admins can ban players, and they can roll the game back to a checkpoint from before the damage (see [Admin](#admin)).
+What the server can't check is whether the progress a game reports is real. That includes the goal: when a game reports it, the event is complete straight away. Story events, fly points, the Pokédex, EnergyLink and wonder trades pass from turn to turn through data storage. That's how each player picks up where the last one left off, and later players' games load it. A player who edits their emulator's memory (or scripts the connection) can therefore hand later players progress nobody earned, or a wonder-trade Pokémon nobody caught. Location checks stay capped either way. The admin page shows every turn's finds, admins can ban players, and they can roll the game back to a checkpoint from before the damage, a false goal included (see [Admin](#admin)).
 
 ## The seed
 

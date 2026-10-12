@@ -210,7 +210,7 @@ test("junk API calls, signed in and out, admin and not", { skip }, async (t) => 
   const routes = ["/api/me", "/api/patch", "/api/queue/join", "/api/queue/leave", "/api/session/start", "/api/session/end",
     "/api/session/claim", "/api/admin/state", "/api/admin/pause", "/api/admin/resume", "/api/admin/skip",
     "/api/admin/end-session", "/api/admin/dequeue", "/api/admin/reset-user", "/api/admin/ban", "/api/admin/unban",
-    "/api/admin/confirm-goal", "/api/admin/dismiss-goal", "/api/auth/callback?code=x&state=y", "/api/auth/logout", "/api/nope"];
+    "/api/admin/checkpoint", "/api/admin/rollback", "/api/auth/callback?code=x&state=y", "/api/auth/logout", "/api/nope"];
   for (let i = 0; i < 300; i++) {
     const cookie = pick([undefined, player, admin, "yogos_session=forged.123.abc", "yogos_session=%zz"]);
     const method = pick(["GET", "POST", "POST", "POST", "PUT", "DELETE"]);

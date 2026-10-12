@@ -183,8 +183,6 @@ export function startHttp(deps: HttpDeps) {
       case "POST /api/admin/pause": admin(req); game.setPaused(true); return noContent(res);
       case "POST /api/admin/resume": admin(req); game.setPaused(false); return noContent(res);
       case "POST /api/admin/skip": admin(req); game.skipOffer(userIdArg(await readBody(req))); return noContent(res);
-      case "POST /api/admin/confirm-goal": admin(req); game.confirmGoal(); return noContent(res);
-      case "POST /api/admin/dismiss-goal": admin(req); game.dismissGoal(); return noContent(res);
       case "POST /api/admin/end-session": {
         const who = admin(req);
         const body = await readBody(req);

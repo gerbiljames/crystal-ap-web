@@ -15,9 +15,7 @@ export type EndReason =
   | "violation"  // something other than the game client or PopTracker used the credentials
   | "gave-up"    // the player ended it themselves
   | "admin"      // an admin ended it
-  | "goal-reported" // the game reported the goal; an admin decides whether it stands
-  | "goal-dismissed" // the game reported the goal; an admin found it hadn't been reached
-  | "goal"       // the slot reached its goal (confirmed by an admin)
+  | "goal"       // the game reported the slot's goal: the event is complete
   | "server";    // the server shut down or lost MultiServer mid-session
 
 export const END_REASON_TEXT: Record<EndReason, string> = {
@@ -26,8 +24,6 @@ export const END_REASON_TEXT: Record<EndReason, string> = {
   "violation": "a client other than the game or PopTracker connected with your session's details",
   "gave-up": "you ended the session",
   "admin": "an admin ended the session",
-  "goal-reported": "your game reported the goal — an admin will confirm it",
-  "goal-dismissed": "your game reported the goal, but an admin found it hadn't been reached",
   "goal": "the goal was completed",
   "server": "the server stopped during the session",
 };
@@ -39,8 +35,6 @@ export const END_REASON_ADMIN_TEXT: Record<EndReason, string> = {
   "violation": "another client used the turn's details",
   "gave-up": "the player ended it",
   "admin": "ended by an admin",
-  "goal-reported": "their game reported the goal (unconfirmed)",
-  "goal-dismissed": "their game reported the goal; dismissed",
   "goal": "goal completed",
   "server": "the server stopped during it",
 };
@@ -79,8 +73,6 @@ export type PublicState = {
   paused: boolean;
   // The slot reached its goal; the event is over.
   complete: boolean;
-  // A player's game said it reached the goal; an admin has yet to confirm it.
-  goalPending: boolean;
   // How long a queued player may have no page open before losing their place.
   queueAbsentSeconds: number;
   // MultiServer is up and the observer is connected.
@@ -188,8 +180,6 @@ export type CheckpointRow = {
 export type AdminState = {
   sessions: SessionSummary[];
   users: AdminUserRow[];
-  // A goal reported by a player's game, waiting for an admin.
-  goalClaim: { user: PublicUser; sessionId: string; at: number } | null;
   checkpoints: CheckpointRow[];
   // A checkpoint or rollback is under way.
   checkpointBusy: boolean;

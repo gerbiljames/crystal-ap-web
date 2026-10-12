@@ -431,9 +431,10 @@ test("an admin can roll the game back to a checkpoint, and undo that", { skip },
 });
 
 // Last: confirming the goal completes the event, so nothing can start after it.
-test("a reported goal waits for an admin, then reaches MultiServer", { skip }, async () => {
+test("a reported goal completes the event and reaches MultiServer, and a rollback reopens it", { skip }, async () => {
   const erin = await login("erin");
   const admin = await login("admin");
+  const before = await admin.post("/api/admin/checkpoint", { label: "it: before the goal" }) as CheckpointRow;
   await erin.post("/api/queue/join");
   await waitFor("erin's offer", async () => (await erin.me()).offer);
   await erin.post("/api/session/start");
@@ -444,16 +445,14 @@ test("a reported goal waits for an admin, then reaches MultiServer", { skip }, a
   await game.next("Connected");
   game.send({ cmd: "StatusUpdate", status: 30 });
   await game.waitClosed();
-  assert.equal((await erin.me()).lastSession!.reason, "goal-reported");
-  let state = await publicState();
-  assert.equal(state.goalPending, true);
-  assert.equal(state.complete, false);
-  assert.equal(state.paused, true);
-
-  await admin.post("/api/admin/confirm-goal");
-  state = await publicState();
-  assert.equal(state.complete, true);
   assert.equal((await erin.me()).lastSession!.reason, "goal");
+  assert.equal((await publicState()).complete, true);
   await waitFor("the goal reaching MultiServer", async () => /reported the goal to the game server/.test(logs));
   assert.match(logs, /Player1 \(Team #1\) has completed their goal/);
+
+  // A goal that shouldn't stand is undone by rolling back past it.
+  await admin.post("/api/admin/rollback", { checkpointId: before.id, returnTurns: true });
+  assert.equal((await publicState()).complete, false);
+  assert.equal((await erin.me()).attemptUsed, false);
+  await erin.post("/api/queue/join");
 });

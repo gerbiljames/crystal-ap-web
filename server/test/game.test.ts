@@ -207,28 +207,28 @@ test("banning a player ends their turn", () => {
   assert.throws(() => game.join("a"), /can't take part/);
 });
 
-test("a goal from the game ends the turn and pauses until an admin confirms", () => {
+test("a goal from the game completes the event: the turn ends and nobody gets another", () => {
   const conn = startA();
   game.join("b");
   game.claimGoal(conn);
-  assert.equal(game.youFor("a")!.lastSession!.reason, "goal-reported");
-  assert.equal(game.publicState().complete, false);
-  assert.equal(game.publicState().goalPending, true);
-  assert.equal(game.publicState().paused, true);
+  assert.equal(game.youFor("a")!.lastSession!.reason, "goal");
+  assert.equal(game.publicState().complete, true);
   assert.equal(game.youFor("b")!.offer, null);
-  game.dismissGoal();
-  assert.equal(game.publicState().goalPending, false);
-  assert.ok(game.youFor("b")!.offer);
+  assert.equal(game.youFor("b")!.inQueue, false, "the queue is cleared");
+  assert.throws(() => game.join("b"), /goal is complete/);
+  assert.equal(observer.goalsReported, 1, "the goal reaches MultiServer too");
 });
 
-test("confirming a reported goal completes the event", () => {
-  const conn = startA();
-  game.claimGoal(conn);
-  game.confirmGoal();
+test("a goal still waiting for an admin from before carries on as complete", () => {
+  startA();
+  const id = game.youFor("a")!.session!.id;
+  game.stop();
+  db.endSession(id, "gave-up", null, Date.now());
+  db.set("goal_claim", JSON.stringify({ sessionId: id, userId: "a", at: Date.now(), wasPaused: false }));
+  game = new Game(config, db, seed, observer as unknown as Observer, () => {});
   assert.equal(game.publicState().complete, true);
   assert.equal(game.youFor("a")!.lastSession!.reason, "goal");
-  assert.equal(observer.goalsReported, 1, "the goal reaches MultiServer too");
-  assert.throws(() => game.confirmGoal(), /no goal/);
+  assert.equal(db.get("goal_claim"), null);
 });
 
 test("pausing withdraws an offer without using it, and blocks starting", () => {
@@ -291,12 +291,6 @@ test("a session restored at its limit ends on the quota", (t) => {
   assert.equal(game.youFor("a")!.lastSession!.reason, "quota");
 });
 
-test("the queue can't resume past a reported goal", () => {
-  const conn = startA();
-  game.claimGoal(conn);
-  assert.throws(() => game.setPaused(false), /reported goal/);
-});
-
 test("admin actions only hit the turn or offer they name", () => {
   const conn = startA();
   const id = game.credentials()!.sessionId;
@@ -341,14 +335,6 @@ test("checks the server lost in a restart are re-sent, not counted again", () =>
   assert.equal(game.gameOpen(conn), false, "2 counted once + 4 = the limit of 3");
 });
 
-test("a reported goal is recorded as reported, then settled by the admin", () => {
-  const conn = startA();
-  game.claimGoal(conn);
-  assert.equal(game.youFor("a")!.lastSession!.reason, "goal-reported");
-  game.dismissGoal();
-  assert.equal(game.youFor("a")!.lastSession!.reason, "goal-dismissed");
-});
-
 test("checks that landed while the server was stopping are recorded on restart", () => {
   const conn = startA();
   game.checks(conn, [1]);
@@ -370,14 +356,6 @@ test("nothing new is accepted once the server is shutting down", (t) => {
   game.detach(conn);
   t.mock.timers.tick(10 * 60_000);
   assert.equal(db.openSession()?.user_id, "a", "the session stays open for the restart");
-});
-
-test("dismissing a goal claim keeps an admin's earlier pause", () => {
-  const conn = startA();
-  game.setPaused(true);
-  game.claimGoal(conn);
-  game.dismissGoal();
-  assert.equal(game.publicState().paused, true);
 });
 
 test("an offered turn waits out a game server outage", (t) => {
@@ -521,10 +499,9 @@ test("an offer withdrawn while its player's page is closed still lets the sweepe
 test("a goal report that fails is retried while the server stays up", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
   const conn = startA();
-  game.claimGoal(conn);
   let answers = [false, true];
   observer.reportGoal = () => { observer.goalsReported++; return Promise.resolve(answers.shift()!); };
-  game.confirmGoal();
+  game.claimGoal(conn);
   await tick();
   assert.equal(observer.goalsReported, 1);
   t.mock.timers.tick(30_000);

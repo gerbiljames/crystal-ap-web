@@ -94,7 +94,6 @@ function AdminBody() {
   // Why a rollback can't be started right now, if it can't.
   const rollbackBlocked = () =>
     ps()?.current ? "end the running turn first"
-    : state()?.goalClaim ? "confirm or dismiss the reported goal first"
     : !ps()?.serverReady ? "the game server isn't ready"
     : null;
 
@@ -117,20 +116,6 @@ function AdminBody() {
   return (
     <div class="admin-body">
       <Show when={error() || loadError()}><div class="error-box"><span class="err-title">admin</span><span>{error() || loadError()}</span></div></Show>
-
-      <Show when={state()?.goalClaim}>
-        <section class="admin-section admin-goal">
-          <h3>goal reported</h3>
-          <div class="admin-row">
-            <UserBadge user={state()!.goalClaim!.user} small />
-            <span>'s game reported the goal at {fmtTime(state()!.goalClaim!.at)}. The queue is paused until you decide: confirming ends the event; dismissing puts the queue back how it was.</span>
-          </div>
-          <div class="admin-row">
-            <button class="btn-primary" disabled={busy()} onClick={() => act("confirm-goal", {}, "Confirm the goal? The event ends for everyone.")}>confirm — event complete</button>
-            <button disabled={busy()} onClick={() => act("dismiss-goal", {}, "Dismiss the goal claim? The queue goes back to how it was before the claim (still paused, if you'd paused it).")}>dismiss</button>
-          </div>
-        </section>
-      </Show>
 
       <div class="admin-tabs" role="tablist">
         <For each={TABS}>{(t) => (

@@ -118,9 +118,6 @@ function NowPlayingCard() {
         <Show when={ps()!.complete}>
           <p class="victory">The goal is complete. Thanks to everyone who took a turn!</p>
         </Show>
-        <Show when={ps()!.goalPending && !ps()!.complete}>
-          <p class="victory">The goal has been reported! Waiting for an admin to confirm it.</p>
-        </Show>
         <Show when={!ps()!.serverReady && !ps()!.complete}>
           <p class="muted">{ps()!.serverProblem ? `the game can't start: ${ps()!.serverProblem}` : "the game server is starting up…"}</p>
         </Show>
