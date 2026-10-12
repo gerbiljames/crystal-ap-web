@@ -1,6 +1,5 @@
 import { For, Show, createSignal, createEffect, onCleanup } from "solid-js";
-import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs, controllerPrefs, setControllerPrefs, audioPrefs, setAudioPrefs, uiPrefs, setUiPrefs, romOverridePrefs, setRomOverridePrefs, trackerPrefs } from "../state.js";
-import { setDeferEntrances } from "../actions.js";
+import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs, controllerPrefs, setControllerPrefs, audioPrefs, setAudioPrefs, uiPrefs, setUiPrefs, romOverridePrefs, setRomOverridePrefs } from "../state.js";
 import { TOP_LEVEL_FIELDS, GAME_OPTION_FIELDS, type OverrideField } from "../lib/overrides.js";
 import {
   DEFAULT_BINDINGS, loadBindings, saveBindings, captureNextButton, getActivePad,
@@ -22,7 +21,7 @@ const INPUT_ROWS: { name: InputName; label: string }[] = [
   { name: "right",  label: "right" },
 ];
 
-const TABS = ["controller", "keyboard", "audio", "overlay", "ui", "tracker", "overrides"] as const;
+const TABS = ["controller", "keyboard", "audio", "overlay", "ui", "overrides"] as const;
 type Tab = typeof TABS[number];
 
 export function Settings() {
@@ -71,9 +70,6 @@ export function Settings() {
             </Show>
             <Show when={tab() === "ui"}>
               <UiPanel />
-            </Show>
-            <Show when={tab() === "tracker"}>
-              <TrackerSettingsPanel />
             </Show>
             <Show when={tab() === "overrides"}>
               <OverridesPanel />
@@ -333,22 +329,6 @@ function UiPanel() {
   );
 }
 
-function TrackerSettingsPanel() {
-  return (
-    <div class="ui-panel">
-      <label class="switch" title="When on, the tracker treats each randomized entrance as unknown until you go through it, so it doesn't reveal where entrances lead, and the console's entrances tab lists the ones you've discovered. When off, the tracker knows every connection from the start and the entrances tab is hidden. Only affects seeds with entrance randomization.">
-        <input
-          type="checkbox"
-          checked={trackerPrefs().deferEntrances}
-          onChange={(ev) => setDeferEntrances(ev.currentTarget.checked)}
-        />
-        <span class="switch-track"><span class="switch-knob"></span></span>
-        <span class="switch-text">deferred entrances (hide until discovered)</span>
-      </label>
-    </div>
-  );
-}
-
 function OverrideField(props: { field: OverrideField; prefKey: string }) {
   const f = props.field;
   const value = () => romOverridePrefs()[props.prefKey] ?? "";
@@ -430,10 +410,11 @@ function OverridesPanel() {
   return (
     <div class="overlay-panel">
       <p class="panel-intro">
-        Patch-time tweaks applied to <strong>your</strong> ROM only. They don't affect
-        the seed, logic, or other players. Left at <strong>default</strong>, each option
-        keeps whatever the seed rolled. Changes apply the next time a ROM is patched;
-        resuming a seed re-patches automatically when these change.
+        Patch-time tweaks applied to <strong>your</strong> ROM only: how the game looks,
+        sounds and how quickly things go. Options that would change difficulty or what
+        you can reach aren't offered, since everyone plays the same slot. Left at <strong>default</strong>, each option
+        keeps whatever the seed rolled. Changes apply the next time your ROM is
+        patched, which happens again when your turn starts if they changed.
       </p>
 
       <h3 class="ov-group-head">General</h3>

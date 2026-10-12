@@ -1,26 +1,11 @@
-// Bundled apworld versions and the rule for picking one per seed.
+// The bundled Crystal apworld, and whether it can play a seed's patch.
 //
-// pack.sh bundles one or more versions of each Crystal apworld and describes
-// them in src/generated/versions.json (see scripts/pack-worlds.py), imported
-// here at build time so the app and the tars it points the worker at always
-// come from the same pack. A seed is
-// pinned to a *minimum*, not an exact version: upstream keeps newer apworlds
-// able to play older seeds within a compatibility window, so the app always
-// picks the newest bundled version that can still take the seed, and only
-// falls back to an older bundle when the newest one can't.
-//
-// Two channels, two rules, both mirroring what the apworld itself enforces:
-//   prerelease — the patch manifest carries world_version and
-//                minimum_patch_version; an installed version I plays a patch P
-//                when I >= P.minimum_patch_version and P >= I.minimum_patch_version
-//                (rom.py assert_version_compat).
-//   stable     — the manifest carries no version, but the patch embeds the
-//                generating apworld's basepatch.bsdiff4. Hashing it identifies
-//                the generator; any bundled stable with the same ROM checksum
-//                (data.json rom_version) can then play the ROM, because that
-//                checksum is what the client demands at connect.
+// pack.sh bundles the vendor/archipelago world (the same one the server's
+// MultiServer runs) and describes it in src/generated/versions.json (see
+// scripts/pack-worlds.py), imported here at build time so the app and the tars
+// it points the worker at always come from the same pack.
 
-import { readPatchManifest, readZipEntry } from "./zip.js";
+import { readPatchManifest } from "./zip.js";
 import versionsJson from "../generated/versions.json";
 
 export type BundledWorld = {
@@ -30,14 +15,8 @@ export type BundledWorld = {
   world_version: string;
   display_version: string;
   minimum_patch_version: string | null;
-  minimum_ap_version: string | null;
-  rom_version: number;
-  rom_version11: number;
-  basepatch_sha256: Record<string, string>;
   tar: string;
   size: number;
-  latest: boolean;
-  ref: string | null;
 };
 
 export type BundledVersions = {
@@ -51,21 +30,9 @@ export const VERSIONS: BundledVersions = versionsJson as BundledVersions;
 // package, as paths under public/ap/. Sent to the worker when it is spawned.
 export type RuntimeConfig = { coreTar: string; worlds: BundledWorld[] };
 
-// A runtime always carries every package: the ones the caller pins plus the
-// latest of the rest. So pinning a seed's single world yields the same runtime
-// as "all latest" when that world is itself latest, and the worker isn't
-// restarted between generating a seed and patching it.
-export function runtimeFor(pinned: BundledWorld[]): RuntimeConfig {
-  const byPkg = new Map(pinned.map((w) => [w.package, w]));
-  for (const w of latestWorlds()) if (!byPkg.has(w.package)) byPkg.set(w.package, w);
-  return { coreTar: VERSIONS.core.tar, worlds: [...byPkg.values()] };
-}
-
-export function sameRuntime(a: RuntimeConfig | null, b: RuntimeConfig | null): boolean {
-  if (!a || !b) return a === b;
-  if (a.coreTar !== b.coreTar || a.worlds.length !== b.worlds.length) return false;
-  const byPkg = new Map(a.worlds.map((w) => [w.package, w.world_version]));
-  return b.worlds.every((w) => byPkg.get(w.package) === w.world_version);
+// The runtime: the core plus the bundled world of every package.
+export function bundledRuntime(): RuntimeConfig {
+  return { coreTar: VERSIONS.core.tar, worlds: bundledWorlds() };
 }
 
 // Numeric dotted-prefix compare, matching Utils.tuplize_version for the
@@ -86,104 +53,28 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-const newest = (worlds: BundledWorld[]): BundledWorld | null =>
-  worlds.reduce<BundledWorld | null>((best, w) => (!best || compareVersions(w.world_version, best.world_version) > 0 ? w : best), null);
-
-// The `latest` entry of every package: what generation uses, and what a
-// runtime boots when no seed has asked for anything else.
-export function latestWorlds(): BundledWorld[] {
-  return VERSIONS.worlds.filter((w) => w.latest);
+// The bundled world of every package: what the runtime boots.
+export function bundledWorlds(): BundledWorld[] {
+  return VERSIONS.worlds;
 }
 
-export function latestWorldForGame(game: string): BundledWorld | null {
-  return VERSIONS.worlds.find((w) => w.game === game && w.latest) ?? newest(VERSIONS.worlds.filter((w) => w.game === game));
-}
+// Whether the bundled world can play a patch. A patch whose manifest names
+// its generator's version is checked against the compatibility window the
+// apworld itself enforces (rom.py assert_version_compat); one that doesn't is
+// left to the worker's check of the patched ROM's checksum.
+export type PatchCheck = { ok: true; world: BundledWorld } | { ok: false; reason: string };
 
-export function bundledWorld(pkg: string, worldVersion: string): BundledWorld | null {
-  return VERSIONS.worlds.find((w) => w.package === pkg && w.world_version === worldVersion) ?? null;
-}
-
-// Sessions from before worldPackage/worldVersion were recorded carry only the
-// display version they were patched with. Map it back to the bundled world
-// when it is still here, narrowed to the session's game when known.
-export function bundledWorldByDisplay(displayVersion: string, game?: string | null): BundledWorld | null {
-  const hits = VERSIONS.worlds.filter((w) => w.display_version === displayVersion && (!game || w.game === game));
-  return hits.length === 1 ? hits[0] : null;
-}
-
-export type WorldResolution =
-  // A bundled version can play this seed. `generator` is the version that
-  // produced it when known; `upgraded` when the pick is newer than that.
-  | { kind: "resolved"; world: BundledWorld; generator: string | null; upgraded: boolean }
-  // Stable patch whose basepatch matches no bundled version: the generator
-  // can't be identified, so compatibility can't be checked either.
-  | { kind: "unknown"; game: string; candidates: BundledWorld[]; reason: string }
-  // Identified, but no bundled version is inside its compatibility window.
-  | { kind: "incompatible"; game: string; candidates: BundledWorld[]; reason: string }
-  // The patch targets a game nothing bundled provides.
-  | { kind: "unsupported"; game: string; reason: string };
-
-export async function resolveWorldForPatch(patchBytes: Uint8Array): Promise<WorldResolution> {
+export async function checkPatch(patchBytes: Uint8Array): Promise<PatchCheck> {
   const manifest = await readPatchManifest(patchBytes);
   const game: string = manifest.game || "Pokemon Crystal";
-  const candidates = VERSIONS.worlds.filter((w) => w.game === game);
-  if (candidates.length === 0) return { kind: "unsupported", game, reason: `no bundled apworld for ${game}` };
-
-  // The patch's own manifest decides the rule. A versioned manifest is checked
-  // against the window each bundled version declares; a bundled version with no
-  // window (today's stable) can only be matched by basepatch identity, below.
+  const world = bundledWorlds().find((w) => w.game === game);
+  if (!world) return { ok: false, reason: `this site doesn't play ${game}` };
   const patchVersion: string | undefined = manifest.world_version;
-  const generatorDisplay = (v: string) => candidates.find((w) => w.world_version === v)?.display_version ?? v;
-  if (patchVersion) {
+  if (patchVersion && world.minimum_patch_version) {
     const patchMin: string = manifest.minimum_patch_version || patchVersion;
-    const compatible = candidates.filter((w) =>
-      w.minimum_patch_version
-      && compareVersions(w.world_version, patchMin) >= 0
-      && compareVersions(patchVersion, w.minimum_patch_version) >= 0);
-    const pick = newest(compatible);
-    if (pick) {
-      return { kind: "resolved", world: pick, generator: generatorDisplay(patchVersion),
-        upgraded: compareVersions(pick.world_version, patchVersion) !== 0 };
-    }
+    const fits = compareVersions(world.world_version, patchMin) >= 0
+      && compareVersions(patchVersion, world.minimum_patch_version) >= 0;
+    if (!fits) return { ok: false, reason: `this seed was made with ${game} apworld ${patchVersion}, which the bundled ${world.display_version} can't play` };
   }
-
-  // Identify the generator by the basepatch the patch carries (stable patches
-  // always do). Any bundled version with the same ROM checksum can play the
-  // result, since that checksum is what the client demands at connect.
-  let hash: string | null = null;
-  try {
-    const base = await readZipEntry(patchBytes, "basepatch.bsdiff4");
-    const digest = await crypto.subtle.digest("SHA-256", base.slice());
-    hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  } catch {
-    hash = null;
-  }
-  const generator = hash ? candidates.find((w) => w.basepatch_sha256["basepatch.bsdiff4"] === hash) ?? null : null;
-  if (generator) {
-    // A versioned patch was already judged against every version that
-    // declares a window, above; only the windowless ones are open to it here,
-    // or a version its window refused would come back as the pick.
-    const eligible = (w: BundledWorld) => !patchVersion || !w.minimum_patch_version;
-    const compatible = candidates.filter((w) => eligible(w)
-      && w.rom_version === generator.rom_version && w.rom_version11 === generator.rom_version11);
-    const pick = newest(compatible) ?? (eligible(generator) ? generator : null);
-    if (pick) {
-      return { kind: "resolved", world: pick, generator: generator.display_version,
-        upgraded: pick.world_version !== generator.world_version };
-    }
-  }
-
-  const have = candidates.map((w) => w.display_version).join(", ");
-  if (patchVersion) {
-    return { kind: "incompatible", game, candidates,
-      reason: `this ${game} patch was made with apworld ${generatorDisplay(patchVersion)}, and no bundled version is compatible with it (bundled: ${have})` };
-  }
-  if (candidates.every((w) => w.minimum_patch_version)) {
-    return { kind: "incompatible", game, candidates,
-      reason: `this ${game} patch predates versioned manifests — regenerate it with a current apworld` };
-  }
-  return { kind: "unknown", game, candidates,
-    reason: hash
-      ? `this ${game} patch's base ROM patch matches no bundled apworld version`
-      : `this ${game} patch carries no basepatch.bsdiff4` };
+  return { ok: true, world };
 }

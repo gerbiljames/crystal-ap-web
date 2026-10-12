@@ -1,0 +1,12 @@
+**/.git
+.claude
+.github
+node_modules
+dist
+data
+public/ap
+public/ap.tar
+binjgb
+**/__pycache__
+**/*.pyc
+.env

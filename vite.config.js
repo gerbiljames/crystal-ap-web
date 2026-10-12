@@ -5,10 +5,6 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
 
-// BASE_PATH lets CI set the subpath for GitHub Pages project deploys
-// (e.g. "/crystal-ap-web/"). Local dev + user-page deploys stay at "/".
-const base = process.env.BASE_PATH || "/";
-
 const buildId = Date.now().toString(36);
 // Paths below are relative to this file, not to wherever vite was run from.
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
@@ -34,7 +30,7 @@ function tarHashes() {
   return out;
 }
 
-// public/ is copied unhashed, and GitHub Pages serves only the current deploy
+// public/ is copied unhashed, and the server serves only the current deploy
 // whatever the query string, so a tab opened before a deploy would spawn the
 // new ap_worker.js against its old bundle. Emit the worker a second time under
 // a per-build name and have the bundle spawn that: an old tab then gets a 404
@@ -56,7 +52,6 @@ function pinnedWorker() {
 }
 
 export default defineConfig({
-  base,
   define: {
     __BUILD_ID__: JSON.stringify(buildId),
     __AP_TAR_HASHES__: JSON.stringify(tarHashes()),
@@ -69,6 +64,13 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     port: 8765,
+    // The YOGOS server (npm run server) on its default port: the API, its live
+    // socket, and the game's Archipelago endpoint. Not /ap — that's the
+    // bundle tars in public/.
+    proxy: {
+      "/api": { target: "http://127.0.0.1:8080", ws: true },
+      "/archipelago": { target: "http://127.0.0.1:8080", ws: true },
+    },
   },
   build: {
     target: "es2022",

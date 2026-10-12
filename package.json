@@ -1,5 +1,5 @@
 {
-  "name": "crystal-ap",
+  "name": "you-only-get-one-slot",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,19 +8,20 @@
     "build": "vite build",
     "preview": "vite preview",
     "pack": "./pack.sh",
-    "typecheck": "tsc --noEmit"
+    "server": "node server/src/main.ts",
+    "test": "node --test server/test/*.test.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p server"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
-    "@types/prismjs": "^1.26.6",
+    "@types/ws": "^8.18.2",
     "typescript": "^7.0.2",
     "vite": "^8.3.1",
     "vite-plugin-solid": "^2.11.14"
   },
   "dependencies": {
     "fflate": "^0.8.3",
-    "js-yaml": "^5.4.2",
-    "prismjs": "^1.30.0",
-    "solid-js": "^1.9.15"
+    "solid-js": "^1.9.15",
+    "ws": "^8.22.0"
   }
 }

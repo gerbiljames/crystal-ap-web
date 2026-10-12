@@ -36,9 +36,10 @@ export type OverridePrefs = Record<string, string>;
 const ON_OFF = ["on", "off"];
 
 // `game_options` sub-settings. Names + value sets mirror GameOptions in
-// options.py. death_link / trap_link / tracker_slot are intentionally omitted:
-// they are multiworld- or co-op-affecting and not appropriate as per-player
-// patch-time tweaks (and the apworld never writes them from this dict anyway).
+// options.py. Only presentation and convenience: everyone in this event plays
+// the same slot in turn, so options that change difficulty or what can be
+// reached (catching, EXP, encounters, trainers, HMs, time of day) are left out,
+// as are death_link / trap_link / tracker_slot.
 export const GAME_OPTION_FIELDS: OverrideField[] = [
   { key: "text_speed",       label: "Text speed",        kind: "choice", choices: ["instant", "fast", "mid", "slow"] },
   { key: "text_frame",       label: "Text frame",        kind: "choice", choices: ["1", "2", "3", "4", "5", "6", "7", "8", "random"] },
@@ -56,55 +57,29 @@ export const GAME_OPTION_FIELDS: OverrideField[] = [
   { key: "fast_surf",        label: "Fast surf",         kind: "toggle", choices: ON_OFF },
   { key: "fast_egg_hatch",   label: "Fast egg hatch",    kind: "toggle", choices: ON_OFF },
   { key: "fast_egg_make",    label: "Fast egg make",     kind: "toggle", choices: ON_OFF },
-  { key: "rods_always_work", label: "Rods always work",  kind: "toggle", choices: ON_OFF },
-  { key: "catch_exp",        label: "Catch EXP",         kind: "toggle", choices: ON_OFF },
-  { key: "exp_distribution", label: "EXP distribution",  kind: "choice", choices: ["gen2", "gen6", "gen8", "no_exp"] },
-  { key: "guaranteed_catch", label: "Guaranteed catch",  kind: "toggle", choices: ON_OFF },
-  { key: "blind_trainers",   label: "Blind trainers",    kind: "toggle", choices: ON_OFF },
-  { key: "spinners",         label: "Spinners",          kind: "choice", choices: ["normal", "rotators", "heck", "hell"] },
   { key: "poison_flicker",   label: "Poison flicker",    kind: "toggle", choices: ON_OFF },
   { key: "low_hp_beep",      label: "Low HP beep",       kind: "toggle", choices: ON_OFF },
-  { key: "time_of_day",      label: "Time of day",       kind: "choice", choices: ["auto", "morn", "day", "nite", "random"] },
   { key: "dex_area_beep",    label: "Dex area beep",     kind: "toggle", choices: ON_OFF },
   { key: "skip_dex_registration", label: "Skip dex registration", kind: "toggle", choices: ON_OFF },
   { key: "ap_item_sound",    label: "AP item sound",     kind: "toggle", choices: ON_OFF },
   { key: "item_notification",label: "Item notification", kind: "choice", choices: ["popup", "sound", "none"] },
   { key: "trainersanity_indication", label: "Trainersanity indication", kind: "toggle", choices: ON_OFF },
-  { key: "more_uncaught_encounters", label: "More uncaught encounters", kind: "toggle", choices: ON_OFF },
-  { key: "auto_hms",         label: "Auto HMs",          kind: "toggle", choices: ON_OFF },
-  { key: "hms_require_teaching", label: "HMs require teaching", kind: "toggle", choices: ON_OFF },
 ];
 
 const FIELD_MOVE_KEYS = ["Cut", "Fly", "Surf", "Strength", "Flash", "Whirlpool",
   "Waterfall", "Rock Smash", "Headbutt", "Dig", "Teleport", "Sweet Scent"];
 
-// Top-level overrides. The race-mode-restricted set (see world.py) is included;
-// the local web client never generates in race mode, so they always apply.
+// Top-level overrides. Only the presentational ones: everyone in this event
+// plays the same slot, so nothing that changes difficulty, economy, logic or
+// the goal (experience, money, catch rates, marts, TMs, skipping the Elite
+// Four) is offered.
 export const TOP_LEVEL_FIELDS: OverrideField[] = [
   { key: "trainer_name", label: "Trainer name", kind: "text", maxLen: 7,
     help: "Presets your name and skips the prompt. First 7 characters only" },
-  { key: "experience_modifier", label: "Experience modifier", kind: "number", min: 1, max: 255,
-    help: "20 = normal, 40 = double, 10 = half. Adjustable in-game" },
-  { key: "starting_money", label: "Starting money", kind: "number", min: 0, max: 999999 },
-  { key: "minimum_catch_rate", label: "Minimum catch rate", kind: "number", min: 0, max: 255 },
-  { key: "reusable_tms", label: "Reusable TMs", kind: "toggle", choices: ON_OFF },
-  { key: "skip_elite_four", label: "Skip Elite Four", kind: "toggle", choices: ON_OFF,
-    help: "Ignored if any Elite Four member is a trainersanity check" },
-  { key: "better_marts", label: "Better marts", kind: "toggle", choices: ON_OFF },
-  // all_pokemon_seen is documented as an override but its patch-time writer is
-  // commented out in the apworld (rom.py write_customizable_options), so setting
-  // it here would have no effect — omitted until the apworld actually applies it.
-  { key: "shopsanity_restrict_rare_candies", label: "Restrict shop rare candies", kind: "toggle", choices: ON_OFF },
-  // encounter_slot_distribution is listed in the override docstring but has no
-  // must_write_option branch in write_customizable_options — it's a generation-
-  // time option (it changes which wild encounters are rolled) and can't be
-  // applied by a patch-time ROM tweak, so setting it here would do nothing.
   { key: "default_pokedex_mode", label: "Default Pokédex mode", kind: "choice",
     choices: ["new", "old", "a_to_z"] },
   { key: "field_move_menu_order", label: "Field move menu order", kind: "list", validKeys: FIELD_MOVE_KEYS,
     help: "Comma-separated. Listed moves appear on top in this order; omitted ones follow in the default order" },
-  { key: "build_a_mart", label: "Build-a-mart", kind: "list",
-    help: "Comma-separated item names (max 14) for the final Pokécenter 2F mart" },
 ];
 
 export const ALL_FIELDS = [...TOP_LEVEL_FIELDS, ...GAME_OPTION_FIELDS];

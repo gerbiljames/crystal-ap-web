@@ -1,8 +1,8 @@
 "use strict";
-// Single Pyodide worker that hosts both patching and generation.
+// Single Pyodide worker that patches the ROM and runs the AP game client.
 // Boots the full Archipelago + apworld import graph on first use, then:
 //   patch(romBytes, patchBytes) → patchedBytes
-//   generate(yamlText)          → { artifacts: {name: Uint8Array}, ... }
+//   session-start               → BizHawkClientContext against the server
 //
 // Protocol (main ↔ worker):
 //   { id, cmd, ...payload }     → { id, ok, out? } | { id, error }
@@ -44,8 +44,6 @@ let loadedWorlds = [];       // runtimeConfig.worlds once this boot has committe
 let sessionTasks = null;           // py cancellables
 let nextBhId = 1;
 const bhPending = new Map();        // id → { resolve, reject }
-// True while an in-process MultiServer is running. Cleared on host-stop.
-let hostRunning = false;
 
 // Python stdout/stderr lines are batched: a connected session prints in
 // bursts (one line per PrintJSON packet), and a postMessage per line costs
@@ -53,14 +51,14 @@ let hostRunning = false;
 // {event:"py-log", msgs:[...]} per worker tick. Any other post flushes the
 // queue first so log lines never reorder against replies or bridge requests,
 // and a fatal reply always carries the diagnostics printed just before it.
-// The tick timer can't fire while synchronous Python (generate, patch,
-// tracker work) holds the worker for minutes, so while one of those commands
+// The tick timer can't fire while synchronous Python (boot, patch) holds
+// the worker for minutes, so while one of those commands
 // runs each line goes out as it's printed: the log keeps moving through long
 // silent stretches, and a line printed just before a hang (or a kill for
 // one) isn't left in the queue. Otherwise a batch also goes out once it's
 // LOG_FLUSH_MS old.
 const LOG_FLUSH_MS = 100;
-const SYNC_HEAVY_CMDS = new Set(["init", "generate", "patch", "tracker-init", "tracker-update", "tracker-checks"]);
+const SYNC_HEAVY_CMDS = new Set(["init", "patch"]);
 let syncHeavyRuns = 0;
 let logQueue = [];
 let logFlushTimer = null;
@@ -139,25 +137,6 @@ function pyodideIsDead() {
   catch (err) { return /fatally failed|fatal error/i.test(err?.message || String(err)); }
 }
 
-// Run Python and surface the traceback as a real Error message on failure.
-// Pyodide's own PythonError sometimes loses the traceback string in transit
-// between the worker-side exception and our outer JS catch.
-async function runPyChecked(code) {
-  const wrapped = `
-import traceback
-def _go():
-${code.split("\n").map(l => "    " + l).join("\n")}
-try:
-    _go()
-    _ = None
-except BaseException:
-    _ = traceback.format_exc()
-_
-`;
-  const result = await pyodide.runPythonAsync(wrapped);
-  if (result) throw new Error(result);
-}
-
 async function ensureInit(id) {
   if (booted) return;
   if (initPromise) return initPromise;
@@ -207,10 +186,9 @@ await micropip.install(["pathspec", "schema", "jellyfish", "colorama", "websocke
 
     report("import-ap");
     await pyodide.runPythonAsync(SETUP_PY(chosen.map(w => w.package)));
-    // Install the websockets shim once, at boot. Both the in-browser
-    // MultiServer (loopback) and the BizHawkClientContext (real wss://)
-    // share this single _ws.connect / _ws.serve patch — sessions and host
-    // setup just assume it's already in place.
+    // Install the websockets shim once, at boot. The BizHawkClientContext's
+    // connections all go through its _ws.connect patch, so sessions just
+    // assume it's already in place.
     await pyodide.runPythonAsync(WS_SHIM_PY);
     // Forward Python stdout/stderr to the main thread so we can see what the
     // session client is doing. to_js + Object.fromEntries converts the dict
@@ -272,9 +250,7 @@ async function patch(id, romBytes, patchBytes, overrides) {
   // so this single assignment covers whichever patch class runs. A fresh dict
   // per call matters because apply_overrides may pop keys from it.
   const overridesJson = JSON.stringify(JSON.stringify(overrides || {}));
-  // Dispatch by game name from the patch's archipelago.json manifest. Stable
-  // and prerelease both ship a PokemonCrystalProcedurePatch class but they
-  // live in different modules and produce binary-incompatible patches.
+  // Dispatch by game name from the patch's archipelago.json manifest.
   await pyodide.runPythonAsync(`
 import zipfile, json
 with zipfile.ZipFile("/tmp/seed.apcrystalpre") as zf:
@@ -319,59 +295,6 @@ if _ver is not None and _ver != _req:
   return { out, transfer: [out.buffer] };
 }
 
-async function generate(id, yamlText) {
-  await ensureInit(id);
-  await runPyChecked(`
-import shutil, os
-shutil.rmtree("/tmp/players", ignore_errors=True)
-shutil.rmtree("/tmp/out",     ignore_errors=True)
-os.makedirs("/tmp/players"); os.makedirs("/tmp/out")
-with open("/tmp/players/player.yaml","w") as f: f.write(${JSON.stringify(yamlText)})
-  `);
-
-  post({ id, event: "progress", phase: "rolling-seed" });
-  await runPyChecked(`
-import sys, os
-os.chdir("/ap")
-sys.argv = [
-    "Generate.py",
-    "--player_files_path", "/tmp/players",
-    "--outputpath",        "/tmp/out",
-]
-import Generate as _gen
-import Main as _main
-erargs, seed = _gen.main()
-_main.main(erargs, seed)
-  `);
-
-  // Expand any produced zip so artifacts are first-class.
-  post({ id, event: "progress", phase: "collecting-artifacts" });
-  await pyodide.runPythonAsync(`
-import os, zipfile
-outdir = "/tmp/out"
-for name in list(os.listdir(outdir)):
-    if name.endswith(".zip"):
-        with zipfile.ZipFile(os.path.join(outdir, name)) as zf:
-            zf.extractall(outdir)
-  `);
-  const namesPy = await pyodide.runPythonAsync(`
-import os
-sorted(os.listdir("/tmp/out"))
-  `);
-  const names = namesPy.toJs();
-  namesPy.destroy();
-  const artifacts = {};
-  const transfer = [];
-  for (const name of names) {
-    // Copy out of Pyodide's heap so transferring our buffer doesn't detach
-    // Pyodide's own memory and break subsequent calls.
-    const bytes = pyodide.FS.readFile("/tmp/out/" + name).slice();
-    artifacts[name] = bytes;
-    transfer.push(bytes.buffer);
-  }
-  return { out: { artifacts }, transfer };
-}
-
 async function sessionStart(id, server, slotName, password) {
   await ensureInit(id);
   // Tear down any prior session first so repeated connects don't stack
@@ -389,7 +312,6 @@ async function sessionStart(id, server, slotName, password) {
 
 async function sessionStop(id) {
   if (!pyodide || !sessionTasks) return;
-  trackerStop();
   try {
     await pyodide.runPythonAsync(`
 import asyncio
@@ -415,7 +337,7 @@ try:
 except Exception: pass
 # Cancel our own tasks and await them so server_loop's finally actually
 # runs before we exit sessionStop.
-for _n in ("server", "watcher"):
+for _n in ("server", "watcher", "watchdog"):
     _t = _bh_tasks.get(_n)
     if _t is None: continue
     _t.cancel()
@@ -444,256 +366,7 @@ except Exception: pass
   sessionTasks = null;
 }
 
-// Persistence keyed by seedId, written directly from the worker so saves
-// don't depend on main-thread liveness around tab close. Mirror of constants
-// in src/lib/constants.ts; keep in sync if they change.
-//
-// Opened without a version: the main thread owns the schema and its upgrades
-// (which migrate data using localStorage, unavailable here). Pinning a version
-// here would either fail against a newer DB or run an upgrade that skips the
-// main thread's migration. If the DB or our store doesn't exist yet, give up
-// for now and retry on the next call.
-const MHOST_DB_NAME = "crystal-ap-saves";
-const MHOST_STORE = "mhostsave";
-let _mhostDbPromise = null;
-function mhostDb() {
-  if (_mhostDbPromise) return _mhostDbPromise;
-  _mhostDbPromise = new Promise((resolve) => {
-    const req = indexedDB.open(MHOST_DB_NAME);
-    // Only fires when the DB doesn't exist: don't create it from here.
-    req.onupgradeneeded = () => req.transaction.abort();
-    req.onsuccess = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(MHOST_STORE)) { db.close(); resolve(null); return; }
-      // Step aside when the main thread upgrades the schema.
-      db.onversionchange = () => { db.close(); _mhostDbPromise = null; };
-      resolve(db);
-    };
-    req.onerror   = () => resolve(null);
-    req.onblocked = () => resolve(null);
-  }).then((db) => { if (!db) _mhostDbPromise = null; return db; });
-  return _mhostDbPromise;
-}
-function mhostGet(seedId) {
-  return mhostDb().then((db) => db && new Promise((res) => {
-    // transaction() throws if the main thread's upgrade closed us meanwhile.
-    let t;
-    try { t = db.transaction(MHOST_STORE, "readonly").objectStore(MHOST_STORE).get(seedId); }
-    catch { _mhostDbPromise = null; res(null); return; }
-    t.onsuccess = () => res(t.result || null);
-    t.onerror   = () => res(null);
-  }));
-}
-function mhostPut(seedId, bytes) {
-  return mhostDb().then((db) => db && new Promise((res) => {
-    let tx;
-    try { tx = db.transaction(MHOST_STORE, "readwrite"); tx.objectStore(MHOST_STORE).put(bytes, seedId); }
-    catch { _mhostDbPromise = null; res(false); return; }
-    // Committed, not merely accepted: the transaction can still abort.
-    tx.oncomplete = () => res(true);
-    tx.onabort = tx.onerror = () => res(false);
-  }));
-}
-
-let _hostSeedId = null;
-// .apsave writes not yet committed. host-flush and host-stop wait on them
-// before replying: the reply is what lets the main thread terminate this
-// worker (restart, tab close), which would abort a write still in flight.
-const mhostWrites = new Set();
-function mhostSettled() {
-  return Promise.all([...mhostWrites]);
-}
-
-async function hostStart(id, seedId, multidataBytes) {
-  await ensureInit(id);
-  // Stop any prior host so re-hosting after a regenerate doesn't pile
-  // up stale Contexts (each holds a copy of the multidata in memory).
-  if (hostRunning) await hostStop(id);
-  _hostSeedId = seedId || null;
-  pyodide.FS.writeFile("/tmp/seed.archipelago", multidataBytes);
-  // A previous host's save must not be picked up by this one when this seed
-  // has none stored: init_save loads whatever sits at the path.
-  try { pyodide.FS.unlink("/tmp/seed.apsave"); } catch { /* none there */ }
-  // Pre-load any persisted .apsave for this seed into MEMFS at the path
-  // MultiServer.init_save expects: it does os.path.splitext on the multidata
-  // path and replaces the extension, so /tmp/seed.archipelago → /tmp/seed.apsave
-  // (NOT /tmp/seed.archipelago.apsave). See Context.init_save in vendor/archipelago/MultiServer.py.
-  if (_hostSeedId) {
-    try {
-      const stored = await mhostGet(_hostSeedId);
-      if (stored && stored.byteLength) pyodide.FS.writeFile("/tmp/seed.apsave", new Uint8Array(stored));
-    } catch { /* ignore — fall through to fresh save */ }
-  }
-  // Save callback from Python's _async_saver. Writes the .apsave bytes
-  // straight to IndexedDB so the worker is self-sufficient around tab
-  // close — no main-thread round-trip required for durability.
-  // Bound to this host's seed, so nothing this Context saves can land under
-  // a later host's.
-  const saveSeedId = _hostSeedId;
-  self._mhostSave = (bytesView) => {
-    if (!saveSeedId) return;
-    // Copy off Pyodide's heap before the transaction goes async.
-    const copy = new Uint8Array(bytesView).slice();
-    const write = mhostPut(saveSeedId, copy).finally(() => mhostWrites.delete(write));
-    mhostWrites.add(write);
-  };
-  try {
-    await pyodide.runPythonAsync(HOST_START_PY);
-  } catch (err) {
-    // init_save may already have started the autosaver: stop it along with
-    // whatever else came up, since hostRunning never goes true to do it later.
-    try { await pyodide.runPythonAsync(HOST_STOP_PY); } catch {}
-    _hostSeedId = null;
-    throw err;
-  }
-  const uri = pyodide.globals.get("_host_uri");
-  hostRunning = true;
-  return { out: { ws_url: uri } };
-}
-
-async function hostStop(id) {
-  if (!pyodide || !hostRunning) return;
-  try { await pyodide.runPythonAsync(HOST_STOP_PY); } catch {}
-  hostRunning = false;
-  _hostSeedId = null;
-  await mhostSettled();
-}
-
-// --- Universal Tracker bridge ---
-// Pure data-in / data-out: caller supplies multidata bytes plus the local
-// player's checked-locations set; we hand back the in-logic location names.
-// No dependency on _host_ctx, session ctx, or websockets — multidata is the
-// authoritative source for slot_data + locations + items.
-let trackerReady = false;
-
-async function trackerInit(id, multidataBytes, slotName, deferEntrances) {
-  await ensureInit(id);
-  const available = pyodide.globals.get("_TRACKER_AVAILABLE");
-  if (!available) {
-    return { out: { ok: false, reason: "tracker world failed to import" } };
-  }
-  pyodide.globals.set("_ut_deferred_in", deferEntrances !== false);
-  if (multidataBytes) {
-    pyodide.FS.writeFile("/tmp/ut_seed.archipelago", multidataBytes);
-    pyodide.globals.set("_ut_slot_name_in", String(slotName || ""));
-    const errOrEmpty = await pyodide.runPythonAsync(TRACKER_INIT_PY);
-    if (errOrEmpty) {
-      trackerReady = false;
-      return { out: { ok: false, reason: String(errOrEmpty) } };
-    }
-    await trackerDeferredSetup();
-    trackerReady = true;
-    return { out: { ok: true } };
-  }
-  // Patch-only flow: no cached multidata, fall back to ctx-driven init using
-  // slot_data from the live Connected package. Returns wait=true if the
-  // session hasn't finished connecting yet — caller should retry on the next
-  // tracker-dirty event (Connected) instead of latching unavailable.
-  const errOrEmpty = await pyodide.runPythonAsync(TRACKER_INIT_FROM_CTX_PY);
-  if (errOrEmpty) {
-    trackerReady = false;
-    const reason = String(errOrEmpty);
-    if (reason === "__WAIT__") {
-      return { out: { ok: false, wait: true, reason: "waiting for server connection" } };
-    }
-    return { out: { ok: false, reason } };
-  }
-  await trackerDeferredSetup();
-  trackerReady = true;
-  return { out: { ok: true } };
-}
-
-// Deferred entrances, the way UT's TrackerClient wires them: the world names
-// data-storage keys its game client fills with discovered entrances, and a
-// callback that connects those entrances in the tracker's multiworld. Watch
-// the keys on the session; TRACKER_UPDATE_PY feeds new values to the callback.
-async function trackerDeferredSetup() {
-  try { await pyodide.runPythonAsync(TRACKER_DEFERRED_SETUP_PY); }
-  catch (err) { console.warn("[ut] deferred entrance setup failed:", err); }
-}
-
-async function trackerUpdate(id, checkedLocIds) {
-  if (!pyodide || !trackerReady) return { out: { ok: false, locations: [], go: "no" } };
-  // globals.set keeps its own reference: the JS-side proxy can go at once.
-  // These run on every tracker-dirty event, too often to leave to the GC.
-  const checkedPy = pyodide.toPy(checkedLocIds || []);
-  pyodide.globals.set("_ut_checked_in", checkedPy);
-  checkedPy.destroy();
-  const result = await pyodide.runPythonAsync(TRACKER_UPDATE_PY);
-  const tup = result?.toJs ? result.toJs() : result;
-  const go = (tup && typeof tup[0] === "string") ? tup[0] : "no";
-  const locations = Array.isArray(tup?.[1]) ? tup[1] : (tup?.[1] ? Array.from(tup[1]) : []);
-  // [randomized, deferred, hidden count, [[from, to], ...]]
-  const e = tup?.[2];
-  const entrances = e ? {
-    randomized: !!e[0],
-    deferred: !!e[1],
-    hidden: Number(e[2]) || 0,
-    rows: Array.from(e[3] || [], (r) => [String(r[0]), String(r[1])]),
-  } : null;
-  if (result?.destroy) result.destroy();
-  return { out: { ok: true, locations, go, entrances } };
-}
-
-async function trackerChecks(id) {
-  if (!pyodide || !trackerReady || !sessionTasks) return { out: { checked: [] } };
-  const ctxPy = pyodide.globals.get("ctx");
-  pyodide.globals.set("_ut_ctx_q", ctxPy ?? null);
-  ctxPy?.destroy?.();
-  const result = await pyodide.runPythonAsync(TRACKER_CHECKS_PY);
-  const arr = result?.toJs ? result.toJs() : Array.from(result || []);
-  if (result?.destroy) result.destroy();
-  return { out: { checked: arr.map((x) => Number(x)) } };
-}
-
-// Read the hints relevant to the local player off the live session ctx. The
-// CommonClient subscribes to _read_hints_{team}_{slot} on Connected, so the
-// server-filtered list (hints where we're the receiver or finder) lands in
-// ctx.stored_data. Returns { hints: null } until that key is populated.
-async function hintsGet(id) {
-  if (!pyodide || !sessionTasks) return { out: { ok: false, hints: null } };
-  const result = await pyodide.runPythonAsync(HINTS_GET_PY);
-  if (result === undefined || result === null) return { out: { ok: true, hints: null } };
-  const obj = result.toJs ? result.toJs({ dict_converter: Object.fromEntries }) : result;
-  if (result?.destroy) result.destroy();
-  return { out: {
-    ok: true,
-    hints: obj.hints ?? null,
-    points: obj.points ?? null,
-    costPercent: obj.costPercent ?? null,
-    costPoints: obj.costPoints ?? null,
-    available: obj.available ?? null,
-  } };
-}
-
-// Item names (plus item-name groups) for the player's own game, for hint-box
-// autocomplete. The id->name table lives in ctx.item_names[game]; group names
-// (valid !hint targets like "Badges") arrive in stored_data on Connected.
-// Returns { items: null } until ctx.game is known.
-async function hintItems(id) {
-  if (!pyodide || !sessionTasks) return { out: { ok: false, items: null } };
-  const result = await pyodide.runPythonAsync(HINT_ITEMS_PY);
-  if (result === undefined || result === null) return { out: { ok: true, items: null } };
-  const arr = result.toJs ? result.toJs() : result;
-  if (result?.destroy) result.destroy();
-  return { out: { ok: true, items: arr } };
-}
-
-function trackerStop() {
-  trackerReady = false;
-  if (!pyodide) return;
-  try {
-    pyodide.runPython(`
-import builtins as _b
-for _n in ("_ut_tracker", "_ut_multidata", "_ut_slot", "_ut_slot_name", "_ut_game", "_ut_mode",
-           "_ut_def_keys", "_ut_def_cb", "_ut_def_seen"):
-    try: delattr(_b, _n)
-    except Exception: pass
-`);
-  } catch {}
-}
-
-// Session and host start/stop run one at a time, in arrival order. Each
+// Session start/stop run one at a time, in arrival order. Each
 // awaits Python, so run concurrently a stop could land while its start is
 // still mid-flight, see nothing to stop, and let the start finish into a
 // session the main thread had already dropped.
@@ -721,40 +394,13 @@ self.onmessage = async (ev) => {
     } else if (cmd === "patch") {
       const { out, transfer } = await patch(id, ev.data.rom, ev.data.patch, ev.data.overrides);
       post({ id, ok: true, out }, transfer);
-    } else if (cmd === "generate") {
-      const { out, transfer } = await generate(id, ev.data.yaml);
-      post({ id, ok: true, out }, transfer);
-    } else if (cmd === "host") {
-      const { out } = await inLifecycleOrder(() => hostStart(id, ev.data.seedId, ev.data.multidata));
-      post({ id, ok: true, out });
-    } else if (cmd === "host-flush") {
-      // Synchronous flush from a pagehide/visibility-hidden handler so the
-      // very last actions before tab close persist instead of waiting for
-      // the next 5s tick that may never run.
-      if (hostRunning) {
-        try {
-          await pyodide.runPythonAsync(`
-try:
-    if getattr(_host_ctx, "saving", False):
-        _host_ctx._save()
-        _host_ctx.save_dirty = False
-        _push_apsave(_host_ctx.save_filename)
-except Exception: pass
-          `);
-        } catch {}
-        await mhostSettled();
-      }
-      post({ id, ok: true });
-    } else if (cmd === "host-stop") {
-      await inLifecycleOrder(() => hostStop(id));
-      post({ id, ok: true });
     } else if (cmd === "session-start") {
       await inLifecycleOrder(() => sessionStart(id, ev.data.server, ev.data.slot, ev.data.password));
       post({ id, ok: true });
     } else if (cmd === "ping") {
       // Liveness probe. Fatal detection is otherwise purely reactive — it needs
       // a command to fail — but a dead runtime stops originating bizhawk
-      // requests and dirty events, so nothing would ever call in and the tab
+      // requests and connection events, so nothing would ever call in and the tab
       // would sit on a "live" chip that does nothing. Touch Python for real:
       // an ok reply from a dead runtime would defeat the point.
       if (booted) pyodide.runPython("1");
@@ -762,31 +408,6 @@ except Exception: pass
     } else if (cmd === "session-stop") {
       await inLifecycleOrder(() => sessionStop(id));
       post({ id, ok: true });
-    } else if (cmd === "session-input") {
-      // Dispatch a line of user input through the same ClientCommandProcessor
-      // that console_loop would — handles both /commands and plain chat.
-      if (!sessionTasks) return;
-      const text = ev.data.text || "";
-      const cmdproc = pyodide.globals.get("_cmdproc");
-      try { cmdproc(text); } finally { cmdproc.destroy(); }
-    } else if (cmd === "tracker-init") {
-      const { out } = await trackerInit(id, ev.data.multidata, ev.data.slotName, ev.data.deferEntrances);
-      post({ id, ok: true, out });
-    } else if (cmd === "tracker-update") {
-      const { out } = await trackerUpdate(id, ev.data.checked);
-      post({ id, ok: true, out });
-    } else if (cmd === "tracker-checks") {
-      const { out } = await trackerChecks(id);
-      post({ id, ok: true, out });
-    } else if (cmd === "tracker-stop") {
-      trackerStop();
-      post({ id, ok: true });
-    } else if (cmd === "hints-get") {
-      const { out } = await hintsGet(id);
-      post({ id, ok: true, out });
-    } else if (cmd === "hint-items") {
-      const { out } = await hintItems(id);
-      post({ id, ok: true, out });
     } else if (cmd === "bh-res") {
       // Main-thread's response to a previously sent bizhawk request.
       // Each globals.get() is a fresh PyProxy; at several replies a second,
@@ -797,8 +418,8 @@ except Exception: pass
       post({ id, error: "unknown cmd: " + cmd });
     }
   } catch (err) {
-    // runPyChecked gives us formatted Python tracebacks; fall back to .message
-    // then to String() for anything else. No JS stack — it's always Pyodide internals.
+    // Pyodide's PythonError carries the traceback in .message; fall back to
+    // String() for anything else. No JS stack — it's always Pyodide internals.
     const msg = err?.message || String(err);
     const fatal = pyodideIsDead();
     // A fatal is a crash inside the runtime, not a Python exception: say what
@@ -878,9 +499,9 @@ async def _send_message_shim(self, message):
     _js_self._bhEnqueue(rid, message)
     # Same failure as the TCP original's timeout: a request whose reply never
     # comes (dropped while the emulator rebooted, say) makes the watcher
-    # reconnect instead of hanging item sync for good. 15s rather than its 5s,
-    # since synchronous Python in this worker (tracker init) can hold replies
-    # back for a few seconds.
+    # reconnect instead of hanging item sync for good. 15s rather than its 5s:
+    # replies come back through the page's main thread, which can be busy for
+    # a few seconds (booting the emulator, a long garbage collection).
     try:
         return await asyncio.wait_for(fut, timeout=15)
     except asyncio.TimeoutError as exc:
@@ -937,90 +558,106 @@ _server_arg = ${j(server)}
 _password_arg = ${password ? j(password) : "None"}
 ctx = BizHawkClientContext(_server_arg, _password_arg)
 ctx.auth = ${j(slot)}
-_bh_tasks["server"]  = asyncio.create_task(server_loop(ctx), name="ServerLoop")
-_bh_tasks["watcher"] = asyncio.create_task(_game_watcher(ctx), name="GameWatcher")
-_cmdproc = ctx.command_processor(ctx)
-globals()["_cmdproc"] = _cmdproc
 
-# Sync wrapper around ctx.on_package — process_server_cmd calls it without
-# awaiting, so async wrappers silently no-op. Emits a "tracker-dirty" event
-# whenever the set of checked locations or items received may have changed.
+# ------------------------------------------------------------------ connection
+# The page needs to know when the server connection is up, so it can let the
+# player play only while their checks reach the server.
+#   "connected": the server accepted our Connect.
+#   "closed":    the socket went away. CommonClient reconnects on its own.
+#   "refused":   our password was rejected. The session is over; don't retry.
+def _post_ap_state(state, **extra):
+    try: _jpost({"event": "ap-state", "state": state, **extra})
+    except Exception as _e: print(f"[session] state post failed: {_e}")
+
+# Auto-reconnect only happens once CommonClient knows a username, which it
+# otherwise learns from the first Connected. Seed it so a first attempt that
+# fails (a server restart, a blip during boot) is retried too.
+ctx.username = ${j(slot)}
+
+# CommonClient doubles its reconnect delay after every failure. The session
+# ends if the game stays away for the server's grace period, so keep retrying
+# every few seconds instead of backing off past it.
+_RECONNECT_DELAY = 3
+
+# A network that dies without closing the socket looks connected forever. Ask
+# the server something cheap every few seconds; no answer means the
+# connection is gone, so stop play and reconnect.
+_WATCHDOG_EVERY = 5
+_WATCHDOG_TIMEOUT = 10
+_watchdog = {"sent": None}
+
 _orig_on_package = ctx.on_package
-def _ut_on_package(cmd, args):
+def _yogos_on_package(cmd, args):
     try: _orig_on_package(cmd, args)
     finally:
-        _dirty = cmd in ("Connected", "ReceivedItems", "RoomUpdate")
-        # A discovered-entrance key (see TRACKER_DEFERRED_SETUP_PY) arriving or
-        # changing reconnects entrances, which can put new locations in logic.
-        if not _dirty and cmd in ("Retrieved", "SetReply"):
-            import builtins as _bi
-            _dk = getattr(_bi, "_ut_def_keys", None)
-            if _dk:
-                _dirty = (args.get("key") in _dk) or any(k in _dk for k in (args.get("keys") or {}))
-        if _dirty:
-            try: _jpost({"event": "tracker-dirty"})
-            except Exception as _e: print(f"[ut] dirty post failed: {_e}")
-        # Hints arrive via the Get/SetNotify reply (Retrieved) and change live
-        # via SetReply on the watched _read_hints key. Connected/RoomUpdate also
-        # carry fresh hint_points, so refresh the Hints tab on all four.
-        if cmd in ("Connected", "Retrieved", "SetReply", "RoomUpdate"):
-            try: _jpost({"event": "hints-dirty"})
-            except Exception as _e: print(f"[ut] hints dirty post failed: {_e}")
-ctx.on_package = _ut_on_package
+        if cmd == "Connected":
+            _watchdog["sent"] = None
+            _post_ap_state("connected")
+        elif cmd == "Retrieved":
+            # The watchdog's answer: proof the connection works (the page
+            # waits for this to resume after the network came back).
+            if _watchdog["sent"] is not None: _post_ap_state("alive")
+            _watchdog["sent"] = None
+ctx.on_package = _yogos_on_package
 
-# Tap server PrintJSON so the Hints tab can show the response to a !hint request
-# without the user switching to the console. Only "Hint" (a created/echoed hint)
-# and "CommandResult" (command output, e.g. !hint errors / cost messages — sent
-# only to the requesting client) are forwarded; high-traffic types like ItemSend
-# and Chat are ignored. rawjsontotextparser yields plain text (no ANSI).
-import copy as _copy
-_orig_on_print_json = ctx.on_print_json
-def _ut_on_print_json(args):
-    try: _orig_on_print_json(args)
+async def _yogos_watchdog():
+    loop = asyncio.get_event_loop()
+    while True:
+        await asyncio.sleep(_WATCHDOG_EVERY)
+        sock = ctx.server.socket if ctx.server else None
+        if sock is None or sock.closed or ctx.slot is None:
+            _watchdog["sent"] = None
+            continue
+        if _watchdog["sent"] is None:
+            _watchdog["sent"] = loop.time()
+            try: await ctx.send_msgs([{"cmd": "Get", "keys": ["_read_race_mode"]}])
+            except Exception: pass
+        elif loop.time() - _watchdog["sent"] > _WATCHDOG_TIMEOUT:
+            print("the server stopped answering — reconnecting")
+            _watchdog["sent"] = None
+            _post_ap_state("closed")
+            try: await sock.close()
+            except Exception: pass
+
+_orig_connection_closed = ctx.connection_closed
+async def _yogos_connection_closed():
+    try: await _orig_connection_closed()
     finally:
-        try:
-            _typ = args.get("type")
-            if _typ in ("Hint", "CommandResult"):
-                # deepcopy parity with the stock handler: rawjsontotextparser
-                # mutates nodes in place (sets text/color), so never hand it the
-                # live packet data.
-                _txt = ctx.rawjsontotextparser(_copy.deepcopy(args.get("data", [])))
-                _jpost({"event": "hint-msg", "text": _txt, "kind": _typ})
-        except Exception as _e:
-            print(f"[hints] print tap failed: {_e}")
-ctx.on_print_json = _ut_on_print_json
+        # server_loop doubles the delay after this hook and before its
+        # reconnect task reads it, so set half to get _RECONNECT_DELAY.
+        ctx.current_reconnect_delay = _RECONNECT_DELAY / 2
+        _post_ap_state("closed")
+ctx.connection_closed = _yogos_connection_closed
 
+# A rejected password lands in server_auth with no password left, where the
+# stock client waits forever for one to be typed into a console we don't have.
+# The server only rejects us once the session's credentials have been rotated,
+# so stop here instead.
+_orig_server_auth = ctx.server_auth
+async def _yogos_server_auth(password_requested=False):
+    if password_requested and not ctx.password:
+        ctx.disconnected_intentionally = True
+        _post_ap_state("refused", reason="InvalidPassword")
+        try:
+            if ctx.server and ctx.server.socket: await ctx.server.socket.close()
+        except Exception: pass
+        return
+    return await _orig_server_auth(password_requested)
+ctx.server_auth = _yogos_server_auth
+
+_bh_tasks["server"]  = asyncio.create_task(server_loop(ctx), name="ServerLoop")
+_bh_tasks["watcher"] = asyncio.create_task(_game_watcher(ctx), name="GameWatcher")
+_bh_tasks["watchdog"] = asyncio.create_task(_yogos_watchdog(), name="ConnectionWatchdog")
 print("session started")
 `;
 }
 
-// Installed once at boot. Shims `websockets.connect` (browser WS for real
-// wss://, in-process pipe for loopback://) and `websockets.serve` (registers
-// an in-process handler — no real listening socket, browsers can't have one).
+// Installed once at boot. Shims `websockets.connect` with the browser's
+// WebSocket, since Pyodide has no sockets of its own.
 const WS_SHIM_PY = `
 import asyncio, re, websockets as _ws
 from js import WebSocket as _JsWebSocket
 from pyodide.ffi import create_proxy
-
-# websockets.broadcast() reaches into private attrs (protocol.state,
-# send_in_progress, frames_sent, ...) that only exist on the upstream's real
-# Connection class. Replace it with a minimal version that just enqueues the
-# message on every still-open connection — works for both our loopback pipe
-# and the browser-WS shim, neither of which has those internals.
-def _ws_broadcast(connections, message, raise_exceptions=False):
-    sent = []
-    for conn in list(connections):
-        try:
-            if getattr(conn, "closed", False): continue
-            if isinstance(message, (bytes, bytearray)):
-                if hasattr(conn, "send_binary"): conn.send_binary(message)
-                else: sent.append(asyncio.create_task(conn.send(bytes(message))))
-            else:
-                if hasattr(conn, "send_text"): conn.send_text(message)
-                else: sent.append(asyncio.create_task(conn.send(message)))
-        except Exception:
-            if raise_exceptions: raise
-_ws.broadcast = _ws_broadcast
 
 # ---- browser WebSocket bridge (used by CommonClient at session-start) ----
 class _BrowserWS:
@@ -1038,6 +675,13 @@ class _BrowserWS:
             try: self._queue.put_nowait(ev.data)
             except Exception: pass
         def on_close(ev):
+            # 4001: the server replaced this connection with a newer one for
+            # the same turn (it's being played elsewhere now). Only news if
+            # this is still our connection: one we already gave up on gets
+            # replaced by our own reconnect.
+            if getattr(ev, "code", 0) == 4001 and not self._closed:
+                try: _jpost({"event": "ap-state", "state": "replaced"})
+                except Exception: pass
             self._closed = True
             self._queue.put_nowait(None)
             if not self._close_fut.done(): self._close_fut.set_result(None)
@@ -1081,6 +725,11 @@ class _BrowserWS:
     async def close(self, code=1000, reason=""):
         try: self._ws.close()
         except Exception: pass
+        # On a dead network the close event may not come for minutes; end the
+        # reader now so the client notices and starts reconnecting.
+        if not self._closed:
+            self._closed = True
+            self._queue.put_nowait(None)
     def __aiter__(self): return self
     async def __anext__(self):
         data = await self._queue.get()
@@ -1096,101 +745,7 @@ class _BrowserWS:
         f = asyncio.get_event_loop().create_future(); f.set_result(None); return f
     async def pong(self, *a, **kw): return None
 
-# ---- loopback pipe (used when MultiServer runs inside this same Pyodide) ----
-# Two _LoopbackPipe halves share a pair of asyncio.Queues. No real network,
-# no TLS, no port — just two coroutines reading from each other's queues.
-class _LoopbackPipe:
-    extensions = []
-    def __init__(self, send_q, recv_q, remote=("loopback", 0)):
-        self._send_q = send_q
-        self._recv_q = recv_q
-        self._closed = False
-        self._remote = remote
-    @property
-    def remote_address(self): return self._remote
-    @property
-    def closed(self): return self._closed
-    @property
-    def open(self): return not self._closed
-    @property
-    def socket(self): return self
-    @property
-    def protocol(self): return _LoopbackProto
-    def send_text(self, msg):
-        # websockets.broadcast() bypasses send() and calls .send_text /
-        # .send_binary on the underlying connection. Forward to our queue.
-        if self._closed: return
-        try: self._send_q.put_nowait(msg)
-        except Exception: pass
-    def send_binary(self, data):
-        if self._closed: return
-        try: self._send_q.put_nowait(bytes(data))
-        except Exception: pass
-    async def send(self, msg):
-        if self._closed: raise _ws.ConnectionClosed(None, None)
-        if isinstance(msg, (bytes, bytearray)): msg = bytes(msg)
-        await self._send_q.put(msg)
-    async def recv(self):
-        msg = await self._recv_q.get()
-        if msg is None: raise _ws.ConnectionClosed(None, None)
-        return msg
-    async def close(self, code=1000, reason=""):
-        if self._closed: return
-        self._closed = True
-        # Sentinel both queues: peer's recv unblocks (their __aiter__ ends),
-        # AND our own recv unblocks (so a handler that's currently awaiting
-        # recv() also exits when we close from this side).
-        try: self._send_q.put_nowait(None)
-        except Exception: pass
-        try: self._recv_q.put_nowait(None)
-        except Exception: pass
-    def __aiter__(self): return self
-    async def __anext__(self):
-        msg = await self._recv_q.get()
-        if msg is None: raise StopAsyncIteration
-        return msg
-    async def ping(self, *a, **kw):
-        f = asyncio.get_event_loop().create_future(); f.set_result(None); return f
-    async def pong(self, *a, **kw): return None
-
-# Registry of loopback "servers". Key: synthetic URI; value: handler coroutine.
-_loopback_servers = {}
-_loopback_counter = [0]
-
-class _LoopbackServer:
-    """Stand-in for the awaitable websockets.serve() returns. Awaiting yields
-    a Server-shaped object; close() unregisters the handler."""
-    def __init__(self, uri, handler):
-        self.uri = uri
-        self.handler = handler
-    def __await__(self):
-        # already "listening" — just yield once for shape compatibility.
-        yield from asyncio.sleep(0).__await__()
-        return self
-    def close(self):
-        _loopback_servers.pop(self.uri, None)
-    async def wait_closed(self): pass
-
-def _serve(handler, host=None, port=None, **kwargs):
-    _loopback_counter[0] += 1
-    uri = f"loopback://room{_loopback_counter[0]}"
-    _loopback_servers[uri] = handler
-    return _LoopbackServer(uri, handler)
-_ws.serve = _serve
-
-async def _loopback_connect(uri):
-    handler = _loopback_servers.get(uri)
-    if handler is None:
-        raise ConnectionRefusedError(f"no loopback server at {uri}")
-    a = asyncio.Queue(); b = asyncio.Queue()
-    server_side = _LoopbackPipe(send_q=b, recv_q=a)
-    client_side = _LoopbackPipe(send_q=a, recv_q=b)
-    asyncio.create_task(handler(server_side, "/"), name="LoopbackHandler")
-    return client_side
-
 async def _ws_connect(uri, *args, **kwargs):
-    if uri.startswith("loopback://"):
-        return await _loopback_connect(uri)
     # Respect the caller-supplied scheme — forcing wss:// breaks ws:// to a
     # local multiserver. Only upgrade ws→wss when the page is HTTPS and the
     # browser would mixed-content-block ws:// anyway. (Localhost gets a pass
@@ -1211,142 +766,6 @@ async def _ws_connect(uri, *args, **kwargs):
 _ws.connect = _ws_connect
 `;
 
-// Builds an in-process MultiServer Context against /tmp/seed.archipelago.
-// Stubs out signal handlers (Pyodide can't add_signal_handler) and disables
-// auto-saving (no persistent FS across reloads). Stashes the loopback URI
-// in `_host_uri` and the context in `_host_ctx` for the connect path and
-// for HOST_STOP_PY to read.
-const HOST_START_PY = `
-import asyncio, signal, functools, sys, logging
-sys.path.insert(0, "/ap")
-
-# Pyodide can't take signal handlers; MultiServer.main installs SIGINT/SIGTERM
-# but we drive it programmatically and never touch main(). Make these no-ops
-# so any stray import path that adds a handler doesn't blow up.
-signal.signal = lambda *a, **kw: None
-try:
-    _loop = asyncio.get_event_loop()
-    _loop.add_signal_handler = lambda *a, **kw: None
-    _loop.remove_signal_handler = lambda *a, **kw: None
-except Exception: pass
-
-# Strip prior log handlers — Archipelago's init_logging adds a FileLog (no
-# filesystem here) and a duplicate StreamLog on each re-host.
-for _l in list(logging.Logger.manager.loggerDict.values()):
-    if isinstance(_l, logging.Logger): _l.handlers.clear()
-_flog = logging.getLogger("FileLog")
-_flog.handlers.clear()
-_flog.propagate = False
-logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
-
-import MultiServer as _ms
-
-# Defaults match settings.ServerOptions in vendor/archipelago/settings.py.
-_host_ctx = _ms.Context(
-    host="loopback",
-    port=0,
-    server_password=None,
-    password=None,
-    location_check_points=1,
-    hint_cost=10,
-    item_cheat=True,
-    release_mode="auto",
-    collect_mode="auto",
-    countdown_mode="auto",
-    remaining_mode="goal",
-    auto_shutdown=0,
-    compatibility=2,
-    log_network=False,
-)
-_host_ctx.load("/tmp/seed.archipelago", False)
-
-# MultiServer's stock Context._start_async_saving spins a real OS thread (in
-# vendor/archipelago/MultiServer.py). Pyodide is single-threaded, so we
-# replace it with an asyncio task that runs on the same event loop the
-# request handlers use. After each successful _save(), the freshly-written
-# .apsave bytes are read back from MEMFS and forwarded to the main thread,
-# which is responsible for persisting them to IndexedDB.
-import os
-from js import self as _js_self
-from pyodide.ffi import to_js as _to_js
-
-async def _async_saver(ctx):
-    # 5s instead of MultiServer's 60s — saves are tiny (a few KB), and a
-    # browser tab is far more likely to be closed between ticks than a
-    # long-lived server process. Lower interval = less data loss.
-    ctx.auto_save_interval = 5
-    interval = 5
-    while not ctx.exit_event.is_set():
-        try:
-            await asyncio.wait_for(ctx.exit_event.wait(), timeout=interval)
-            break
-        except asyncio.TimeoutError:
-            pass
-        if not ctx.save_dirty:
-            continue
-        try:
-            ctx._save()
-            ctx.save_dirty = False
-            _push_apsave(ctx.save_filename)
-        except Exception as e:
-            ctx.logger.exception(e)
-
-def _push_apsave(path):
-    try:
-        if not path or not os.path.exists(path): return
-        with open(path, "rb") as f:
-            data = f.read()
-        if not data: return
-        _js_self._mhostSave(_to_js(memoryview(data)))
-    except Exception: pass
-
-def _start_async_saving_shim(self, atexit_save=True):
-    if not getattr(self, "auto_saver_task", None):
-        self.auto_saver_task = asyncio.create_task(_async_saver(self), name="MhostSave")
-_ms.Context._start_async_saving = _start_async_saving_shim
-
-_host_ctx.init_save(True)
-
-_host_server = await _ws.serve(
-    functools.partial(_ms.server, ctx=_host_ctx),
-    host=None, port=None,
-)
-_host_uri = _host_server.uri
-print(f"in-browser MultiServer ready at {_host_uri}")
-`;
-
-const HOST_STOP_PY = `
-import asyncio
-# Final flush: persist any state that hasn't hit a save tick yet so the user
-# doesn't lose progress between the last 60s saver run and tab close.
-try:
-    if getattr(_host_ctx, "save_dirty", False):
-        _host_ctx._save()
-        _host_ctx.save_dirty = False
-        _push_apsave(_host_ctx.save_filename)
-except Exception: pass
-try: _host_ctx.exit_event.set()
-except Exception: pass
-try:
-    _t = getattr(_host_ctx, "auto_saver_task", None)
-    if _t is not None: _t.cancel()
-except Exception: pass
-try: _host_server.close()
-except Exception: pass
-# Best-effort: close any client sockets so MultiServer's per-client loops exit.
-try:
-    for _ep in list(getattr(_host_ctx, "endpoints", [])):
-        try: await _ep.socket.close()
-        except Exception: pass
-except Exception: pass
-try: del _host_ctx
-except Exception: pass
-try: del _host_server
-except Exception: pass
-try: del _host_uri
-except Exception: pass
-`;
-
 const SETUP_PY = (worldPackages) => `
 import sys, os
 sys.path.insert(0, "/ap")
@@ -1361,27 +780,19 @@ except AttributeError: pass
 # Disable settings.py's interactive folder picker. When a path setting points
 # at a non-existent dir, settings.py defaults to popping a tkinter dialog —
 # Pyodide has no tkinter, so the access raises ModuleNotFoundError instead of
-# returning the configured path. UT's TrackerPlayersPath("Players") triggers
-# this on first access. Setting no_gui=True makes the settings layer accept
-# the configured path as-is.
+# returning the configured path. Setting no_gui=True makes the settings layer
+# accept the configured path as-is.
 import settings as _ap_settings
 _ap_settings.no_gui = True
 
 # Seed a host.yaml so settings.get_settings() finds a file on first access.
 # With no settings file present, get_settings() falls into its "create a new
 # one" branch and calls Settings.save(), whose fsync/rename against Pyodide's
-# MEMFS can raise. UT's _set_host_settings() then swallows that and falls back
-# to a hardcoded label/Both sort, changing tracker row order vs the standard UT
-# client (which reads its configured apworld/Location sort). Pre-seeding the
-# file keeps us on the configured path and matches the standard client defaults.
-_HOST_YAML = """universal_tracker:
-  include_region_name: false
-  include_location_name: true
-  sorting_method: "apworld"
-"""
+# MEMFS can raise. The patcher reads its option overrides through
+# get_settings(), so give it a file to find.
 if not os.path.exists("/ap/host.yaml"):
     with open("/ap/host.yaml", "w", encoding="utf-8") as _hy:
-        _hy.write(_HOST_YAML)
+        _hy.write("{}\\n")
 
 # Pyodide has no threads — replace concurrent.futures.ThreadPoolExecutor with
 # a synchronous impl so Main.py's pool.submit / as_completed path just runs
@@ -1414,427 +825,6 @@ _cf.as_completed = lambda fs, timeout=None: iter(list(fs))
 # being swallowed by AutoWorldRegister, and so the patch dispatch table in
 # AutoPatchRegister has each PokemonCrystalProcedurePatch class ready.
 ${worldPackages.map(pkg => `import worlds.${pkg}.world  # noqa: F401`).join("\n")}
-# Universal Tracker. Imported eagerly so AutoWorldRegister picks up TrackerWorld
-# and so any incompatibility surfaces at boot, not on tab-click. The flag is
-# read back by JS to decide whether to enable the Tracker tab in the UI.
-try:
-    import worlds.tracker  # noqa: F401
-    _TRACKER_AVAILABLE = True
-except Exception as _ut_err:
-    _TRACKER_AVAILABLE = False
-    print(f"[ut] tracker world unavailable: {_ut_err}")
 from worlds.AutoWorld import AutoWorldRegister
 _ = AutoWorldRegister.world_types  # force registration
 `;
-
-// Build a TrackerCore from raw multidata bytes alone. Multidata fully
-// describes slot_data, locations, and items — everything UT needs except the
-// player's progress, which we feed in via tracker-update. Pokemon Crystal
-// supports yamlless tracking (ut_can_gen_without_yaml + staticmethod
-// interpret_slot_data) so no real Players/*.yaml is required.
-// Returns "" on success, or a traceback string.
-const TRACKER_INIT_PY = `
-import traceback
-try:
-    import os, logging
-    # Default TrackerPlayersPath("Players") is required-to-exist; without the
-    # dir, settings.py would try to browse() (no tkinter in Pyodide).
-    os.makedirs("/ap/Players", exist_ok=True)
-    import MultiServer as _ms
-    with open("/tmp/ut_seed.archipelago", "rb") as _f:
-        _multidata = _ms.Context.decompress(_f.read())
-    # connect_names: { slot_name: (team, slot, ...) }. Fall back to the only
-    # entry for solo seeds where the supplied slot_name doesn't match.
-    _slot_name = _ut_slot_name_in
-    _entry = _multidata["connect_names"].get(_slot_name)
-    if _entry is None:
-        _names = list(_multidata["connect_names"].keys())
-        if len(_names) == 1:
-            _slot_name, _entry = _names[0], _multidata["connect_names"][_names[0]]
-        else:
-            raise RuntimeError(f"slot name {_ut_slot_name_in!r} not in multidata; choices: {_names}")
-    _team, _slot = _entry[0], _entry[1]
-    _slot_data = _multidata["slot_data"].get(_slot, {}) or {}
-    _game = _multidata["slot_info"][_slot].game
-    from worlds.tracker.TrackerCore import TrackerCore
-    from worlds.AutoWorld import AutoWorldRegister
-    _world_cls = AutoWorldRegister.world_types.get(_game)
-    if _world_cls is None:
-        raise RuntimeError(f"no registered world for game {_game!r}")
-    _tracker = TrackerCore(logging.getLogger("UT"), False, False)
-    # Deferred entrances, from the app's tracker setting: "on" has worlds that
-    # support it leave randomized entrances unconnected until discovered, "off"
-    # connects them all up front. Set before the host-settings read so its
-    # default can't override it.
-    from worlds.tracker import DeferredEntranceMode
-    _tracker.enforce_deferred_connections = (
-        DeferredEntranceMode.forced if _ut_deferred_in else DeferredEntranceMode.disabled)
-    # UT caches generated multiworlds on the class, keyed by slot data alone.
-    # This worker outlives tracker re-inits, so a hit would hand back one built
-    # under the other deferral mode (or with earlier discoveries connected).
-    TrackerCore.cached_multiworlds.clear()
-    TrackerCore.cached_slot_data.clear()
-    # Seed sorting_priorities BEFORE initalize_tracker_core, so any error path
-    # inside it doesn't KeyError on missing 'ut_status' priority.
-    try:
-        (_yp, _tracker.output_format, _tracker.hide_excluded, _tracker.use_split,
-         _enf_def, _tracker.enable_glitched_logic, _tracker.sorting_priorities,
-         _tracker.sorting_method) = _tracker._set_host_settings()
-        if _tracker.enforce_deferred_connections is None:
-            _tracker.enforce_deferred_connections = _enf_def
-    except Exception as _hs_e:
-        print(f"[ut] _set_host_settings failed, using defaults: {_hs_e}")
-        _tracker.sorting_priorities = {
-            "default": 0, "hinted": 1, "excluded": 2, "excluded_glitched": 3,
-            "hinted_glitched": 4, "glitched": 5, "unconnected": 6,
-            "error": -1, "other": 7, "ut_status": 8,
-        }
-        _tracker.sorting_method = "label"
-        _tracker.output_format = "Both"
-        _tracker.hide_excluded = False
-        _tracker.use_split = True
-        _tracker.enable_glitched_logic = True
-    _tracker.set_slot_params(_game, _slot, _slot_name, _team)
-    _tracker.initalize_tracker_core(_world_cls, _slot_data)
-    if _tracker.gen_error:
-        raise RuntimeError("tracker init failed:\\n" + _tracker.gen_error)
-    if _tracker.multiworld is None:
-        raise RuntimeError("tracker init produced no multiworld")
-    # Park on builtins so it survives pyodide's per-call namespaces.
-    import builtins as _b
-    _b._ut_tracker   = _tracker
-    _b._ut_multidata = _multidata
-    _b._ut_slot      = _slot
-    _b._ut_slot_name = _slot_name
-    _b._ut_game      = _game
-    _b._ut_mode      = "multidata"
-    _ret = ""
-except Exception:
-    _ret = traceback.format_exc()
-_ret
-`;
-
-// Patch-only fallback: build a TrackerCore from the live session ctx.
-// BizHawkClientContext.on_package stashes slot_data on Connected, so once the
-// session is up we have everything UT needs. Returns "__WAIT__" if the ctx
-// hasn't finished connecting yet, "" on success, or a traceback.
-const TRACKER_INIT_FROM_CTX_PY = `
-import traceback
-try:
-    import os, logging, builtins as _b
-    os.makedirs("/ap/Players", exist_ok=True)
-    _ctx = globals().get("ctx", None)
-    if (_ctx is None or getattr(_ctx, "slot", None) is None
-            or not getattr(_ctx, "slot_info", None)
-            or getattr(_ctx, "slot_data", None) is None):
-        _ret = "__WAIT__"
-    else:
-        _slot = _ctx.slot
-        _team = _ctx.team or 0
-        _info = _ctx.slot_info[_slot]
-        _game = _info.game
-        _slot_name = _info.name
-        _slot_data = _ctx.slot_data or {}
-        from worlds.tracker.TrackerCore import TrackerCore
-        from worlds.AutoWorld import AutoWorldRegister
-        _world_cls = AutoWorldRegister.world_types.get(_game)
-        if _world_cls is None:
-            raise RuntimeError(f"no registered world for game {_game!r}")
-        _tracker = TrackerCore(logging.getLogger("UT"), False, False)
-        # Deferred entrances, from the app's tracker setting (see TRACKER_INIT_PY).
-        from worlds.tracker import DeferredEntranceMode
-        _tracker.enforce_deferred_connections = (
-            DeferredEntranceMode.forced if _ut_deferred_in else DeferredEntranceMode.disabled)
-        # See TRACKER_INIT_PY: never reuse a multiworld cached by an earlier init.
-        TrackerCore.cached_multiworlds.clear()
-        TrackerCore.cached_slot_data.clear()
-        try:
-            (_yp, _tracker.output_format, _tracker.hide_excluded, _tracker.use_split,
-             _enf_def, _tracker.enable_glitched_logic, _tracker.sorting_priorities,
-             _tracker.sorting_method) = _tracker._set_host_settings()
-            if _tracker.enforce_deferred_connections is None:
-                _tracker.enforce_deferred_connections = _enf_def
-        except Exception as _hs_e:
-            print(f"[ut] _set_host_settings failed, using defaults: {_hs_e}")
-            _tracker.sorting_priorities = {
-                "default": 0, "hinted": 1, "excluded": 2, "excluded_glitched": 3,
-                "hinted_glitched": 4, "glitched": 5, "unconnected": 6,
-                "error": -1, "other": 7, "ut_status": 8,
-            }
-            _tracker.sorting_method = "label"
-            _tracker.output_format = "Both"
-            _tracker.hide_excluded = False
-            _tracker.use_split = True
-            _tracker.enable_glitched_logic = True
-        _tracker.set_slot_params(_game, _slot, _slot_name, _team)
-        _tracker.initalize_tracker_core(_world_cls, _slot_data)
-        if _tracker.gen_error:
-            raise RuntimeError("tracker init failed:\\n" + _tracker.gen_error)
-        if _tracker.multiworld is None:
-            raise RuntimeError("tracker init produced no multiworld")
-        _b._ut_tracker   = _tracker
-        _b._ut_multidata = None
-        _b._ut_slot      = _slot
-        _b._ut_slot_name = _slot_name
-        _b._ut_game      = _game
-        _b._ut_mode      = "ctx"
-        _ret = ""
-except Exception:
-    _ret = traceback.format_exc()
-_ret
-`;
-
-// Read the player's currently checked-locations set off the active session
-// ctx. Tracker is gated on a live session, so we never look at _host_ctx here.
-const TRACKER_CHECKS_PY = `
-def _ut_get_checks():
-    _c = _ut_ctx_q
-    if _c is None: return []
-    try:
-        return list(getattr(_c, "checked_locations", set()) or set())
-    except Exception:
-        return []
-_ut_get_checks()
-`;
-
-// Collect the player's own-game item names plus item-name group names for the
-// hint-box autocomplete. ctx.item_names[game] is a ChainMap of id->name; the
-// KeyedDefaultDict default never materializes on .values() iteration, so only
-// real items are returned. Group names come from the watched data-storage key.
-const HINT_ITEMS_PY = `
-def _hint_items():
-    _ctx = globals().get("ctx", None)
-    if _ctx is None or getattr(_ctx, "game", None) is None:
-        return None
-    _game = _ctx.game
-    _names = set()
-    try:
-        _store = _ctx.item_names[_game]
-        for _m in _store.maps:
-            for _v in _m.values():
-                if isinstance(_v, str):
-                    _names.add(_v)
-    except Exception:
-        pass
-    try:
-        _groups = (getattr(_ctx, "stored_data", None) or {}).get(f"_read_item_name_groups_{_game}", None)
-        if isinstance(_groups, dict):
-            for _g in _groups.keys():
-                if isinstance(_g, str) and _g != "Everything":
-                    _names.add(_g)
-    except Exception:
-        pass
-    return sorted(_names)
-_hint_items()
-`;
-
-// Resolve the player-relevant hints off the live session ctx into display rows.
-// Each stored hint is a dict (NetUtils._scan_for_TypedTuples turns the Hint
-// NamedTuple into {receiving_player, finding_player, location, item, found,
-// entrance, item_flags, status, class}); older/positional encodings fall back
-// to index access. Names come from ctx's own lookup tables. Returns None when
-// the _read_hints key hasn't been retrieved yet (caller shows "waiting").
-const HINTS_GET_PY = `
-def _hints_get():
-    _ctx = globals().get("ctx", None)
-    if _ctx is None or getattr(_ctx, "slot", None) is None:
-        return None
-    _team = _ctx.team or 0
-    _slot = _ctx.slot
-    # Hint-point readout. hint_cost is a percentage of this slot's total location
-    # count; the server charges that many points per hint (min 1 unless hints are
-    # free). available = how many hints the current balance affords. Any of these
-    # can be None pre-connect / before total_locations is known — the UI hides the
-    # readout until they resolve.
-    _points = getattr(_ctx, "hint_points", None)
-    _cost_pct = getattr(_ctx, "hint_cost", None)
-    try: _total = _ctx.total_locations
-    except Exception: _total = None
-    _cost_points = max(1, int(_cost_pct * 0.01 * _total)) if _cost_pct and _total else 0
-    _available = (_points // _cost_points) if (_cost_points and _points is not None) else None
-    _meta = {"points": _points, "costPercent": _cost_pct,
-             "costPoints": _cost_points, "available": _available}
-    _raw = (getattr(_ctx, "stored_data", None) or {}).get(f"_read_hints_{_team}_{_slot}", None)
-    if _raw is None:
-        return {"hints": None, **_meta}
-    _status_labels = {0: "unspecified", 10: "no priority", 20: "avoid", 30: "priority", 40: "found"}
-    _out = []
-    for _h in _raw:
-        if isinstance(_h, dict):
-            recv = _h.get("receiving_player"); find = _h.get("finding_player")
-            item = _h.get("item"); loc = _h.get("location")
-            found = bool(_h.get("found")); entrance = _h.get("entrance") or ""
-            flags = _h.get("item_flags") or 0; status = _h.get("status")
-        else:
-            recv, find, loc, item = _h[0], _h[1], _h[2], _h[3]
-            found = bool(_h[4]) if len(_h) > 4 else False
-            entrance = _h[5] if len(_h) > 5 else ""
-            flags = _h[6] if len(_h) > 6 else 0
-            status = _h[7] if len(_h) > 7 else 0
-        try: _item_name = _ctx.item_names.lookup_in_slot(item, recv)
-        except Exception: _item_name = str(item)
-        try: _loc_name = _ctx.location_names.lookup_in_slot(loc, find)
-        except Exception: _loc_name = str(loc)
-        _recv_name = _ctx.player_names.get(recv, str(recv))
-        _find_name = _ctx.player_names.get(find, str(find))
-        _status_label = "found" if found else _status_labels.get(int(status) if status is not None else 0, "unspecified")
-        _out.append({
-            "receiving": _recv_name, "finding": _find_name,
-            "item": _item_name, "location": _loc_name,
-            "entrance": entrance, "found": found,
-            "status": _status_label, "forYou": (recv == _slot),
-            "itemFlags": int(flags) if flags else 0,
-        })
-    return {"hints": _out, **_meta}
-_hints_get()
-`;
-
-// Recompute in-logic locations given the player's current set of checked
-// location IDs. items_received is derived from multidata for solo seeds.
-// Runs after a successful tracker init. Mirrors TrackerClient: only when the
-// tracker defers entrances and the world provides both the key(s) and the
-// callback. Keys are formatted with this slot's team/player and subscribed on
-// the live session so Retrieved/SetReply keep ctx.stored_data current (the
-// world's own game client usually subscribes already; set_notify dedupes).
-const TRACKER_DEFERRED_SETUP_PY = `
-def _ut_deferred_setup():
-    import builtins as _b
-    _b._ut_def_keys = None
-    _b._ut_def_cb = None
-    _b._ut_def_seen = {}
-    _t = getattr(_b, "_ut_tracker", None)
-    if _t is None: return
-    from worlds.tracker import DeferredEntranceMode
-    if _t.enforce_deferred_connections == DeferredEntranceMode.disabled: return
-    _w = _t.get_current_world()
-    _keys = getattr(_w, "found_entrances_datastorage_key", None)
-    _cb = getattr(_w, "reconnect_found_entrances", None)
-    if not _keys or not callable(_cb): return
-    if isinstance(_keys, str): _keys = [_keys]
-    _team = getattr(_t, "team", None)
-    _ctx = globals().get("ctx", None)
-    if _team is None: _team = getattr(_ctx, "team", None) or 0
-    _slot = getattr(_t, "slot", None) or _t.player_id
-    _keys = [k.format(player=_slot, team=_team) for k in _keys]
-    _b._ut_def_keys = _keys
-    _b._ut_def_cb = _cb
-    if _ctx is not None:
-        _ctx.set_notify(*_keys)
-_ut_deferred_setup()
-`;
-
-const TRACKER_UPDATE_PY = `
-def _ut_compute():
-    import builtins as _b
-    _t = getattr(_b, "_ut_tracker", None)
-    _slot = getattr(_b, "_ut_slot", None)
-    _mode = getattr(_b, "_ut_mode", "multidata")
-    if _t is None or _slot is None: return ["no", []]
-    try:
-        from NetUtils import NetworkItem
-        # The live session is authoritative whenever it's connected as this
-        # slot, however the tracker was built: its items_received holds what
-        # the server sent from anywhere (other players, start inventory,
-        # !getitem), which rebuilding from our own seed's checks misses — and
-        # a missing badge or HM hides everything behind it (the Eon Mail
-        # trade, via Released the Beasts). This is what stock UT's
-        # TrackerClient feeds the core.
-        _ctx = globals().get("ctx", None)
-        _live = (_ctx is not None and getattr(_ctx, "slot", None) == _slot
-                 and getattr(_ctx, "items_received", None) is not None)
-        if _mode == "ctx" and not _live: return ["no", []]
-        if _live:
-            _missing = set(int(x) for x in (getattr(_ctx, "missing_locations", None) or set()))
-            _items = list(_ctx.items_received)
-        else:
-            _md = getattr(_b, "_ut_multidata", None)
-            if _md is None: return ["no", []]
-            _checked = set(int(x) for x in (_ut_checked_in or []))
-            _all_locs = _md["locations"][_slot]   # {loc_id: (item_id, recipient_slot, item_flags)}
-            _missing = set(_all_locs.keys()) - _checked
-            _items = []
-            for _lid in _checked:
-                _info = _all_locs.get(_lid)
-                if _info is None: continue
-                _iid, _recv, _flags = _info[0], _info[1], _info[2]
-                if _recv != _slot: continue   # not for us — would be sent over network
-                _items.append(NetworkItem(_iid, _lid, _slot, _flags))
-        _ut_apply_found_entrances(_t)
-        _t.set_items_received(_items)
-        _t.set_missing_locations(_missing)
-        _state = _t.updateTracker()
-        # Go mode mirrors UT's TrackerClient: has_beaten_game on the live state
-        # ("yes"), or on the glitches_state ("glitched"), else "no".
-        _go = "no"
-        try:
-            _mw = _t.multiworld
-            _pid = _t.player_id
-            if _state.state is not None and _mw.has_beaten_game(_state.state, _pid):
-                _go = "yes"
-            elif _state.glitches_state is not None and _mw.has_beaten_game(_state.glitches_state, _pid):
-                _go = "glitched"
-        except Exception:
-            pass
-        return [_go, list(_state.in_logic_locations), _ut_entrances(_t)]
-    except Exception:
-        import traceback; traceback.print_exc()
-        return ["no", [], None]
-
-# Hand each discovered-entrance key's value to the world's callback when it has
-# changed since last time (the callback connects entrances, never disconnects,
-# so replaying an unchanged list would only cost time).
-def _ut_apply_found_entrances(_t):
-    import builtins as _b
-    _keys = getattr(_b, "_ut_def_keys", None)
-    _cb = getattr(_b, "_ut_def_cb", None)
-    _ctx = globals().get("ctx", None)
-    if not _keys or _cb is None or _ctx is None: return
-    _seen = _b._ut_def_seen
-    _stored = getattr(_ctx, "stored_data", None) or {}
-    for _k in _keys:
-        _v = _stored.get(_k)
-        if _v is None: continue
-        _sig = repr(_v)
-        if _seen.get(_k) == _sig: continue
-        try: _cb(_k, _v)
-        except Exception:
-            import traceback; traceback.print_exc()
-            continue
-        _seen[_k] = _sig
-
-# The randomized entrances the player knows about, for the Entrances tab:
-# [randomized, deferred, hidden, [[from, to], ...]] with the world's display
-# names. Deferred, an entrance is known once reconnected (discovered); not
-# deferred, the tracker has them all. Worlds without er_pairings report none.
-def _ut_entrances(_t):
-    try:
-        from worlds.tracker import DeferredEntranceMode
-        _w = _t.get_current_world()
-        _pairs = list(getattr(_w, "er_pairings", None) or []) if _w is not None else []
-        if not _pairs: return [False, False, 0, []]
-        _deferred = (_t.enforce_deferred_connections != DeferredEntranceMode.disabled
-                     and bool(getattr(_w, "_deferred_entrance_targets", None)))
-        try:
-            import importlib
-            _pkg = type(_w).__module__.rsplit(".", 1)[0]
-            _friendly = importlib.import_module(_pkg + ".data").friendly_entrance_name
-        except Exception:
-            _friendly = lambda n: n
-        _mw, _pid = _t.multiworld, _t.player_id
-        _rows, _hidden = [], 0
-        for _src, _dst in _pairs:
-            if _deferred:
-                try: _known = _mw.get_entrance(_src, _pid).connected_region is not None
-                except Exception: _known = False
-                if not _known:
-                    _hidden += 1
-                    continue
-            _rows.append([_friendly(_src), _friendly(_dst)])
-        _rows.sort()
-        return [True, _deferred, _hidden, _rows]
-    except Exception:
-        import traceback; traceback.print_exc()
-        return None
-_ut_compute()
-`;
-

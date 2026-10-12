@@ -1,45 +1,34 @@
-// Imperative UI actions: step transitions, YAML/ROM drops, generation,
-// patching, session connect/disconnect. These mutate the reactive store
-// (state.js) and talk to the framework-agnostic lib/ modules.
+// Imperative UI actions: signing in, following the queue, preparing the ROM,
+// and running a turn (boot, connect, pause while disconnected, tear down when
+// it ends). These mutate the reactive store (state.js) and talk to the
+// framework-agnostic lib/ modules.
 
-import { unwrap } from "solid-js/store";
-import { app, setApp, setPageNotice, refreshSessions, refreshYamls, setTrackerInLogic, setTrackerGoMode, setTrackerStatus, setTrackerEntrances, trackerPrefs, setTrackerPrefs, setHints, setHintsStatus, setHintPoints, hintItemNames, setHintItemNames, setHintFeedback, setYamlCreatorOpen, setYamlEditTarget, setConnectOpen, romOverridePrefs, setVersionPick } from "./state.js";
-import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, ARTIFACTS_STORE, SAVE_STORE, STATE_STORE, YAML_STORE, MHOST_SAVE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
-import { isPatchName, readPatchManifest, extractAllZipEntries } from "./lib/zip.js";
-import { resolveWorldForPatch, latestWorlds, latestWorldForGame, bundledWorld, bundledWorldByDisplay, runtimeFor, type BundledWorld, type WorldResolution } from "./lib/apworld.js";
+import { app, setApp, setPageNotice, you, setYou, setPublicState, setClockOffset, setPlayStatus, setMeLoaded, setLoginUrl, setLiveConnected, setEndedNotice, setConnectOpen, prep, setPrep, romOverridePrefs } from "./state.js";
+import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, SAVE_STORE, STATE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
+import { checkPatch } from "./lib/apworld.js";
 import { buildOverrides, overridesHash } from "./lib/overrides.js";
-import { adoptLegacySave } from "./lib/saves.js";
 import { log, logOk, logErr, logWarn } from "./lib/log.js";
-import { db, idbGet, idbPut, idbDel, idbHas, setDbNoticeHandler } from "./lib/idb.js";
-import { loadSessions, saveSessions, recordSession as recordSessionPure, removeSession } from "./lib/sessions.js";
-import { recordYaml, renameYaml as renameYamlPure, removeYaml, sha256Hex, loadYamls } from "./lib/yamls.js";
-import { tryHostMultidata } from "./lib/host.js";
-import { apWorker, WorkerRestartedError } from "./lib/ap-worker.js";
+import { db, idbGet, idbPut, idbDel, idbKeys, setDbNoticeHandler } from "./lib/idb.js";
+import { apWorker, WorkerRestartedError, type ApState } from "./lib/ap-worker.js";
+import { api, ApiError, fetchPatch, openLive } from "./lib/api.js";
 import { bindGamepad } from "./lib/gamepad.js";
 import { bindController } from "./lib/controller.js";
 import { initPlayLayout } from "./lib/layout.js";
 import { bootEmulator, type EmulatorHandle } from "./lib/emulator.js";
 import { installBizHawkBridge } from "./lib/bizhawk.js";
+import type { ServerMessage, YouState, Credentials } from "../shared/protocol.js";
 
 // -----------------------------------------------------------------------------
-// step machine + history
+// step + session chip
 // -----------------------------------------------------------------------------
-export type Step = "options" | "generating" | "rom" | "patching" | "play";
+export type Step = "lobby" | "play";
 
-let _historyPushed = false;
 export function setStep(step: Step) {
   setApp("step", step);
-  // The connection popup only belongs to the play step; clear it on any
-  // transition so a lingering open state can't leak onto another step
-  // (PlayStep stays mounted — steps toggle via CSS, not unmount).
+  // The session popup only belongs to the play step; clear it on any
+  // transition so a lingering open state can't leak onto the lobby.
   if (step !== "play") setConnectOpen(false);
   if (window.__updateEmuMaxH) window.__updateEmuMaxH();
-  if (step !== "options" && !_historyPushed) {
-    history.pushState({ inApp: true }, "");
-    _historyPushed = true;
-  } else if (step === "options") {
-    _historyPushed = false;
-  }
 }
 
 export type SessionState = "idle" | "connecting" | "live" | "error";
@@ -47,54 +36,18 @@ export function setSessionState(state: SessionState, label?: string) {
   setApp("session", { state, label: label ?? state });
 }
 
-// Short-hand for element lookups. Typed as the caller expects — callers pass
-// the HTML element subtype they need, e.g. `$<HTMLInputElement>("#vol")`.
+// Short-hand for element lookups. Typed as the caller expects.
 function $<T extends HTMLElement = HTMLElement>(sel: string): T {
   return document.querySelector(sel) as T;
 }
 
-export function resetTransient() {
-  setApp({
-    seedId: null, artifacts: null, hosted: null, patchedRom: null,
-    yamlErr: null, runningApworld: null,
-    gen: { visible: false, status: "queued", elapsed: "0.0s", error: null, done: false },
-    rom: { progressText: null, error: null },
-  });
-  refreshSessions();
-  setStep("options");
-}
-
-// -----------------------------------------------------------------------------
-// resume + forget
-// -----------------------------------------------------------------------------
-export async function forgetSession(id: string) {
-  const { removed } = removeSession(id);
-  refreshSessions();
-  const dbc = await db();
-  if (dbc) {
-    idbDel(dbc, id, ROM_STORE).catch(() => {});
-    idbDel(dbc, id, ARTIFACTS_STORE).catch(() => {});
-    idbDel(dbc, id, MHOST_SAVE_STORE).catch(() => {});
-    idbDel(dbc, id, SAVE_STORE).catch(() => {});
-    idbDel(dbc, id, STATE_STORE).catch(() => {});
-    // A save the version-8 upgrade couldn't move still sits under the ROM hash
-    // (see adoptLegacySave). Drop it once no remaining session shares that hash.
-    const hash = removed?.romHash;
-    if (hash && hash !== id && !loadSessions().some((s: any) => s.romHash === hash)) {
-      idbDel(dbc, hash, SAVE_STORE).catch(() => {});
-      idbDel(dbc, hash, STATE_STORE).catch(() => {});
-    }
-  }
-}
-
-// IndexedDB upgrade trouble (see idb.ts). A blocked open goes on the home
-// pane, which is where it would otherwise just hang, and comes off again once
-// the open goes through (unless something replaced it meanwhile). Being
-// superseded is permanent for this page, so it gets the page-wide notice.
+// IndexedDB upgrade trouble (see idb.ts). Being superseded is permanent for
+// this page, so it gets the page-wide notice; a blocked open shows on the ROM
+// card, where it would otherwise just hang.
 const DB_BLOCKED_MSG = "another tab is still running an older version of this site — close it to finish updating your saved data";
 setDbNoticeHandler((notice) => {
-  if (notice === "blocked") { logErr(DB_BLOCKED_MSG); setApp("yamlErr", DB_BLOCKED_MSG); }
-  else if (notice === "unblocked") { if (app.yamlErr === DB_BLOCKED_MSG) setApp("yamlErr", null); }
+  if (notice === "blocked") { logErr(DB_BLOCKED_MSG); setApp("rom", "error", DB_BLOCKED_MSG); }
+  else if (notice === "unblocked") { if (app.rom.error === DB_BLOCKED_MSG) setApp("rom", "error", null); }
   else {
     const msg = "this site was updated in another tab — reload this page; it can no longer save";
     logErr(msg);
@@ -102,737 +55,202 @@ setDbNoticeHandler((notice) => {
   }
 });
 
-// One seed-opening flow at a time. Resume, import and using a saved YAML all
-// resolve a version or select a runtime (possibly restarting it) and set
-// app.seedId; two racing would fight over all of that. Each flow is awaited
-// to the end, generation and patching included. A second click while one is
-// running is dropped.
-let flowInFlight = false;
-// The "still busy" notice a dropped request leaves on the home pane. It stands
-// in for no error: the running flow's own failure replaces it (see flowErr),
-// and it is cleared when that flow settles.
-let busyNotice: string | null = null;
-let runningLabel = "";
-async function guardedFlow(label: string, fn: () => Promise<void>): Promise<void> {
-  if (flowInFlight) {
-    // On the home pane too: the click may have come from a dialog that has
-    // already closed, and a log line alone would look like nothing happened.
-    // Named after the flow that is running, not the one dropped. A blocked DB
-    // upgrade is why a flow hangs, so its message stays put.
-    const msg = `still ${runningLabel} — try again once it has finished`;
-    logWarn(msg);
-    if (app.yamlErr !== DB_BLOCKED_MSG) { busyNotice = msg; setApp("yamlErr", msg); }
-    return;
-  }
-  flowInFlight = true;
-  runningLabel = label;
-  try { await fn(); }
-  finally {
-    flowInFlight = false;
-    if (busyNotice && app.yamlErr === busyNotice) setApp("yamlErr", null);
-    busyNotice = null;
-  }
-}
+// -----------------------------------------------------------------------------
+// startup + server state
+// -----------------------------------------------------------------------------
+let closeLive: (() => void) | null = null;
 
-// A new flow clears the last one's error, but not the blocked-DB message: the
-// flow is about to wait on that same open, and the message is why.
-function clearFlowErr() {
-  if (app.yamlErr !== DB_BLOCKED_MSG) setApp("yamlErr", null);
-}
+export async function startApp() {
+  // Everyone gets the live state, signed in or not. While the socket is down
+  // the server can't tell us a session ended; the game connection itself is
+  // refused if it did.
+  closeLive = openLive(onServerMessage, setLiveConnected);
 
-// A flow's fallback error: keeps a more specific one already shown (from
-// selectWorlds, say), but not the busy notice.
-function flowErr(msg: string) {
-  setApp("yamlErr", (a) => (a && a !== busyNotice ? a : msg));
-}
-
-export function resumeSession(id: string) { return guardedFlow("opening a seed", () => resumeSessionFlow(id)); }
-
-async function resumeSessionFlow(id: string) {
-  const session = loadSessions().find((s: any) => s.id === id);
-  if (!session) return;
-  clearFlowErr();
-
-  const dbc = await db();
-  const cachedRom = dbc ? await idbGet<ArrayBuffer>(dbc, id, ROM_STORE).catch(() => null) : null;
-  const savedArtifacts = dbc ? await idbGet<Record<string, Uint8Array>>(dbc, id, ARTIFACTS_STORE).catch((err) => { logWarn(`read artifacts failed: ${err}`); return null; }) : null;
-  // Pick the apworld version this seed should run on now: the newest bundled
-  // one that can still take its patch. If that differs from the version the
-  // cached ROM was patched with — a compatible upgrade landed, or the recorded
-  // version is gone — the cache is stale and we re-patch. A session with no
-  // recorded worldVersion (pre-versioning) is matched by its display version.
-  const patchName = savedArtifacts ? Object.keys(savedArtifacts).find(isPatchName) : undefined;
-  const recorded: BundledWorld | null =
-    session.worldPackage && session.worldVersion ? bundledWorld(session.worldPackage, session.worldVersion)
-    : session.apworldVersion ? bundledWorldByDisplay(session.apworldVersion, session.game)
-    : null;
-  let target: BundledWorld | null = null;
-  let resolvedFromPatch = false;
-  let patchUnreadable = false;
-  if (patchName) {
-    try {
-      const prepared = await prepareRuntimeForPatch(savedArtifacts![patchName], { recorded, seedId: id });
-      if (prepared === "cancelled") return;
-      if (!prepared) {
-        // Definitive: incompatible or unsupported (already logged), or the
-        // runtime couldn't be switched (already surfaced).
-        flowErr(`can't resume ${id} — no bundled apworld can play this seed (see the log)`);
-        return;
-      }
-      target = prepared.world;
-      resolvedFromPatch = true;
-    } catch (err) {
-      // An unreadable cached patch shouldn't cost the seed: fall through to
-      // the recorded version and play the cached ROM as-is.
-      patchUnreadable = true;
-      logWarn(`couldn't read this seed's cached patch (${err.message || err}) — using its recorded apworld version`);
+  // Who we are. The server may be mid-restart: keep asking rather than
+  // showing a signed-out page to someone who isn't.
+  let me;
+  for (let delay = 2000; ; delay = Math.min(delay * 2, 30000)) {
+    try { me = await api.me(); break; }
+    catch (err: any) {
+      if (delay === 2000) logErr(`couldn't reach the server: ${err?.message || err} — retrying`);
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
-  if (!resolvedFromPatch) {
-    // No (readable) artifacts to re-resolve from: stay on the recorded version
-    // while it is still bundled, else the newest for the game (the cached ROM
-    // below is played as-is in that case anyway).
-    target = recorded ?? (session.game ? latestWorldForGame(session.game) : null);
-    if (target && !(await selectWorlds([target]))) return;
-  }
-  setApp("seedId", id);
-  setApp("runningApworld", null);
-  setApp("slotName", session.slot || "Player1");
-  setApp("hosted", session.hosted || null);
-  // Stale when the version to play on differs from the one the cached ROM was
-  // patched with. Sessions from before worldVersion was recorded carry only
-  // the display version; compare that rather than re-patching them for
-  // nothing.
-  const apworldStale = !target
-    || (session.worldVersion ? target.world_version !== session.worldVersion
-        : session.apworldVersion ? target.display_version !== session.apworldVersion
-        : true);
-  // The cached ROM was patched with whatever overrides were set at the time
-  // (tagged via overridesHash). If the current overrides differ, re-patch so
-  // resume reflects the latest choices rather than serving a stale ROM.
-  const currentOvHash = overridesHash(buildOverrides(romOverridePrefs()));
-  const overridesStale = (session.overridesHash || "") !== currentOvHash;
-  const stale = apworldStale || overridesStale;
-  if (cachedRom && cachedRom.byteLength === GB_ROM_SIZE && stale) {
-    if (apworldStale)
-      log(`apworld changed since this seed was patched (${session.apworldVersion || "untagged"} → ${target?.display_version ?? "unknown"}) — re-patching`);
-    else
-      log(`option overrides changed since this seed was patched — re-patching`);
-    // A re-patch changes the ROM bytes, and the savestate only applies to the
-    // exact ROM it was taken on, so the emulator will come up from the
-    // in-game save instead. Say so here, before it happens, rather than
-    // letting the fallback read as lost progress at boot.
-    const hasState = dbc ? await idbHas(dbc, id, STATE_STORE).catch(() => false) : false;
-    if (hasState)
-      log("the new ROM will resume from your last in-game save (the exact moment you left only applies to the previous ROM)");
-  }
-  if (cachedRom && cachedRom.byteLength === GB_ROM_SIZE && !stale) {
-    // A pre-versioning session that still matches: record the exact world so
-    // later resumes don't have to go through the display version again.
-    if (!session.worldVersion && target) {
-      recordSessionPure({ id, game: target.game, worldPackage: target.package, worldVersion: target.world_version });
-      refreshSessions();
+  setLoginUrl(me.loginUrl);
+  setMeLoaded(true);
+  void noteSavedRom();
+  // The live socket may already have said who we are, and more recently.
+  if (!liveYouSeen) applyYou(me.you);
+  const current = you();
+  // Signed out: we can't know whether a turn of ours is still running, so
+  // leave any local save alone until we do.
+  if (!current) return;
+  // Anything a previous session left behind goes, except the session that's
+  // still running (a reload mid-turn picks it back up).
+  void purgeLocalSessions(current.session?.id ?? null);
+}
+
+export async function signOut() {
+  markPlaysHere(null);
+  try { await api.logout(); } catch {}
+  closeLive?.();
+  location.reload();
+}
+
+// Set once the live socket has said who we are: from then on it's newer than
+// anything /api/me answered.
+let liveYouSeen = false;
+
+function onServerMessage(msg: ServerMessage) {
+  if (msg.type === "public") {
+    setClockOffset(msg.now - Date.now());
+    // The server moved to another seed under this open page: what was
+    // patched for the old one is useless now.
+    if (patchCache?.seed && patchCache.seed !== msg.state.seed && !playingId && !prepareInFlight) {
+      log("the server is running a new seed — your ROM will be patched again");
+      patchCache = null;
+      setApp("patchedRom", null);
+      if (prep().kind === "ready" || prep().kind === "error") resetPrep();
+      void maybePrepare();
     }
-    setApp("patchedRom", cachedRom);
-    setApp("runningApworld", target?.display_version ?? null);
-    if (savedArtifacts && Object.keys(savedArtifacts).length > 0) {
-      setApp("artifacts", savedArtifacts);
-    } else {
-      logWarn(`no cached artifacts for ${id} — download links will be empty, regenerate to restore them`);
-    }
-    setStep("play");
-    logOk(`resumed ${id} with cached ROM`);
-    await bootEmulatorAndUi();
-    return;
+    setPublicState(msg.state);
   }
-  const hasCachedRom = !!cachedRom && cachedRom.byteLength === GB_ROM_SIZE;
-  // No usable patched ROM yet (none cached, or it's stale) — if we still have
-  // the generation artifacts, re-patch: drop the user back into the ROM-upload
-  // step (or straight to patching if the vanilla ROM is already cached). Not
-  // when the cached patch is unreadable and a ROM is cached: the re-patch would
-  // fail on the same file, so play that ROM below instead.
-  if (savedArtifacts && Object.keys(savedArtifacts).length > 0 && !(patchUnreadable && hasCachedRom)) {
-    setApp("artifacts", savedArtifacts);
-    setApp("runningApworld", target?.display_version ?? null);
-    logOk(`resumed ${id} — need ROM to patch`);
-    await continueToRomFlow();
-    return;
-  }
-  // Re-patch isn't possible (the generation files were cleared, or the patch
-  // among them can't be read), but if the (stale) cached ROM is still here
-  // it's better to play that than to throw the seed away. This only happens on
-  // the stale path — a fresh cache was served above.
-  if (hasCachedRom) {
-    setApp("patchedRom", cachedRom);
-    // The ROM is the one patched earlier, so it is that version's content.
-    setApp("runningApworld", session.apworldVersion ?? null);
-    if (savedArtifacts && Object.keys(savedArtifacts).length > 0) setApp("artifacts", savedArtifacts);
-    const why = patchUnreadable ? "its cached patch can't be read" : "generation files were cleared";
-    logWarn(`couldn't re-patch ${id} (${why}) — playing the previously patched ROM as-is; ${overridesStale ? "new option overrides" : "the apworld update"} won't apply`);
-    setStep("play");
-    await bootEmulatorAndUi();
-    return;
-  }
-  const msg = `couldn't resume ${id} — the browser cleared this seed's cached files. Drop the YAML again to roll a new seed.`;
-  setApp("yamlErr", msg);
-  logErr(msg);
-}
-
-// -----------------------------------------------------------------------------
-// apworld version selection
-// -----------------------------------------------------------------------------
-// Tell the worker which world_version to boot per package. The worker only
-// honours this before Pyodide boots; once booted it can't swap worlds, and a
-// differing request comes back as needsRestart. Every seed switch from the
-// play step goes through a page reload (brand click, browser back), so that
-// case only arises on the home flow — a generate or import booted the runtime
-// on one version and the user then opened a seed needing another. Nothing in
-// the old runtime is worth keeping there, so restart it and re-select. Only a
-// live session refuses, since restarting under it would drop the connection.
-// Returns true when the selection is in effect on the runtime that will boot.
-async function selectWorlds(worlds: BundledWorld[]): Promise<boolean> {
-  const runtime = runtimeFor(worlds);
-  const { needsRestart, current } = apWorker.compareRuntime(runtime);
-  if (!needsRestart) { apWorker.setRuntime(runtime); return true; }
-  const describe = (ws: BundledWorld[] | undefined) => ws?.map((w) => `${w.game} ${w.display_version}`).join(", ") ?? "unknown";
-  const loaded = describe(current?.worlds), wanted = describe(worlds);
-  const fail = (msg: string) => { setApp("yamlErr", msg); setApp("rom", "error", msg); logErr(msg); return false; };
-  if (app.step === "play" || app.session.state === "live" || app.session.state === "connecting") {
-    return fail(`this seed needs ${wanted} but the runtime is running ${loaded} for the current session — reload the page, then open this seed first`);
-  }
-  log(`restarting the python runtime for ${wanted} (it was booted with ${loaded})`);
-  apWorker.setRuntime(runtime);
-  sessionWanted = false;
-  clearWorkerMirroredState();
-  try { await apWorker.restart(); }
-  catch (err) { return fail(`couldn't restart the python runtime for ${wanted} (${err.message || err}) — reload the page`); }
-  return true;
-}
-
-// Resolve the world a patch needs, fall back where allowed, and make sure the
-// runtime that boots next is built from it. Null means no usable world (logged
-// and surfaced already); a thrown error means the patch couldn't be read.
-// Import and resume prepare before hosting; runPatch runs later in the same
-// flow and reuses that answer instead of resolving (and possibly asking) again.
-let preparedForSeed: { seedId: string; prepared: Prepared } | null = null;
-async function prepareRuntimeForPatch(
-  patchBytes: Uint8Array,
-  opts: { recorded?: BundledWorld | null; seedId?: string | null } = {},
-): Promise<Resolved> {
-  const prepared = await resolveOrFallback(await resolveWorldForPatch(patchBytes), opts.recorded ?? null);
-  if (!prepared || prepared === "cancelled") return prepared;
-  if (!(await selectWorlds([prepared.world]))) return null;
-  const seedId = opts.seedId ?? app.seedId;
-  if (seedId) preparedForSeed = { seedId, prepared };
-  return prepared;
-}
-
-// Turn a resolution into the world to use, logging why. An unknown stable
-// patch (basepatch matches nothing bundled) can't be checked for
-// compatibility: with one stable version bundled there is nothing to choose,
-// so try it; with several, ask the user which one generated the seed. The
-// worker's post-patch ROM checksum check is the safety net for a wrong guess.
-// Incompatible and unsupported patches have no usable world and return null.
-type Prepared = { world: BundledWorld; generator: string | null };
-// "cancelled" means the user dismissed the version picker: not an error, and
-// nothing to report beyond the log line.
-type Resolved = Prepared | "cancelled" | null;
-// `recorded` is the world a session already played this seed on: for an
-// unidentifiable stable patch it is a better answer than asking again.
-async function resolveOrFallback(res: WorldResolution, recorded: BundledWorld | null = null): Promise<Resolved> {
-  switch (res.kind) {
-    case "resolved":
-      if (res.upgraded) log(`apworld: patch made with ${res.generator}, playing on ${res.world.display_version} (compatible)`);
-      else log(`apworld: ${res.world.game} ${res.world.display_version}`);
-      return { world: res.world, generator: res.generator };
-    case "unknown": {
-      const again = recorded && res.candidates.find((w) => w.package === recorded.package && w.world_version === recorded.world_version);
-      if (again) {
-        log(`apworld: ${again.game} ${again.display_version} (as before — this patch's generator can't be identified)`);
-        return { world: again, generator: null };
-      }
-      if (res.candidates.length <= 1) {
-        const fallback = latestWorldForGame(res.game);
-        logWarn(`${res.reason}; trying the only bundled version (${fallback?.display_version ?? "none"})`);
-        return fallback ? { world: fallback, generator: null } : null;
-      }
-      logWarn(`${res.reason}; asking which bundled version to use`);
-      const world = await new Promise<BundledWorld | null>((resolve) =>
-        // Only one question can be up; a second flow racing in cancels the
-        // first rather than leaving its await orphaned.
-        setVersionPick((prev) => { prev?.resolve(null); return { game: res.game, reason: res.reason, candidates: res.candidates, resolve }; }));
-      if (!world) { log("no apworld version chosen — nothing opened"); return "cancelled"; }
-      log(`apworld: ${world.game} ${world.display_version} (chosen)`);
-      return { world, generator: null };
-    }
-    case "incompatible":
-    case "unsupported":
-      logErr(res.reason);
-      return null;
-  }
-}
-
-// -----------------------------------------------------------------------------
-// hosting
-// -----------------------------------------------------------------------------
-// Last-ditch flush before tab close. The in-worker async saver runs every 5s,
-// but a refresh in the gap between ticks would lose the very latest activity.
-// `pagehide` fires before unload (and before the worker is killed), giving us
-// one chance to commit. The fire-and-forget postMessage will be processed by
-// the worker, which writes to IDB synchronously enough to survive unload.
-if (typeof window !== "undefined") {
-  window.addEventListener("pagehide", () => {
-    if (app.hosted?.kind === "loopback") {
-      try { apWorker.hostFlush(); } catch {}
-    }
-  });
-}
-type Hosted =
-  | { kind: "loopback"; ws_url: string; host: null; port: null; room_url: null }
-  | { kind: "remote";   ws_url: string; host: string; port: number; room_url: string | null };
-
-// Apply the user's host preference to a freshly-produced multidata blob.
-// "local"  → run MultiServer.py inside Pyodide; returns a loopback:// URI.
-// "remote" → upload to archipelago.gg via the Cloudflare Worker.
-// "off"    → null (user hosts externally).
-async function hostMultidata(multidata: Uint8Array, status?: (label: string) => void): Promise<Hosted | null> {
-  if (app.hostPref === "off") {
-    log("hosting disabled — the multidata is downloadable from the results card");
-    return null;
-  }
-  if (app.hostPref === "local") {
-    status?.("hosting in this tab…");
-    try {
-      // .slice() so the worker can transfer ownership without detaching the
-      // copy that's still living in app.artifacts (used by download links).
-      const res = await apWorker.host(app.seedId || "", multidata.slice());
-      return { kind: "loopback", ws_url: res.out.ws_url, host: null, port: null, room_url: null };
-    } catch (err: any) {
-      logErr(`in-browser host failed: ${err?.message || err}`);
-      return null;
+  else if (msg.type === "you") { liveYouSeen = true; applyYou(msg.you); }
+  else if (msg.type === "session-ended") {
+    if (msg.sessionId === playingId || msg.sessionId === you()?.session?.id) {
+      setEndedNotice({ reason: msg.reason, detail: msg.detail });
+      if (playingId) void endPlay(`session ended: ${msg.reason}`);
+      else forgetEndedTurn();
     }
   }
-  status?.("hosting on archipelago.gg…");
-  const remote = await tryHostMultidata(multidata);
-  return remote ? { kind: "remote", ...remote } : null;
 }
 
-// -----------------------------------------------------------------------------
-// generation
-// -----------------------------------------------------------------------------
-async function runGeneration(yamlText: string) {
-  // Generation always runs on the newest bundled apworlds. The generating
-  // pane is already up and shows only gen.error, so surface a failure there.
-  if (!(await selectWorlds(latestWorlds()))) {
-    setApp("gen", { visible: false, done: false, error: app.yamlErr || "couldn't prepare the python runtime — reload the page" });
-    return;
-  }
-  const start = performance.now();
-  setApp("gen", { visible: true, status: "starting", elapsed: "0.0s", error: null, done: false });
-  const elapsedTimer = setInterval(
-    () => setApp("gen", "elapsed", `${((performance.now()-start)/1000).toFixed(1)}s`),
-    100,
-  );
+// The session applyYou last started play for.
+let autoStarted: string | null = null;
 
-  let artifacts;
+// Which turn this browser plays. Only the browser that started a turn (or
+// took it over) joins it on its own; elsewhere the lobby offers to play
+// there instead, rather than two devices fighting over the connection.
+// The session id lives in localStorage (any tab of this browser may resume
+// it after a reload; the play lock keeps that to one). "This tab just clicked
+// start" lives in sessionStorage, so of several open tabs only that one
+// picks the new turn up.
+const PLAYING_KEY = "yogos-playing";
+const STARTING_KEY = "yogos-starting";
+// "Starting" is this user's, and recent: one left behind by a failed request
+// (or another account in this tab) mustn't claim a turn started elsewhere.
+const STARTING_FOR_MS = 10 * 60 * 1000;
+function startingHere(): boolean {
   try {
-    const res = await apWorker.generate(yamlText, (phase) => {
-      setApp("gen", "status", PHASE_LABELS[phase] || phase);
-      log("gen: " + phase);
-    });
-    artifacts = res.out.artifacts;
-  } catch (err) {
-    clearInterval(elapsedTimer);
-    setApp("gen", { visible: false, error: err.message || String(err) });
-    logErr(`generation failed: ${err.message || err}`);
-    return;
-  }
-
-  setApp("artifacts", artifacts);
-  logOk(`generated ${Object.keys(artifacts).length} artifacts locally`);
-
-  const multiName = Object.keys(artifacts).find(n => n.endsWith(".archipelago"));
-  const hosted = multiName ? await hostMultidata(artifacts[multiName], (label) => setApp("gen", "status", label)) : null;
-  setApp("hosted", hosted);
-
-  clearInterval(elapsedTimer);
-  setApp("gen", { visible: false, status: hosted ? "ready · hosted" : "ready", done: true });
-  if (hosted?.kind === "loopback") logOk(`self-hosted in this tab`);
-  else if (hosted?.kind === "remote") logOk(`hosted on ${hosted.host}:${hosted.port}`);
-  else log("no host (skipped)");
-
-  // Persist artifacts + record the session now so a reload before
-  // patching can still resume from the ROM step.
-  if (app.seedId) {
-    recordSessionPure({
-      id: app.seedId,
-      slot: app.slotName,
-      hosted,
-      romCached: false,
-    });
-    refreshSessions();
-    const dbc = await db();
-    if (dbc) {
-      try {
-        await idbPut(dbc, app.seedId, unwrap(artifacts), ARTIFACTS_STORE);
-      } catch (err) {
-        logWarn("cache artifacts failed: " + err);
-      }
-    }
-  }
+    const mark = JSON.parse(sessionStorage.getItem(STARTING_KEY) || "null");
+    return !!mark && mark.user === you()?.user.id && Date.now() - mark.at < STARTING_FOR_MS;
+  } catch { return false; }
 }
-
-// -----------------------------------------------------------------------------
-// rom + patch
-// -----------------------------------------------------------------------------
-// Continue → Play (and the ROM pane) run as a flow, so a double click or a
-// second drop can't start a second patch-and-boot over the first.
-export function continueToRom() { return guardedFlow("patching", continueToRomFlow); }
-export function handleRomDrop(f: File) { return guardedFlow("patching", () => handleRomDropFlow(f)); }
-
-async function continueToRomFlow() {
-  // An error from an earlier seed's attempt (a failed runtime restart, say)
-  // mustn't greet this one on the ROM pane.
-  setApp("rom", "error", null);
-  const dbc = await db();
-  const cached = dbc ? await idbGet(dbc, "rom", VANILLA_STORE).catch(() => null) : null;
-  if (cached && cached.byteLength === GB_ROM_SIZE) {
-    log("using saved vanilla ROM from this browser");
-    await runPatch(new Uint8Array(cached), "cached");
-    return;
-  }
-  setStep("rom");
+// The turn this browser plays, with the device claim it got for it. It only
+// resumes by itself while that claim is still the one holding the turn: a
+// device the turn moved away from (while its page wasn't running to hear) must
+// not take it back on its next load.
+function playMark(): { session: string; holder: string | null } | null {
+  try { return JSON.parse(localStorage.getItem(PLAYING_KEY) || "null"); }
+  catch { return null; }
 }
-
-async function runPatch(romBytes: Uint8Array, sourceLabel: string = "uploaded") {
-  setApp("rom", { progressText: "reading ROM…", error: null });
-  setStep("patching");
-  log(`${sourceLabel} ROM (${romBytes.length} bytes); patching locally`);
-
-  const patchName = Object.keys(app.artifacts || {}).find(isPatchName);
-  if (!patchName) {
-    setApp("rom", { progressText: null, error: "no .apcrystal on this session — regenerate" });
-    logErr("no .apcrystal on this session — regenerate");
-    return;
-  }
-  const patchBytes = app.artifacts[patchName].slice();
-  const vanillaBuf = romBytes.slice().buffer;
-
-  // Resolve the apworld version this patch runs on and tag the cached ROM with
-  // it, so resume can re-patch when a newer compatible version lands instead
-  // of serving a stale ROM (see resumeSession).
-  let prepared: Resolved = null;
-  let resolveErr: string | null = null;
-  if (preparedForSeed && preparedForSeed.seedId === app.seedId) {
-    prepared = preparedForSeed.prepared;
-    // The runtime may have been restarted since (a crash); make sure the one
-    // that boots next still carries this world.
-    if (!(await selectWorlds([prepared.world]))) prepared = null;
-  } else {
-    try { prepared = await prepareRuntimeForPatch(app.artifacts[patchName]); }
-    catch (e) { resolveErr = `couldn't read this patch: ${e.message || e}`; logErr(resolveErr); }
-  }
-  if (prepared === "cancelled") { setApp("rom", "progressText", null); setStep("rom"); return; }
-  if (!prepared) {
-    setApp("rom", (r) => ({ progressText: null, error: resolveErr ?? r.error ?? "no bundled apworld can patch this seed — see the log" }));
-    return;
-  }
-  const { world, generator } = prepared;
-  setApp("runningApworld", world.display_version);
-
-  // Patch-time option overrides (applied to this player's ROM only). Tag the
-  // cached ROM with their hash too, so changing an override forces a re-patch
-  // on resume rather than serving a ROM patched with the old overrides.
-  const overrides = buildOverrides(romOverridePrefs());
-  const ovHash = overridesHash(overrides);
-  if (Object.keys(overrides).length > 0) log(`applying ${Object.keys(overrides).length} option override(s)`);
-
+// Unreadable storage counts as not here: the lobby offers to play here, rather
+// than every load of such a page taking the turn from wherever it's played.
+function playsHere(sessionId: string, currentHolder: string | null): boolean {
+  const mark = playMark();
+  const mine = !!mark && mark.session === sessionId && (currentHolder === null || mark.holder === currentHolder);
+  return mine || startingHere();
+}
+function markPlaysHere(value: string | null, holder: string | null = null) {
   try {
-    const { out } = await apWorker.patch(romBytes, patchBytes, overrides, (phase) => {
-      setApp("rom", "progressText", PHASE_LABELS[phase] || phase);
-      log("patcher: " + phase);
-    });
-    const patched: Uint8Array = out;
-    setApp("rom", "progressText", "booting emulator…");
-    if (patched.byteLength !== GB_ROM_SIZE) {
-      const msg = `patched ROM was ${patched.byteLength} bytes, expected ${GB_ROM_SIZE}`;
-      setApp("rom", { progressText: null, error: msg });
-      logErr(msg);
-      return;
+    sessionStorage.removeItem(STARTING_KEY);
+    if (value === "starting") sessionStorage.setItem(STARTING_KEY, JSON.stringify({ user: you()?.user.id, at: Date.now() }));
+    else if (value) {
+      // Without a new claim, keep the one this browser already has for it.
+      const prev = JSON.parse(localStorage.getItem(PLAYING_KEY) || "null");
+      const keep = !holder && prev?.session === value ? prev.holder : holder;
+      localStorage.setItem(PLAYING_KEY, JSON.stringify({ session: value, holder: keep }));
     }
-    setApp("patchedRom", patched.buffer);
-    logOk(`patched locally (${patched.byteLength} bytes)`);
-    // Cache first, then tag the session: the version and overrides tags
-    // describe the cached ROM, so they only move once the new ROM has landed.
-    // Tagging first would, on a failed write or a tab close in between, mark
-    // the previous version's ROM as current and it would never be re-patched.
-    let romCached = false;
-    const dbc = await db();
-    if (dbc) {
-      // Await so we don't race a tab close; without this, a quick reload
-      // after a fresh patch can resume with a cached ROM but no artifacts,
-      // leaving the play screen without download links.
-      await Promise.all([
-        idbPut(dbc, app.seedId, patched.buffer.slice(0), ROM_STORE)
-          .then(() => { romCached = true; })
-          .catch(err => logWarn("cache patched rom failed: " + err)),
-        idbPut(dbc, "rom", vanillaBuf, VANILLA_STORE).catch(err => logWarn("cache vanilla rom failed: " + err)),
-        app.artifacts
-          // Solid store values are proxies; hand IDB the raw object so
-          // structured-clone doesn't trip on proxy internals.
-          ? idbPut(dbc, app.seedId, unwrap(app.artifacts), ARTIFACTS_STORE).catch(err => logWarn("cache artifacts failed: " + err))
-          : Promise.resolve(),
-      ]);
-    }
-    recordSessionPure({
-      id: app.seedId,
-      slot: app.slotName,
-      hosted: app.hosted,
-      game: world.game,
-      // The apworld that generated the seed, when the patch says (prerelease
-      // manifests do; stable is inferred from the basepatch). Shown on the
-      // session card when it differs from what the seed now plays on.
-      generatorVersion: generator,
-      ...(romCached ? {
-        romCached: true,
-        worldPackage: world.package,
-        worldVersion: world.world_version,
-        apworldVersion: world.display_version,
-        overridesHash: ovHash,
-      } : {}),
-    });
-    refreshSessions();
-    setStep("play");
-    setApp("rom", "progressText", null);
-    await bootEmulatorAndUi();
-  } catch (err) {
-    const msg = `patch failed: ${err.message || err}`;
-    setApp("rom", { progressText: null, error: msg });
-    logErr(msg);
+    else localStorage.removeItem(PLAYING_KEY);
+  } catch {}
+}
+
+function applyYou(next: YouState | null) {
+  const prev = you();
+  setYou(next);
+  const session = next?.session ?? null;
+  // Each session starts playing here once; if that fails (another tab has the
+  // game, the ROM wouldn't patch) the lobby offers a retry rather than every
+  // later push trying again.
+  if (session && session.id !== playingId && session.id !== autoStarted && playsHere(session.id, session.holder)) {
+    autoStarted = session.id;
+    // Resuming by itself: only while no other device has claimed it since
+    // (checked again by the server when this one claims, after booting).
+    const mark = playMark();
+    void beginPlay(session.id, session.credentials, mark?.session === session.id ? mark.holder ?? null : null);
+  } else if (!session && playingId) {
+    // The server no longer has a session for us: it ended while we weren't
+    // listening (or the session-ended push raced this update).
+    void endPlay("session no longer active on the server");
+  } else if (!session && prev?.session) {
+    // It ended while this tab wasn't playing it (played elsewhere, or play
+    // couldn't start here): its ROM and any save here go all the same.
+    forgetEndedTurn();
   }
+  // The attempt just got used up, or a ban landed: nothing left to prepare.
+  if (prev && next && !prev.attemptUsed && next.attemptUsed && !session) resetPrep();
+  // In the queue or offered a turn: get the ROM ready (a no-op when it is).
+  if (next && (next.inQueue || next.offer)) void maybePrepare();
+}
+
+// Whether this user can still play, so preparing a ROM is worth the download.
+function canStillPlay(): boolean {
+  const y = you();
+  return !!y && !y.attemptUsed && !y.banned;
 }
 
 // -----------------------------------------------------------------------------
-// yaml / rom drops
+// queue
 // -----------------------------------------------------------------------------
-function extractSlotNameFromYaml(text: string): string | null {
-  const m = text.match(/^name:\s*(.+)\s*$/m);
-  if (!m) return null;
-  return m[1].trim().replace(/^["']|["']$/g, "").replace(/\s*#.*$/, "");
+export async function joinQueue() {
+  try { await api.joinQueue(); }
+  catch (err: any) { logErr(err?.message || String(err)); }
 }
 
-export function handleYamlDrop(f: File) { return guardedFlow("opening a file", () => handleYamlDropFlow(f)); }
-
-async function handleYamlDropFlow(f: File) {
-  clearFlowErr();
-  log(`read ${f.name} (${f.size} bytes)`);
-  setApp("seedId", (crypto.randomUUID?.() || Math.random().toString(36).slice(2)).replace(/-/g, "").slice(0, 12));
-  setApp("runningApworld", null);
-
-  const name = f.name.toLowerCase();
-  const isPatch = isPatchName(name);
-  const isZip   = name.endsWith(".zip");
-
-  if (isPatch || isZip) {
-    let bytes;
-    try { bytes = new Uint8Array(await f.arrayBuffer()); }
-    catch (e) { setApp("yamlErr", `could not read file: ${e}`); logErr(`could not read file: ${e}`); return; }
-
-    let artifacts: Record<string, Uint8Array> = {};
-    if (isPatch) {
-      artifacts[f.name] = bytes;
-    } else {
-      try { artifacts = await extractAllZipEntries(bytes); }
-      catch (e) { setApp("yamlErr", `could not read zip: ${e}`); logErr(`could not read zip: ${e}`); return; }
-    }
-    const patchName = Object.keys(artifacts).find(isPatchName);
-    if (!patchName) { setApp("yamlErr", `no .apcrystal found inside ${f.name}`); logErr(`no .apcrystal found inside ${f.name}`); return; }
-
-    let manifest: Awaited<ReturnType<typeof readPatchManifest>> = {};
-    try { manifest = await readPatchManifest(artifacts[patchName]); }
-    catch (e) { logWarn(`couldn't read archipelago.json: ${e.message || e}`); }
-    if (manifest.player_name) {
-      setApp("slotName", manifest.player_name);
-      log(`slot from patch: ${manifest.player_name}`);
-    }
-
-    // Pick and select the apworld version before anything boots the runtime —
-    // hosting the multidata below runs MultiServer in the same interpreter.
-    let prepared: Resolved = null;
-    try { prepared = await prepareRuntimeForPatch(artifacts[patchName]); }
-    catch (e) { setApp("yamlErr", `couldn't read ${f.name}: ${e.message || e}`); logErr(`couldn't read ${f.name}: ${e.message || e}`); return; }
-    if (prepared === "cancelled") return;
-    if (!prepared) { flowErr(`no bundled apworld can play ${f.name} — see the log`); return; }
-
-    const multiName = Object.keys(artifacts).find(n => n.toLowerCase().endsWith(".archipelago"));
-    let hosted = null;
-    if (multiName && app.hostPref !== "off") {
-      setStep("generating");
-      const initialStatus = app.hostPref === "local" ? "hosting in this tab…" : "hosting on archipelago.gg…";
-      setApp("gen", { visible: true, status: initialStatus, elapsed: "0.0s", error: null, done: false });
-      hosted = await hostMultidata(artifacts[multiName], (label) => setApp("gen", "status", label));
-      setApp("gen", "visible", false);
-    } else if (!multiName && app.hostPref !== "off") {
-      logWarn("hosting requested but no .archipelago was found — skip to ROM");
-    }
-    const fromPatch = !hosted && manifest.server ? parseHostPort(manifest.server) : null;
-    if (fromPatch) {
-      const { host: h, port: p } = fromPatch;
-      hosted = { kind: "remote", host: h, port: p, ws_url: `wss://${h}:${p}`, room_url: null };
-      log(`server from patch: ${h}:${p}`);
-    }
-    setApp("artifacts", artifacts);
-    setApp("hosted", hosted);
-    logOk(`using uploaded ${isPatch ? "patch" : "zip"} — skipping generation` + (hosted ? "" : "; no host"));
-    await continueToRomFlow();
-    return;
-  }
-
-  if (!(name.endsWith(".yaml") || name.endsWith(".yml"))) {
-    setApp("yamlErr", `unsupported file type: ${f.name}`);
-    logErr(`unsupported file type: ${f.name}`);
-    return;
-  }
-
-  let text;
-  try { text = await f.text(); }
-  catch (e) { setApp("yamlErr", `could not read file: ${e}`); logErr(`could not read file: ${e}`); return; }
-  const slot = extractSlotNameFromYaml(text);
-  if (slot) { setApp("slotName", slot); log(`parsed slot name: ${slot}`); }
-
-  await saveYamlToLibrary(text, f.name, slot);
-
-  setStep("generating");
-  await runGeneration(text);
+export async function leaveQueue() {
+  try { await api.leaveQueue(); }
+  catch (err: any) { logErr(err?.message || String(err)); }
 }
 
-// Resolves whether the YAML (text and entry) was saved.
-async function saveYamlToLibrary(text: string, filename: string, slot: string | null): Promise<boolean> {
-  try {
-    const hash = await sha256Hex(text);
-    const existing = loadYamls().find(y => y.hash === hash);
-    const dbc = await db();
-    // No entry without its text: the list is shared with other tabs, which
-    // would find the entry and forget it as missing.
-    if (!dbc) { logWarn("could not save YAML to library: storage unavailable"); return false; }
-    try { await idbPut(dbc, hash, { text }, YAML_STORE); }
-    catch (err) { logWarn(`could not save YAML to library: ${err}`); return false; }
-    recordYaml({
-      hash,
-      name: existing?.name ?? filename,
-      slotName: slot,
-      size: text.length,
-      savedAt: Date.now(),
-    });
-    refreshYamls();
-    if (existing) log(`YAML already saved as "${existing.name}" — timestamp refreshed`);
-    else logOk(`saved YAML "${filename}" to library`);
-    return true;
-  } catch (err: any) {
-    logWarn(`could not save YAML to library: ${err.message || err}`);
-    return false;
+// Take the offered turn. The server answers by pushing the session, which
+// starts play (applyYou → beginPlay).
+export async function startTurn() {
+  if (prep().kind !== "ready") { logWarn("your ROM isn't ready yet"); return; }
+  markPlaysHere("starting");
+  try { await api.startTurn(); }
+  catch (err: any) {
+    // The server said no: this tab isn't starting anything. A lost reply is
+    // different: the session may exist after all, and this tab should still
+    // be the one that picks it up, so the marker stays.
+    if (err instanceof ApiError) { try { sessionStorage.removeItem(STARTING_KEY); } catch {} }
+    logErr(err?.message || String(err));
   }
 }
 
-export async function fetchSavedYamlText(hash: string): Promise<string | null> {
-  const dbc = await db();
-  if (!dbc) return null;
-  const stored = await idbGet<{ text: string }>(dbc, hash, YAML_STORE).catch(() => null);
-  return stored?.text ?? null;
+export async function giveUp() {
+  if (!confirm("End your session now? You won't be able to play again.")) return;
+  try { await api.giveUp(); }
+  catch (err: any) { logErr(err?.message || String(err)); }
 }
 
-export function useSavedYaml(hash: string) { return guardedFlow("opening a seed", () => useSavedYamlFlow(hash)); }
+// -----------------------------------------------------------------------------
+// ROM preparation
+// -----------------------------------------------------------------------------
+// The patch is the same for everyone, so it is fetched once per page.
+let patchCache: { name: string; bytes: Uint8Array; seed: string | null } | null = null;
+let prepareInFlight: Promise<boolean> | null = null;
 
-// Generate from YAML text in hand (the creator's "save & use"), so a failed
-// library save doesn't cost what the user just wrote.
-export function useYamlText(text: string) { return guardedFlow("opening a seed", () => generateFromYaml(text)); }
-
-async function useSavedYamlFlow(hash: string) {
-  const dbc = await db();
-  // Only a read that succeeded and found nothing means the text is gone; an
-  // unavailable or failing DB must not cost the library entry (the list lives
-  // in localStorage, shared with every tab).
-  let stored: { text: string } | undefined;
-  try {
-    if (!dbc) throw new Error("storage unavailable");
-    stored = await idbGet<{ text: string }>(dbc, hash, YAML_STORE);
-  } catch (err: any) {
-    const msg = `couldn't read the saved YAML: ${err.message || err}`;
-    logErr(msg);
-    setApp("yamlErr", msg);
-    return;
-  }
-  if (!stored?.text) {
-    const msg = "that saved YAML's text is missing from storage — removed it from the library";
-    logErr(msg);
-    setApp("yamlErr", msg);
-    forgetSavedYaml(hash);
-    return;
-  }
-  await generateFromYaml(stored.text);
-}
-
-async function generateFromYaml(text: string) {
-  clearFlowErr();
-  setApp("seedId", (crypto.randomUUID?.() || Math.random().toString(36).slice(2)).replace(/-/g, "").slice(0, 12));
-  setApp("runningApworld", null);
-  const slot = extractSlotNameFromYaml(text);
-  if (slot) { setApp("slotName", slot); log(`parsed slot name: ${slot}`); }
-  setStep("generating");
-  await runGeneration(text);
-}
-
-// Save a YAML built by the in-app creation UI. Returns the content hash so
-// callers can immediately hand it to `useSavedYaml`.
-// Both resolve whether the save landed.
-export async function saveCreatedYaml(text: string, displayName: string): Promise<boolean> {
-  clearFlowErr();
-  const slot = extractSlotNameFromYaml(text);
-  return saveYamlToLibrary(text, displayName, slot);
-}
-
-// Open the YAML creator in raw-edit mode with the saved YAML loaded.
-export async function openYamlForEdit(hash: string) {
-  const text = await fetchSavedYamlText(hash);
-  if (text == null) {
-    logErr("YAML text missing from storage");
-    return;
-  }
-  const entry = loadYamls().find(y => y.hash === hash);
-  setYamlEditTarget({ hash, text, displayName: entry?.name ?? "edited.yaml" });
-  setYamlCreatorOpen(true);
-}
-
-// Save an edited YAML. If the text changed (different hash) the old entry is
-// forgotten so the library doesn't pile up versions, unless the form couldn't
-// represent all of the original (keepOriginal), which then stays alongside.
-export async function saveEditedYaml(text: string, displayName: string, oldHash: string, keepOriginal = false): Promise<boolean> {
-  clearFlowErr();
-  const slot = extractSlotNameFromYaml(text);
-  // Replace the old entry only once the new one is safely stored.
-  if (!(await saveYamlToLibrary(text, displayName, slot))) return false;
-  const newHash = await sha256Hex(text);
-  if (newHash !== oldHash && !keepOriginal) {
-    await forgetSavedYaml(oldHash);
-  }
-  return true;
-}
-
-export function renameSavedYaml(hash: string, newName: string) {
-  const trimmed = newName.trim();
-  if (!trimmed) return;
-  renameYamlPure(hash, trimmed);
-  refreshYamls();
-}
-
-export async function forgetSavedYaml(hash: string) {
-  removeYaml(hash);
-  refreshYamls();
-  const dbc = await db();
-  if (dbc) idbDel(dbc, hash, YAML_STORE).catch(() => {});
-}
-
-async function handleRomDropFlow(f: File) {
+export async function handleRomDrop(f: File) {
   setApp("rom", "error", null);
   if (f.size !== GB_ROM_SIZE) {
     const msg = `expected 2,097,152 bytes, got ${f.size.toLocaleString()} — is this the right file?`;
@@ -840,7 +258,7 @@ async function handleRomDropFlow(f: File) {
     logErr(msg);
     return;
   }
-  let romBuf;
+  let romBuf: Uint8Array;
   try { romBuf = new Uint8Array(await f.arrayBuffer()); }
   catch (e) { setApp("rom", "error", `read failed: ${e}`); logErr(`read failed: ${e}`); return; }
 
@@ -854,32 +272,139 @@ async function handleRomDropFlow(f: File) {
     return;
   }
   log(`vanilla ROM verified: ${label}`);
+  const dbc = await db();
+  if (dbc) await idbPut(dbc, "rom", romBuf.slice().buffer, VANILLA_STORE).catch((err) => logWarn("cache vanilla rom failed: " + err));
+  vanillaInMemory = romBuf;
+  noVanilla = false;
+  // A new ROM replaces anything patched from the old one.
+  setApp("patchedRom", null);
+  setPrep({ kind: "saved" });
+  await maybePrepare();
+}
 
-  await runPatch(romBuf, "uploaded");
+// The vanilla ROM, from this drop or from an earlier visit.
+let vanillaInMemory: Uint8Array | null = null;
+// This browser has been checked and has no ROM: don't ask IndexedDB again on
+// every push. Cleared when one is dropped.
+let noVanilla = false;
+async function loadVanilla(): Promise<Uint8Array | null> {
+  if (vanillaInMemory) return vanillaInMemory;
+  if (noVanilla) return null;
+  const dbc = await db();
+  const cached = dbc ? await idbGet<ArrayBuffer>(dbc, "rom", VANILLA_STORE).catch(() => null) : null;
+  if (cached && cached.byteLength === GB_ROM_SIZE) vanillaInMemory = new Uint8Array(cached);
+  else if (dbc) noVanilla = true;
+  return vanillaInMemory;
+}
+
+// Back to the idle ROM state: saved if this browser has a vanilla ROM.
+function resetPrep() {
+  setPrep(vanillaInMemory ? { kind: "saved" } : { kind: "need-rom" });
+}
+
+// Prepare in the background once there's a ROM to do it with. Only for
+// players who are queued or offered a turn: a spectator's visit shouldn't
+// boot the runtime and patch a ROM nobody will play.
+async function maybePrepare() {
+  const y = you();
+  if (!canStillPlay() || !y || !(y.inQueue || y.offer)) return;
+  const kind = prep().kind;
+  if (kind !== "need-rom" && kind !== "saved") return;
+  if (await loadVanilla()) await prepareRom();
+}
+
+// On load: a ROM already in this browser shows as saved rather than asked for.
+export async function noteSavedRom() {
+  if (prep().kind !== "need-rom") return;
+  // Re-checked after the read: a prepare may have started meanwhile.
+  if (await loadVanilla() && prep().kind === "need-rom") setPrep({ kind: "saved" });
+}
+
+// Boot the runtime, fetch the patch and patch the ROM with the current option
+// overrides. Resolves whether a patched ROM is ready.
+export function prepareRom(): Promise<boolean> {
+  if (!prepareInFlight) {
+    prepareInFlight = prepareRomNow().finally(() => { prepareInFlight = null; });
+  }
+  return prepareInFlight;
+}
+
+async function prepareRomNow(): Promise<boolean> {
+  const vanilla = await loadVanilla();
+  if (!vanilla) { setPrep({ kind: "need-rom" }); return false; }
+  const status = (text: string) => setPrep({ kind: "working", text });
+  try {
+    if (!patchCache) {
+      status("downloading the patch…");
+      patchCache = await fetchPatch();
+      log(`patch: ${patchCache.name}`);
+    }
+    // This prepare's patch, whatever happens to the cache meanwhile (a seed
+    // change drops it).
+    const patch = patchCache;
+    const check = await checkPatch(patch.bytes);
+    if ("reason" in check) throw new Error(check.reason);
+    setApp("runningApworld", check.world.display_version);
+    log(`apworld: ${check.world.game} ${check.world.display_version}`);
+
+    const overrides = buildOverrides(romOverridePrefs());
+    const ovHash = overridesHash(overrides);
+    if (Object.keys(overrides).length > 0) log(`applying ${Object.keys(overrides).length} option override(s)`);
+    status("starting the patcher…");
+    const { out } = await apWorker.patch(vanilla.slice(), patch.bytes.slice(), overrides, (phase) => {
+      status(PHASE_LABELS[phase] || phase);
+    });
+    const patched: Uint8Array = out;
+    if (patched.byteLength !== GB_ROM_SIZE) throw new Error(`patched ROM was ${patched.byteLength} bytes, expected ${GB_ROM_SIZE}`);
+    setApp("patchedRom", patched.buffer as ArrayBuffer);
+    setApp("rom", "error", null);
+    setPrep({ kind: "ready", overridesHash: ovHash });
+    logOk("ROM patched and ready");
+    return true;
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    setApp("rom", "error", `patch failed: ${msg}`);
+    setPrep({ kind: "error", message: msg });
+    logErr(`patch failed: ${msg}`);
+    return false;
+  }
 }
 
 // -----------------------------------------------------------------------------
-// play-step boot + session connect
+// local data
+// -----------------------------------------------------------------------------
+// Everything stored per session: the patched ROM and the save. Saves exist
+// only for their session, so whatever isn't the running one is deleted.
+const SESSION_STORES = [ROM_STORE, SAVE_STORE, STATE_STORE];
+
+async function purgeLocalSessions(keep: string | null) {
+  const dbc = await db();
+  if (!dbc) return;
+  for (const store of SESSION_STORES) {
+    let keys: IDBValidKey[] = [];
+    try { keys = await idbKeys(dbc, store); } catch { continue; }
+    for (const k of keys) if (k !== keep) await idbDel(dbc, k, store).catch(() => {});
+  }
+}
+
+// -----------------------------------------------------------------------------
+// play: boot + connect
 // -----------------------------------------------------------------------------
 let currentEmu: EmulatorHandle | null = null;
-// Boots queued or running. Boots run one at a time off bootChain, so a boot
-// requested while another is still settling (an import disposing the
-// emulator during the loopback re-host, say) runs in full once that one is
-// done, instead of being dropped and leaving no emulator behind.
-let bootsPending = 0;
-let bootChain: Promise<void> = Promise.resolve();
-// True while importSaveFile is mid-swap (emulator disposed, IDB being
-// rewritten, not yet rebooted). Blocks ensureEmulator from racing a boot into
-// that window, where currentEmu is null but the import isn't done yet.
-let swapInFlight = false;
-
-// Called on canvas unmount (e.g. HMR replacing <ScreenFrame/>) so the worker
-// ticker, save interval, keyboard listeners, and wasm allocations don't
-// outlive the DOM they were bound to and keep emitting audio into the void.
 // Unbinders for the input and layout wiring each boot installs against its
 // emulator, run on dispose so a reboot doesn't leave the old ones driving
 // (and pinning) the freed instance.
 let emuUiDisposers: (() => void)[] = [];
+// The session being played in this tab, from the moment play starts until it
+// has been torn down.
+let playingId: string | null = null;
+let playCredentials: Credentials | null = null;
+// Whether the game connection should be up right now. Fatal-crash recovery
+// and the connection events check it after each await, so an end that lands
+// mid-flight wins.
+let sessionWanted = false;
+// The latest connection state the worker reported.
+let apState: ApState | "none" = "none";
 
 export function disposeEmulator() {
   for (const off of emuUiDisposers) { try { off(); } catch {} }
@@ -890,712 +415,303 @@ export function disposeEmulator() {
   try { delete (window as any).ap; } catch {}
 }
 
-// The running emulator's current SRAM, or null when none is up (or an import
-// is swapping it).
-export function liveSram(): Uint8Array | null {
-  return currentEmu && !swapInFlight ? currentEmu.readSram() : null;
-}
-
-// Called on canvas mount. Under normal flow the step-transition code has
-// already booted the emulator, so this is a no-op; after HMR remounts
-// <ScreenFrame/> we boot a fresh one against the new canvas using the ROM
-// that's still sitting in the store.
+// Called on canvas mount. Under normal flow beginPlay has already booted the
+// emulator, so this is a no-op; after HMR remounts <ScreenFrame/> we boot a
+// fresh one against the new canvas using the ROM that's still in the store.
 export async function ensureEmulator() {
-  if (currentEmu || bootsPending || swapInFlight) return;
-  if (app.step !== "play" || !app.patchedRom) return;
-  await bootEmulatorAndUi();
+  if (currentEmu || booting) return;
+  if (app.step !== "play" || !app.patchedRom || !playingId) return;
+  await bootEmulatorNow(playingId);
 }
 
-// Never rejects: a failed boot (the binjgb chunk not loading after a deploy,
-// say) is reported in the play step's log, the only place it would be seen.
-function bootEmulatorAndUi(): Promise<void> {
-  bootsPending++;
-  const run = bootChain.then(bootEmulatorAndUiNow)
-    .catch((err) => { logErr(`emulator failed to start: ${err?.message || err} — reload the page to try again`); })
-    .finally(() => { bootsPending--; });
-  bootChain = run.catch(() => {});
-  return run;
-}
+let booting = false;
 
-async function bootEmulatorAndUiNow() {
-  // Clear any prior instance so consecutive boots (session reset, HMR, etc.)
-  // don't leak.
-  disposeEmulator();
-  const saveDb = await db();
-  const seedId: string | null = app.seedId;
-  // Before the boot reads the seed's slot, and before the romHash below
-  // is overwritten with this ROM's: that is the key a save the upgrade
-  // couldn't move still lives under. Until adoption has settled, keep it.
-  let legacySettled = false;
-  if (saveDb && seedId) {
-    const entry = loadSessions().find((s: any) => s.id === seedId);
-    legacySettled = await adoptLegacySave(saveDb, seedId, entry?.romHash);
-  }
-  const emu = await bootEmulator({
-    canvas: $<HTMLCanvasElement>("#screen"),
-    romBuf: app.patchedRom,
-    saveDb,
-    saveKey: seedId,
+// Only one tab may play: two would keep replacing each other's connection.
+// Held from the start of play until it ends (or the tab closes).
+let releasePlayLock: (() => void) | null = null;
+function dropPlayLock() {
+  releasePlayLock?.();
+  releasePlayLock = null;
+}
+function acquirePlayLock(): Promise<boolean> {
+  if (releasePlayLock) return Promise.resolve(true);
+  if (!navigator.locks) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    navigator.locks.request("yogos-play", { ifAvailable: true }, (lock) => {
+      if (!lock) { resolve(false); return; }
+      resolve(true);
+      return new Promise<void>((release) => { releasePlayLock = release; });
+    }).catch(() => resolve(true));
   });
-  if (!emu) return;
-  currentEmu = emu;
-  const { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash } = emu;
+}
 
-  if (app.seedId) {
-    const list = loadSessions();
-    const entry = list.find((s: any) => s.id === app.seedId);
-    if (entry && entry.romHash !== romHash && (legacySettled || !entry.romHash)) {
-      entry.romHash = romHash;
-      saveSessions(list);
-    }
+// Play couldn't start in this tab: back to the lobby, which offers a retry.
+// The session itself runs on.
+function abandonPlay(sessionId: string, why: string) {
+  logErr(why);
+  if (playingId !== sessionId) return;
+  playingId = null;
+  playCredentials = null;
+  setPlayStatus({ sessionId, kind: "failed" });
+  dropPlayLock();
+  setStep("lobby");
+}
+
+// resumeFrom: when resuming by itself, the device claim this browser last had
+// for the turn (null if none); left out when the player chose to play here.
+async function beginPlay(sessionId: string, credentials: Credentials, resumeFrom?: string | null) {
+  if (playingId === sessionId) return;
+  playingId = sessionId;
+  setPlayStatus({ sessionId, kind: "starting" });
+  if (!(await acquirePlayLock())) {
+    if (playingId === sessionId) playingId = null;
+    setPlayStatus({ sessionId, kind: "other-tab" });
+    try { sessionStorage.removeItem(STARTING_KEY); } catch {}
+    logWarn("the game is already open in another tab of this browser — play there");
+    return;
   }
+  // Ended (or replaced) while waiting for the lock.
+  if (playingId !== sessionId) { dropPlayLock(); return; }
+  playCredentials = credentials;
+  setEndedNotice(null);
+  markPlaysHere(sessionId);
+  logOk("your turn has started");
 
-  emuUiDisposers.push(
-    initPlayLayout(),
-    bindGamepad($<HTMLElement>(".gamepad"), { emulator: e, module: Module }),
-    bindController({ emulator: e, module: Module }),
-  );
-  installBizHawkBridge(emu, apWorker);
-  installTrackerDirtyHandler();
-  // Hints refresh on their own too, so the tab's count is current before
-  // the tab is first opened.
-  installHintsDirtyHandler();
-
-  // For loopback sessions, the in-process MultiServer is keyed off a fresh
-  // URI per worker boot. Re-host now so a resumed session points at a live
-  // server rather than a stale ws_url from a previous tab. The worker
-  // pulls any persisted .apsave from IndexedDB by seedId itself, so
-  // MultiServer restores received items / hints / data storage instead of
-  // starting from scratch. Not while fatal recovery runs: it re-hosts and
-  // reconnects itself, and a second host here would stop the server recovery
-  // just connected to.
-  const recovering = fatalRecoveryInFlight;
-  if (app.hosted?.kind === "loopback" && !recovering) {
-    const multiName = Object.keys(app.artifacts || {}).find((n) => n.toLowerCase().endsWith(".archipelago"));
-    if (multiName && app.seedId) {
-      try {
-        const res = await apWorker.host(app.seedId, app.artifacts[multiName].slice());
-        setApp("hosted", { ...app.hosted, ws_url: res.out.ws_url });
-      } catch (err: any) {
-        logErr("re-host failed: " + (err?.message || err));
-      }
-      // Disposed while the re-host ran (a save import): the boot queued
-      // behind this one takes over.
-      if (currentEmu !== emu) return;
-    } else {
-      logWarn("loopback session resumed but no .archipelago in cache — drop the YAML again to re-host");
-    }
-  }
-
-  // Seed the session form with host/slot info. For loopback the input
-  // shows a friendly label ("Self Hosted") instead of the synthetic URI;
-  // connectSession reads the real ws_url from app.hosted in that case.
-  const serverDisplay = app.hosted?.kind === "loopback"
-    ? "Self Hosted"
-    : (app.hosted ? `${app.hosted.host}:${app.hosted.port}` : "");
-  $<HTMLInputElement>("#sess-server").value = serverDisplay;
-  $<HTMLInputElement>("#sess-slot").value   = app.slotName || "";
-
-  // Expose for console poking.
-  window.ap = { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash, RAM, WRAM_BASE };
-  if (recovering) {
-    log("ready · the session reconnects once the python runtime is back");
-  } else if (app.hosted?.kind === "loopback") {
-    log("ready · self-hosted, auto-connecting");
-    // Defer one tick so the input fields we just populated are committed
-    // to the DOM before connectSession reads them.
-    queueMicrotask(() => { connectSession().catch(() => {}); });
+  // The ROM: from this session's cache (a reload mid-turn), else the one
+  // prepared in the lobby, re-patched if the overrides changed since.
+  const dbc = await db();
+  const cached = dbc ? await idbGet<ArrayBuffer>(dbc, sessionId, ROM_STORE).catch(() => null) : null;
+  if (cached && cached.byteLength === GB_ROM_SIZE) {
+    setApp("patchedRom", cached);
   } else {
-    log("ready · enter session details and Connect");
-  }
-}
-
-// Replace this seed's SRAM with an imported .sav / .saveRAM file. binjgb has
-// no soft reset, and Crystal only reads SRAM into WRAM at the title screen, so
-// the only way an import takes effect is to reboot the emulator from the ROM.
-// The existing savestate (which on boot overwrites cart RAM, line ~192) must be
-// dropped too, or the next boot would clobber the import. Ordering matters:
-// dispose first — its final flush writes the OLD save — then overwrite IDB,
-// then boot, which reloads the imported SRAM and lands on the title screen.
-export async function importSaveFile(file: File) {
-  // Test-and-set swapInFlight synchronously, and snapshot seedId/sramSize off
-  // currentEmu before the first await — otherwise two concurrent imports could
-  // both pass the guard, and a dispose during the awaits (canvas unmount/HMR)
-  // could null currentEmu out from under a later `.sramSize` read.
-  if (swapInFlight) { logWarn("a save import is already in progress"); return; }
-  if (!currentEmu) { logErr("no running emulator — can't import a save"); return; }
-  const seedId: string | null = app.seedId;
-  const expected = currentEmu.sramSize;
-  if (!seedId) { logErr("no active seed — can't import a save"); return; }
-
-  // Hold swapInFlight for the WHOLE import — including our own bootEmulatorAndUi
-  // call. It blocks ensureEmulator (canvas remount/HMR) from racing a boot into
-  // the dispose→reboot window, and rejects a second importSaveFile at the guard
-  // above while this one (boot included) is still running, so two imports can
-  // never overlap. No self-deadlock: we call bootEmulatorAndUi directly, not
-  // ensureEmulator, and boot doesn't look at swapInFlight. Cleared
-  // exactly once, in finally, covering every early-return and error path.
-  swapInFlight = true;
-  try {
-    const dbc = await db();
-    if (!dbc) { logErr("IDB unavailable — can't store the imported save"); return; }
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    // Emulators that model the MBC3 clock append an RTC footer after the cart
-    // SRAM: BizHawk's .SaveRAM for Crystal is 32790 bytes against the 32768
-    // binjgb serialises. In every such format the SRAM image is the leading
-    // portion, so trim the footer rather than reject the file. Bounded so a
-    // genuinely wrong file (savestate, ROM, another game's save) still fails
-    // loudly instead of being silently truncated into garbage. slice() (not
-    // subarray) so what lands in IDB owns a buffer of exactly `expected` bytes.
-    const RTC_FOOTER_MAX = 256;
-    const extra = bytes.length - expected;
-    if (extra < 0 || extra > RTC_FOOTER_MAX) {
-      logErr(`save size mismatch — got ${bytes.length} bytes, expected ${expected}; not a Crystal save`);
-      return;
+    // Patched with today's overrides? A prepare already running may have
+    // started with older ones: wait for it, then look again (twice at most).
+    const upToDate = () => {
+      const p = prep();
+      return p.kind === "ready" && !!app.patchedRom && p.overridesHash === overridesHash(buildOverrides(romOverridePrefs()));
+    };
+    for (let tries = 0; !upToDate(); tries++) {
+      if (tries === 2 || !(await prepareRom())) {
+        abandonPlay(sessionId, "couldn't prepare the ROM — your session is still running, try again from the lobby");
+        return;
+      }
     }
-    const sram = extra ? bytes.slice(0, expected) : bytes;
-    if (!confirm("Replace this seed's save with the imported file? Current progress in this slot will be overwritten.")) return;
-    if (extra) log(`dropped ${extra} trailing bytes of RTC clock data from the import`);
-
-    disposeEmulator();
-    let writeOk = true;
-    try {
-      await idbPut(dbc, seedId, sram, SAVE_STORE);
-      await idbDel(dbc, seedId, STATE_STORE);
-    } catch (err: any) {
-      writeOk = false;
-      logErr("import failed: " + (err?.message || err));
+    if (playingId !== sessionId) return;
+    if (dbc) {
+      await idbPut(dbc, sessionId, app.patchedRom!.slice(0), ROM_STORE).catch((err) => logWarn("cache patched rom failed: " + err));
+      // Ended while that was being written: the purge may have run first.
+      if (playingId !== sessionId) { await idbDel(dbc, sessionId, ROM_STORE).catch(() => {}); return; }
     }
-    await bootEmulatorAndUi();
-    if (writeOk) logOk("save imported — reset to title; choose Continue to load it");
-  } finally {
-    swapInFlight = false;
   }
-}
+  if (playingId !== sessionId) return;
 
-// True from the moment a connect attempt enters until it settles. Each attempt
-// makes the worker tear down and rebuild the client (sessionStart calls
-// sessionStop first), so without this a few impatient clicks stack overlapping
-// connects.
-let connectInFlight = false;
-
-// Whether a session is wanted right now — user intent, not socket liveness.
-// recoverFromFatalWorker can't read app.session.state for this: it runs from a
-// microtask queued *after* the failing call's own catch has already flipped the
-// state to "error", so it would always see a dead session and skip the
-// reconnect. Re-checking this flag after each await also lets a disconnect click
-// mid-recovery win instead of being silently undone.
-let sessionWanted = false;
-
-// Heartbeat while a session is up. Nothing else on the main thread calls the
-// worker on a timer — tracker and hint refreshes are driven by events the
-// worker itself emits — so a runtime that dies while no bizhawk request happens
-// to be outstanding would go unnoticed until the user next touched the UI.
-const HEARTBEAT_MS = 20000;
-let heartbeatTimer: number | null = null;
-function stopHeartbeat() {
-  if (heartbeatTimer !== null) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
-}
-function startHeartbeat() {
-  stopHeartbeat();
-  // A failed ping needs no handling here: the worker flags it fatal, which is
-  // what kicks off recovery. Anything else is a transient we don't care about.
-  heartbeatTimer = setInterval(() => { apWorker.ping().catch(() => {}); }, HEARTBEAT_MS) as unknown as number;
-}
-
-export async function connectSession() {
-  // Recovery drives its own connect once the replacement runtime is up. A click
-  // during that window would dial the dead worker's ws_url (loopback) or race
-  // the boot, and would leave connectInFlight set so the real attempt gets
-  // dropped — the exact inversion this guard is meant to prevent.
-  if (fatalRecoveryInFlight) { logWarn("python runtime is restarting — it will reconnect on its own"); return; }
+  setStep("play");
+  await bootEmulatorNow(sessionId);
+  if (playingId !== sessionId) return;
+  // No game, no connection: connecting would tell the server the player is
+  // here (stopping the grace clock) with nothing to play.
+  if (!currentEmu) {
+    abandonPlay(sessionId, "the game couldn't start — try again from the lobby, or reload the page");
+    return;
+  }
+  // Claim the turn for this device: its game connection carries the claim,
+  // and a device the turn was taken from can't take it back.
+  let holder: string;
+  try { holder = (await api.claimPlay(resumeFrom)).holder; }
+  catch (err: any) {
+    abandonPlay(sessionId, `couldn't claim the turn for this device: ${err?.message || err}`);
+    return;
+  }
+  if (playingId !== sessionId) return;
+  markPlaysHere(sessionId, holder);
+  playCredentials = { ...credentials, apUrl: `${credentials.apUrl}&holder=${encodeURIComponent(holder)}` };
+  setPlayStatus(null);
+  sessionWanted = true;
   await runConnect();
 }
 
-async function runConnect() {
-  if (connectInFlight) {
-    // After a Disconnect that stopped waiting on a stalled start, that start
-    // still holds the slot until it settles.
-    logWarn(sessionWanted ? "already connecting — hold on" : "the previous connection attempt is still winding down — try again once it finishes");
-    return;
+async function bootEmulatorNow(sessionId: string) {
+  booting = true;
+  try {
+    disposeEmulator();
+    const saveDb = await db();
+    const emu = await bootEmulator({
+      canvas: $<HTMLCanvasElement>("#screen"),
+      romBuf: app.patchedRom!,
+      saveDb,
+      saveKey: sessionId,
+      // Frozen until the game is connected; see onApState.
+      startPaused: apState !== "connected",
+    });
+    if (!emu) return;
+    if (playingId !== sessionId) { emu.dispose(); return; }
+    currentEmu = emu;
+    const { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash } = emu;
+    emuUiDisposers.push(
+      initPlayLayout(),
+      bindGamepad($<HTMLElement>(".gamepad"), { emulator: e, module: Module }),
+      bindController({ emulator: e, module: Module }),
+    );
+    installBizHawkBridge(emu, apWorker);
+    // For console poking while developing. Not in production: it would hand
+    // players a memory editor for a game whose checks are meant to be earned.
+    if (import.meta.env.DEV) window.ap = { e, Module, readMem, writeMem, guardedWrite, readDomain, writeDomain, romHash, RAM, WRAM_BASE };
+  } catch (err: any) {
+    logErr(`emulator failed to start: ${err?.message || err} — reload the page to try again`);
+  } finally {
+    booting = false;
   }
+}
+
+// True from the moment a connect attempt enters until it settles, so a
+// recovery and a first connect can't stack.
+let connectInFlight = false;
+
+async function runConnect() {
+  if (connectInFlight || !playCredentials) return;
   connectInFlight = true;
   try {
-    await doConnectSession();
+    const { apUrl, slot, gamePassword } = playCredentials;
+    setSessionState("connecting", "connecting…");
+    log(`connecting to the server as ${slot}`);
+    await apWorker.startSession(apUrl, slot, gamePassword);
+    if (!sessionWanted) return;
+    startHeartbeat();
+  } catch (err: any) {
+    if (!sessionWanted) return;
+    setSessionState("error", "error");
+    if (!(err instanceof WorkerRestartedError)) logErr("couldn't start the game connection: " + (err.message || err));
   } finally {
     connectInFlight = false;
   }
 }
 
-// "host:port", as typed or as a patch records it, tolerating a ws:// or
-// wss:// scheme and a trailing slash. A bare host means Archipelago's default
-// port, as CommonClient reads it. null when it isn't a host at all.
-function parseHostPort(server: string): { host: string; port: number } | null {
-  const m = /^(?:wss?:\/\/)?([^/:\s]+)(?::(\d+))?\/?$/i.exec(server.trim());
-  if (!m) return null;
-  const port = m[2] ? Number(m[2]) : 38281;
-  return port > 0 && port < 65536 ? { host: m[1], port } : null;
-}
-
-async function doConnectSession() {
-  // For loopback hosts the input shows "Self Hosted" as a label; the real
-  // URI lives on app.hosted.ws_url. Substitute it before handing to the
-  // worker so the websockets shim sees `loopback://...` and short-circuits.
-  const server = app.hosted?.kind === "loopback" && app.hosted.ws_url
-    ? app.hosted.ws_url
-    : $<HTMLInputElement>("#sess-server").value.trim();
-  const slot   = $<HTMLInputElement>("#sess-slot").value.trim();
-  const pw     = $<HTMLInputElement>("#sess-pw").value;
-  if (!server || !slot) { logErr("server and slot are required"); return; }
-  sessionWanted = true;
-  setSessionState("connecting", "connecting…");
-  logOk(`connecting session for ${slot}@${server}`);
-  try {
-    await apWorker.startSession(server, slot, pw);
-    // Disconnected while the start was in flight. The worker runs the queued
-    // stop after this start, so the session is already on its way down.
-    if (!sessionWanted) return;
-    setSessionState("live", slot);
-    logOk(`session started`);
-    startHeartbeat();
-    resetSessionMirrors();
-    const list = loadSessions();
-    const entry = list.find((s: any) => s.id === app.seedId);
-    if (entry) {
-      entry.slot = slot;
-      // Loopback URIs are keyed off the worker's in-memory registry; persist
-      // the kind so resume can re-host instead of trying a real wss:// dial.
-      if (server.startsWith("loopback://")) {
-        entry.hosted = { kind: "loopback", host: null, port: null, ws_url: server, room_url: null };
-      } else {
-        const parsed = parseHostPort(server);
-        if (parsed) {
-          const { host: h, port } = parsed;
-          entry.hosted = { kind: "remote", host: h, port, ws_url: `wss://${h}:${port}`, room_url: entry.hosted?.room_url || null };
-        }
-      }
-      saveSessions(list);
-      setApp("slotName", slot);
-      setApp("hosted", entry.hosted);
+apWorker.setApStateHandler((state, reason) => {
+  if (state === "alive") {
+    // The connection answered. Only news while play is held for a network
+    // drop that turned out not to have cost the socket.
+    if (sessionWanted && apState === "connected" && heldForOffline && navigator.onLine) {
+      heldForOffline = false;
+      currentEmu?.setPaused(false);
+      setSessionState("live", "connected");
     }
-  } catch (err: any) {
-    if (!sessionWanted) return;
-    // Nothing came up, so there's nothing for fatal recovery to bring back —
-    // unless the runtime died under this start, where recovery is about to
-    // retry and needs the session still wanted to do it.
-    if (!(err instanceof WorkerRestartedError)) sessionWanted = false;
-    setSessionState("error", "error");
-    logErr("session start failed: " + (err.message || err));
-  }
-}
-
-// Universal Tracker — pure data-in/out. Init reads the cached multidata from
-// app.artifacts; updates feed in the player's checked-locations set. No
-// dependency on a live session or in-process MultiServer.
-let trackerInited = false;
-let trackerInitInFlight: Promise<boolean> | null = null;
-// Bumped whenever an in-flight init is abandoned (fatal-runtime recovery), so
-// the abandoned attempt's finally can't null out the promise that replaced it
-// and let two tracker-init commands run against the worker at once.
-let trackerInitSeq = 0;
-// Bumped whenever the session mirrors reset (connect, disconnect, worker
-// loss); hint fetches drop results from an earlier epoch.
-let sessionEpoch = 0;
-// The seq trackerInitInFlight was started under.
-let trackerInitInFlightSeq = 0;
-// Latched once we've decided this seed can't run the tracker (e.g. patch-only
-// upload with no .archipelago). Prevents the dirty handler from re-emitting
-// the same warning on every Connected/ReceivedItems/RoomUpdate.
-let trackerUnavailable = false;
-
-async function ensureTrackerInited(): Promise<boolean> {
-  if (trackerInited) return true;
-  if (trackerUnavailable) return false;
-  if (app.session.state !== "live") {
-    setTrackerStatus({ kind: "idle" });
-    return false;
-  }
-  // Join an init that is still current. One superseded by a setting change
-  // (see setDeferEntrances) is left to finish, and the new init queues behind
-  // it, so the worker never runs two tracker-inits at once.
-  if (trackerInitInFlight && trackerInitInFlightSeq === trackerInitSeq) return trackerInitInFlight;
-  const prev = trackerInitInFlight;
-  const artifacts = app.artifacts || {};
-  const multiName = Object.keys(artifacts).find((n) => n.toLowerCase().endsWith(".archipelago"));
-  // Patch-only flow: no cached multidata, fall back to driving UT off the
-  // live session ctx (slot_data from Connected). The dirty handler retries
-  // on Connected/RoomUpdate, so don't latch unavailable when we're just
-  // waiting on the websocket handshake.
-  const bytes = multiName ? (artifacts[multiName] as Uint8Array) : null;
-  const seq = ++trackerInitSeq;
-  const run = (async () => {
-    try {
-      await prev?.catch(() => {});
-      if (seq !== trackerInitSeq) return false;
-      const res = await apWorker.trackerInit(bytes, app.slotName || "", trackerPrefs().deferEntrances);
-      // Superseded while it ran: the newer init owns the tracker state.
-      if (seq !== trackerInitSeq) return false;
-      if (!res?.out?.ok) {
-        if (res?.out?.wait) {
-          setTrackerStatus({ kind: "idle" });
-          return false;
-        }
-        const reason = res?.out?.reason || "unknown";
-        logWarn("tracker unavailable: " + reason.split("\n")[0]);
-        console.error("[ut] tracker init failed:\n" + reason);
-        setTrackerStatus({ kind: "error", reason });
-        trackerUnavailable = true;
-        return false;
-      }
-      trackerInited = true;
-      setTrackerStatus({ kind: "ready" });
-      return true;
-    } finally { if (trackerInitInFlight === run) trackerInitInFlight = null; }
-  })();
-  trackerInitInFlight = run;
-  trackerInitInFlightSeq = seq;
-  return run;
-}
-
-async function refreshTrackerLocations() {
-  if (!await ensureTrackerInited()) return;
-  // Pull the checked-locations set from the worker's host context if running,
-  // otherwise from the live session ctx, otherwise an empty set.
-  // A result from before a re-init (a setting change) describes the old
-  // tracker — with deferral just turned on, it could list every entrance.
-  const seq = trackerInitSeq;
-  const checked = await fetchCheckedLocations();
-  try {
-    const res = await apWorker.trackerUpdate(checked);
-    if (seq !== trackerInitSeq) return;
-    if (res?.out?.ok) {
-      setTrackerInLogic(res.out.locations || []);
-      setTrackerGoMode(res.out.go || "no");
-      setTrackerEntrances(res.out.entrances ?? null);
-    }
-  } catch (e: any) {
-    logWarn("tracker update failed: " + (e?.message || e));
-  }
-}
-
-// Reads checked-location IDs from whichever Python state is live —
-// _host_ctx.location_checks when self-hosting, ctx.checked_locations when
-// remote-connected. Empty pre-host / pre-connect.
-async function fetchCheckedLocations(): Promise<number[]> {
-  try {
-    const res = await apWorker.trackerChecks();
-    return Array.isArray(res?.out?.checked) ? res.out.checked : [];
-  } catch { return []; }
-}
-
-let trackerDirtyHandlerInstalled = false;
-function installTrackerDirtyHandler() {
-  if (trackerDirtyHandlerInstalled) return;
-  trackerDirtyHandlerInstalled = true;
-  apWorker.setTrackerDirtyHandler(() => { refreshTrackerLocations().catch(() => {}); });
-}
-export async function ensureTracker() {
-  installTrackerDirtyHandler();
-  await refreshTrackerLocations();
-}
-// The deferred-entrances mode is fixed when UT builds its multiworld, so a
-// change re-initialises the tracker (bumping the seq so an init already in
-// flight can't land as current) and refreshes it if a session is up.
-export function setDeferEntrances(on: boolean) {
-  if (trackerPrefs().deferEntrances === on) return;
-  setTrackerPrefs({ ...trackerPrefs(), deferEntrances: on });
-  // Supersedes any init in flight without dropping it: the next init queues
-  // behind it (see ensureTrackerInited).
-  trackerInitSeq++;
-  trackerInited = false;
-  trackerUnavailable = false;
-  setTrackerEntrances(null);
-  if (app.session.state === "live") refreshTrackerLocations().catch(() => {});
-}
-
-// Kept as a no-op for the existing console-tab onClick caller; tracker is now
-// event-driven and has nothing to stop.
-export function stopTrackerPolling() {}
-
-// --- Hints ---
-// Pulls the player-relevant hints off the live session ctx. Like the tracker,
-// it's event-driven: the worker fires "hints-dirty" whenever the watched
-// _read_hints data-storage key changes (Retrieved / SetReply / RoomUpdate).
-async function refreshHints() {
-  if (app.session.state !== "live") {
-    setHints(null);
-    setHintPoints(null);
-    setHintsStatus({ kind: "idle" });
     return;
   }
-  const epoch = sessionEpoch;
-  try {
-    const res = await apWorker.hintsGet();
-    if (epoch !== sessionEpoch) return;
-    if (res?.out?.ok) {
-      setHints(res.out.hints ?? null);
-      const pts = res.out.points, cost = res.out.costPoints;
-      setHintPoints(pts == null && cost == null ? null : {
-        points: pts ?? null,
-        costPercent: res.out.costPercent ?? null,
-        costPoints: cost ?? 0,
-        available: res.out.available ?? null,
-      });
-      setHintsStatus({ kind: "ready" });
-    }
-  } catch (e: any) {
-    if (epoch !== sessionEpoch) return;
-    setHintsStatus({ kind: "error", reason: e?.message || String(e) });
+  // A session being wound down may still report in (a reconnect in flight);
+  // that's no news about the next one.
+  if (!sessionWanted) return;
+  apState = state;
+  heldForOffline = false;
+  if (state === "connected") {
+    setSessionState("live", "connected");
+    currentEmu?.setPaused(false);
+    logOk("connected — play on");
+  } else if (state === "closed") {
+    setSessionState("connecting", "reconnecting…");
+    currentEmu?.setPaused(true);
+  } else if (state === "replaced") {
+    // The turn is being played in another browser now. Step aside rather
+    // than reconnect and take it back; this browser's save stays, in case
+    // play comes back here.
+    log("your turn was opened somewhere else — the game here has stopped");
+    void endPlay("playing elsewhere", { keepSave: true });
+  } else if (state === "refused") {
+    // Usually our credentials were rotated and the session is over; the
+    // server says which (confirmEnded) before we tear anything down.
+    currentEmu?.setPaused(true);
+    setSessionState("connecting", "checking…");
+    log(`the server refused the game connection (${reason || "refused"})`);
+    void confirmEnded();
   }
-}
-
-// Item names for the hint-box autocomplete. Static per game, so fetch once and
-// keep retrying (via the dirty handler) until ctx.game is known post-connect.
-async function refreshHintItems() {
-  if (app.session.state !== "live") return;
-  if (hintItemNames().length) return;
-  const epoch = sessionEpoch;
-  try {
-    const res = await apWorker.hintItems();
-    if (epoch !== sessionEpoch) return;
-    if (res?.out?.ok && Array.isArray(res.out.items)) setHintItemNames(res.out.items);
-  } catch { /* leave empty; retried on next dirty event */ }
-}
-
-let hintsDirtyHandlerInstalled = false;
-function installHintsDirtyHandler() {
-  if (hintsDirtyHandlerInstalled) return;
-  hintsDirtyHandlerInstalled = true;
-  apWorker.setHintsDirtyHandler(() => {
-    refreshHints().catch(() => {});
-    refreshHintItems().catch(() => {});
-  });
-}
-export async function ensureHints() {
-  installHintsDirtyHandler();
-  installHintMsgHandler();
-  await refreshHints();
-  await refreshHintItems();
-}
-
-// Hint requests are dispatched through the same command processor as the console
-// and the server replies via PrintJSON — invisible if you're on the hints tab.
-// The worker forwards only the relevant PrintJSON (a created "Hint", or a
-// "CommandResult" carrying !hint errors/cost text, which the server sends only
-// to the requesting client) as "hint-msg" events. We surface those into
-// hintFeedback for a short window after a request, ignoring anything else.
-const HINT_ERR_RE = /not found|no such|invalid|couldn'?t|cannot|can'?t|unknown|ambiguous|did you mean|already|not enough|afford|no hint/i;
-const HINT_CAPTURE_MS = 8000;
-let hintCaptureUntil = 0;
-let hintCaptureLines: string[] = [];
-// Bumped per request (and on connect/disconnect) so a previous request's expiry
-// timer can't overwrite the current feedback or fire after teardown.
-let hintCaptureSeq = 0;
-let hintMsgHandlerInstalled = false;
-function installHintMsgHandler() {
-  if (hintMsgHandlerInstalled) return;
-  hintMsgHandlerInstalled = true;
-  apWorker.setHintMsgHandler((text: string, kind: string) => {
-    if (performance.now() > hintCaptureUntil) return;
-    const line = (text || "").trim();
-    if (!line) return;
-    hintCaptureLines.push(line);
-    const joined = hintCaptureLines.join("\n");
-    // A "Hint" reply is the success case; "CommandResult" is usually an error
-    // or cost notice, but a few are informational — fall back to the regex.
-    const isErr = hintCaptureLines.some((l) => HINT_ERR_RE.test(l));
-    setHintFeedback({ text: joined, kind: isErr ? "err" : kind === "Hint" ? "ok" : "info" });
-  });
-}
-
-// Returns true if the request was dispatched. A bare item name is wrapped in
-// !hint; text starting with ! is sent verbatim (e.g. !hint_location). A
-// /-prefix is rejected: those are local client commands that produce no server
-// response, so the feedback line would hang on "requesting…".
-export function requestHint(raw: string): boolean {
-  const text = raw.trim();
-  if (!text) return false;
-  if (app.session.state !== "live") {
-    setHintFeedback({ text: "not connected — can't request a hint", kind: "err" });
-    return false;
-  }
-  installHintMsgHandler();
-  const cmd = /^!/.test(text) ? text : "!hint " + text;
-  const seq = ++hintCaptureSeq;
-  hintCaptureLines = [];
-  hintCaptureUntil = performance.now() + HINT_CAPTURE_MS;
-  setHintFeedback({ text: "requesting…", kind: "info" });
-  try {
-    apWorker.sendInput(cmd);
-    // Don't leave the box stuck on "requesting…" if the server never answers.
-    setTimeout(() => {
-      if (seq === hintCaptureSeq && hintCaptureLines.length === 0) {
-        setHintFeedback({ text: "no response from server", kind: "err" });
-      }
-    }, HINT_CAPTURE_MS);
-    return true;
-  } catch (err: any) {
-    hintCaptureUntil = 0;
-    setHintFeedback({ text: "request failed: " + (err?.message || err), kind: "err" });
-    return false;
-  }
-}
-
-export async function disconnectSession() {
-  // Set before the await so a recovery in progress sees it at its next
-  // checkpoint and abandons the reconnect instead of dragging the session back
-  // up after the user asked for it to go away.
-  sessionWanted = false;
-  stopHeartbeat();
-  // The worker runs the stop after any start still in flight, and a start can
-  // stall on a boot download. Don't hold the UI on it: the stop stays queued
-  // and runs when the start settles.
-  const STOP_WAIT_MS = 5000;
-  await Promise.race([apWorker.stopSession().catch(() => {}), new Promise((r) => setTimeout(r, STOP_WAIT_MS))]);
-  setSessionState("idle", "disconnected");
-  resetSessionMirrors();
-  stopTrackerPolling();
-  logOk("session disconnected");
-}
-
-// -----------------------------------------------------------------------------
-// fatal python-runtime recovery
-// -----------------------------------------------------------------------------
-// Pyodide can die outright — OOM, a WASM abort, an exception crossing the
-// JS↔WASM boundary. lib/ap-worker.ts terminates and respawns the worker, but
-// everything that lived inside it is gone: the AP client, the loopback
-// MultiServer, the Universal Tracker. Rebuild that here so a crash mid-run
-// costs a Pyodide re-boot instead of a page reload.
-let fatalRecoveryInFlight = false;
-let fatalRecoveryPending = false;
-let lastFatalReason = "";
-// Crashes are budgeted over a rolling window rather than reset on a successful
-// connect: a crash that reproduces *after* the session comes up — an OOM in
-// tracker-init off the Connected packet, say — would otherwise clear the budget
-// on every cycle and reboot Pyodide forever.
-const MAX_FATAL_RECOVERIES = 3;
-const FATAL_WINDOW_MS = 10 * 60 * 1000;
-let fatalTimes: number[] = [];
-
-apWorker.setFatalHandler((reason) => {
-  const now = Date.now();
-  fatalTimes = fatalTimes.filter((t) => now - t < FATAL_WINDOW_MS);
-  fatalTimes.push(now);
-  lastFatalReason = reason;
-  // A crash *during* recovery (the replacement runtime OOMs while re-hosting)
-  // has to queue rather than be dropped, or that attempt is the last one ever.
-  // The budget above is what stops this from looping.
-  if (fatalRecoveryInFlight) { fatalRecoveryPending = true; return; }
-  void driveFatalRecovery();
 });
 
-async function driveFatalRecovery() {
-  fatalRecoveryInFlight = true;
+// The browser knows the network is gone before any socket does: freeze at
+// once, and let the connection events decide when play resumes.
+// Play held because the browser went offline: resumed by proof the
+// connection still works (an "alive" from the worker's watchdog) or a fresh
+// "connected", never by the network merely coming back.
+let heldForOffline = false;
+if (typeof window !== "undefined") {
+  window.addEventListener("offline", () => {
+    if (!sessionWanted) return;
+    heldForOffline = true;
+    currentEmu?.setPaused(true);
+    setSessionState("connecting", "offline");
+  });
+}
+
+// Ask the server whether our session is still running: tear down if not,
+// reconnect if it is (the game server refused us while it was restarting).
+async function confirmEnded() {
+  const id = playingId;
   try {
-    do {
-      fatalRecoveryPending = false;
-      try { await recoverFromFatalWorker(lastFatalReason); }
-      catch (err: any) {
-        setSessionState("error", "error");
-        logErr("auto-reconnect failed: " + (err?.message || err));
-      }
-    } while (fatalRecoveryPending);
-  } finally {
-    fatalRecoveryInFlight = false;
-  }
-}
-
-// Drop every piece of main-thread state that mirrors the worker's: tracker,
-// hints, their in-flight sequence counters, and the heartbeat (a ping would
-// just spawn a worker to no-op against). Used when the worker is gone, whether
-// it crashed or was restarted on purpose to switch apworld version.
-// Forget everything mirrored from the last session. Bumping the sequence
-// numbers makes a tracker init or hints fetch still in flight for that
-// session land as stale instead of as the new session's.
-function resetSessionMirrors() {
-  sessionEpoch++;
-  trackerInited = false;
-  trackerUnavailable = false;
-  trackerInitSeq++;
-  setTrackerInLogic([]);
-  setTrackerGoMode("no");
-  setTrackerEntrances(null);
-  setTrackerStatus({ kind: "idle" });
-  setHints(null);
-  setHintPoints(null);
-  setHintsStatus({ kind: "idle" });
-  setHintItemNames([]);
-  setHintFeedback(null);
-  hintCaptureUntil = 0;
-  hintCaptureSeq++;
-}
-
-function clearWorkerMirroredState() {
-  resetSessionMirrors();
-  trackerInitInFlight = null;
-  stopTrackerPolling();
-  stopHeartbeat();
-}
-
-async function recoverFromFatalWorker(reason: string) {
-  logErr("python runtime crashed: " + reason);
-
-  // Everything that mirrored worker state no longer exists.
-  clearWorkerMirroredState();
-
-  // Self-hosted seeds have no connect button — Play.tsx hides the session
-  // actions for loopback and the play step auto-connects instead — so bailing
-  // out on one is a dead end that only a reload escapes. Treat a loopback seed
-  // on the play step as always wanting a session, which also covers a crash
-  // that lands in the re-host before any connect was attempted.
-  const isLoopbackPlay = app.step === "play" && app.hosted?.kind === "loopback";
-  if (!sessionWanted && !isLoopbackPlay) {
-    setSessionState("idle", "disconnected");
-    log("python runtime will restart on the next action");
-    return;
-  }
-  sessionWanted = true;
-
-  if (fatalTimes.length > MAX_FATAL_RECOVERIES) {
-    setSessionState("error", "error");
-    logErr(`python runtime has crashed ${fatalTimes.length} times in the last ${FATAL_WINDOW_MS / 60000} minutes — not auto-reconnecting again, reload the page`);
-    return;
-  }
-
-  setSessionState("connecting", "restarting…");
-  log("restarting the python runtime and reconnecting — this takes as long as the initial boot");
-
-  // Boot the replacement worker explicitly rather than letting host/connect
-  // do it implicitly: init is the only command that forwards boot-phase
-  // progress, so this is what turns a silent minute into a visible one.
-  await apWorker.init((phase) => log(PHASE_LABELS[phase] || phase));
-  if (!sessionWanted) { setSessionState("idle", "disconnected"); return; }
-
-  // Loopback sessions point at an in-process MultiServer keyed to the dead
-  // worker's URI. Re-host before dialing, exactly as a resumed session does,
-  // so the connect below has a live ws_url to reach. The worker reloads the
-  // persisted .apsave itself, so received items and hints carry over.
-  if (isLoopbackPlay) {
-    const multiName = Object.keys(app.artifacts || {}).find((n) => n.toLowerCase().endsWith(".archipelago"));
-    if (!multiName || !app.seedId) {
-      setSessionState("error", "error");
-      logErr("self-hosted session lost and no .archipelago in cache — drop the YAML again to re-host");
-      return;
+    const me = await api.me();
+    applyYou(me.you);
+    if (id && playingId === id && me.you?.session?.id === id) {
+      log("the session is still running — reconnecting");
+      await new Promise((r) => setTimeout(r, 3000));
+      if (sessionWanted && playingId === id) await runConnect();
     }
-    const res = await apWorker.host(app.seedId, app.artifacts[multiName].slice());
-    setApp("hosted", { ...app.hosted, ws_url: res.out.ws_url });
-    if (!sessionWanted) { setSessionState("idle", "disconnected"); return; }
-    // The host autosaves on a 5s tick, so the restored server can be slightly
-    // behind the emulator, whose own SRAM writes were never interrupted. Checks
-    // re-sync from RAM on connect; hint spends and data storage in that window
-    // don't.
-    logWarn("self-hosted server restored from its last autosave — a few seconds of server-side progress may have rolled back");
-  }
+  } catch { /* the live socket will tell us once it's back */ }
+}
 
-  // The connect reads the server/slot/password inputs, which the play step
-  // still has populated — the crash was in the worker, not the UI. Go straight
-  // to runConnect: connectSession would bounce off its own recovery guard.
-  await runConnect();
+// Tear the running session down: stop the client, drop the emulator, delete
+// this session's ROM and save, and go back to the lobby.
+let endInFlight: Promise<void> | null = null;
+// keepSave: the session goes on elsewhere, so this browser's save for it stays.
+function endPlay(why: string, opts: { keepSave?: boolean } = {}): Promise<void> {
+  if (!endInFlight) endInFlight = endPlayNow(why, opts.keepSave ?? false).finally(() => { endInFlight = null; });
+  return endInFlight;
+}
+
+async function endPlayNow(why: string, keepSave: boolean) {
+  const id = playingId;
+  if (!id) return;
+  log(why);
+  // Nothing more counts: stop the game now, not once the client has wound
+  // down.
+  currentEmu?.setPaused(true);
+  sessionWanted = false;
+  playingId = null;
+  playCredentials = null;
+  apState = "none";
+  stopHeartbeat();
+  const STOP_WAIT_MS = 5000;
+  await Promise.race([apWorker.stopSession().catch(() => {}), new Promise((r) => setTimeout(r, STOP_WAIT_MS))]);
+  // A new play started while that ran (the player took it back here): it
+  // owns the emulator, the lock and the step now. Only this play's data goes.
+  if (playingId) {
+    if (!keepSave) await purgeLocalSessions(playingId);
+    return;
+  }
+  // Dispose first: its final flush writes the save, which the purge then
+  // removes (IndexedDB runs the transactions in order).
+  disposeEmulator();
+  await purgeLocalSessions(keepSave ? id : null);
+  setApp("patchedRom", null);
+  resetPrep();
+  setPlayStatus(null);
+  markPlaysHere(null);
+  dropPlayLock();
+  setSessionState("idle", "offline");
+  setStep("lobby");
+}
+
+// Start playing a session that's running on the server but not in this tab:
+// it's playing in another browser (this takes over from it), or its ROM
+// couldn't be prepared the first time.
+export function resumeTurn() {
+  const s = you()?.session;
+  if (s && !playingId) void beginPlay(s.id, s.credentials);
+}
+
+// A turn ended that this tab wasn't playing: nothing to tear down but its
+// local data (unless another play has started here since).
+function forgetEndedTurn() {
+  if (playingId) return;
+  setPlayStatus(null);
+  markPlaysHere(null);
+  void purgeLocalSessions(null);
 }
 
 // Brand-click teardown: stop the session and reload for a clean slate.
@@ -1604,3 +720,60 @@ export function teardownAndReload(ev?: Event) {
   try { apWorker.stopSession(); } catch {}
   window.location.reload();
 }
+
+// -----------------------------------------------------------------------------
+// heartbeat + fatal python-runtime recovery
+// -----------------------------------------------------------------------------
+// Nothing else on the main thread calls the worker on a timer, so a runtime
+// that dies while no bizhawk request happens to be outstanding would go
+// unnoticed until the session's grace period ran out.
+const HEARTBEAT_MS = 20000;
+let heartbeatTimer: number | null = null;
+function stopHeartbeat() {
+  if (heartbeatTimer !== null) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+}
+function startHeartbeat() {
+  stopHeartbeat();
+  // A failed ping needs no handling here: the worker flags it fatal, which is
+  // what kicks off recovery.
+  heartbeatTimer = setInterval(() => { apWorker.ping().catch(() => {}); }, HEARTBEAT_MS) as unknown as number;
+}
+
+// Pyodide can die outright — OOM, a WASM abort. lib/ap-worker.ts terminates
+// and respawns the worker; the client that lived inside it is gone, so start
+// a new one. Crashes are budgeted over a rolling window so one that
+// reproduces on every connect doesn't reboot Pyodide forever.
+const MAX_FATAL_RECOVERIES = 3;
+const FATAL_WINDOW_MS = 10 * 60 * 1000;
+let fatalTimes: number[] = [];
+let recovering = false;
+
+apWorker.setFatalHandler((reason) => {
+  const now = Date.now();
+  fatalTimes = fatalTimes.filter((t) => now - t < FATAL_WINDOW_MS);
+  fatalTimes.push(now);
+  logErr("python runtime crashed: " + reason);
+  stopHeartbeat();
+  apState = "none";
+  currentEmu?.setPaused(true);
+  if (!sessionWanted || recovering) return;
+  if (fatalTimes.length > MAX_FATAL_RECOVERIES) {
+    setSessionState("error", "error");
+    logErr(`python runtime has crashed ${fatalTimes.length} times in the last ${FATAL_WINDOW_MS / 60000} minutes — reload the page to reconnect`);
+    return;
+  }
+  recovering = true;
+  void (async () => {
+    try {
+      setSessionState("connecting", "restarting…");
+      log("restarting the python runtime and reconnecting — this takes as long as the initial boot");
+      await apWorker.init((phase) => log(PHASE_LABELS[phase] || phase));
+      if (sessionWanted) await runConnect();
+    } catch (err: any) {
+      setSessionState("error", "error");
+      logErr("auto-reconnect failed: " + (err?.message || err));
+    } finally {
+      recovering = false;
+    }
+  })();
+});

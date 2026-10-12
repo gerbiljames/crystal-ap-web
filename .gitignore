@@ -3,4 +3,8 @@ dist
 .vite
 public/ap.tar
 public/ap/
-worker/.wrangler
+# Local state left by the old Cloudflare Worker (removed on this branch).
+worker/
+# Deployment secrets and the server's data (seed, database, saves).
+.env
+data/

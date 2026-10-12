@@ -1,347 +1,296 @@
-import { For, Show, createSignal, createEffect } from "solid-js";
-import { app, setApp, persistHostPref, setYamlCreatorOpen } from "../state.js";
-import { formatAge } from "../lib/sessions.js";
-import { isPatchName } from "../lib/zip.js";
-import { db, idbGet, idbHas } from "../lib/idb.js";
-import { GB_ROM_SIZE, VANILLA_STORE, ROM_STORE, ARTIFACTS_STORE } from "../lib/constants.js";
-import {
-  handleYamlDrop, handleRomDrop, continueToRom, resumeSession, forgetSession, resetTransient,
-  useSavedYaml, renameSavedYaml, forgetSavedYaml, openYamlForEdit,
-} from "../actions.js";
-import type { SavedYaml } from "../lib/yamls.js";
+import { For, Match, Show, Switch, createSignal, onCleanup, type JSX } from "solid-js";
+import { app, you, publicState, meLoaded, loginUrl, liveConnected, endedNotice, prep, clockOffset, playStatus } from "../state.js";
+import { handleRomDrop, joinQueue, leaveQueue, startTurn, prepareRom, resumeTurn } from "../actions.js";
+import { END_REASON_TEXT, type Find, type PublicUser, type SessionSummary } from "../../shared/protocol.js";
 import { Dropzone } from "./Dropzone.jsx";
-import { useArtifactUrls } from "../lib/artifact-urls.js";
+
+// The server's time, ticking once a second for as long as the calling
+// component is mounted: use it (or <Countdown>) only inside what shows a
+// countdown, so nothing ticks while none is on screen.
+export function useNow() {
+  const [now, setNow] = createSignal(Date.now());
+  const t = setInterval(() => setNow(Date.now()), 1000);
+  onCleanup(() => clearInterval(t));
+  return () => now() + clockOffset();
+}
+
+export function formatCountdown(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function formatAway(seconds: number): string {
+  if (seconds % 60 === 0) return seconds === 60 ? "a minute" : `${seconds / 60} minutes`;
+  return `${seconds} seconds`;
+}
+
+// Time left until a server deadline, as m:ss, ticking while it's shown.
+export function Countdown(props: { to: number }) {
+  const now = useNow();
+  return <>{formatCountdown(props.to - now())}</>;
+}
+
+export function UserBadge(props: { user: PublicUser; small?: boolean }) {
+  return (
+    <span class="user-badge" data-small={props.small ? "true" : undefined}>
+      <Show when={props.user.avatar} fallback={<span class="avatar avatar-blank" aria-hidden="true"></span>}>
+        <img class="avatar" src={props.user.avatar!} alt="" referrerpolicy="no-referrer" />
+      </Show>
+      <span class="user-name">{props.user.name}</span>
+    </span>
+  );
+}
+
+// n of limit checks, as pips.
+export function ChecksMeter(props: { checks: number; limit: number }) {
+  return (
+    <span class="checks-meter" title={`${props.checks} of ${props.limit} checks used`}>
+      <For each={Array.from({ length: props.limit }, (_, i) => i)}>{(i) => (
+        <span class="pip" data-on={i < props.checks ? "true" : undefined}></span>
+      )}</For>
+      <span class="checks-count">{props.checks}/{props.limit}</span>
+    </span>
+  );
+}
+
+export function FindList<T extends Find>(props: { finds: T[]; empty?: string; who?: (f: T) => JSX.Element }) {
+  return (
+    <Show when={props.finds.length > 0} fallback={<p class="muted">{props.empty ?? "nothing found yet"}</p>}>
+      <ul class="find-list">
+        <For each={props.finds}>{(f) => (
+          <li>
+            <Show when={props.who}>{props.who!(f)}</Show>
+            <span class="find-item">{f.item ?? "something"}</span>
+            <Show when={f.receiver}><span class="find-receiver"> for {f.receiver}</span></Show>
+            <span class="find-sep"> at </span>
+            <span class="find-loc">{f.location}</span>
+          </li>
+        )}</For>
+      </ul>
+    </Show>
+  );
+}
 
 function Blurb() {
+  const limit = () => publicState()?.checkLimit ?? 10;
   return (
     <aside class="blurb">
-      <h1><span class="blurb-title">Pokémon Crystal Archipelago</span><br /><em>in your browser.</em></h1>
-      <p>A full multiworld client for <a href="https://github.com/gerbiljames/Archipelago-Crystal/tree/pokecrystal" target="_blank" rel="noopener">Pokémon Crystal</a>. You provide a YAML and your own vanilla Crystal ROM; generation and patching happen locally.</p>
+      <h1><span class="blurb-title">You only get one slot</span><br /><em>one game, everyone's turn.</em></h1>
+      <p>A single Pokémon Crystal Archipelago slot, played in relay. Everyone takes one turn, one at a time, in your browser.</p>
       <ul class="blurb-list">
-        <li>Generation and ROM patching run in your browser via <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>.</li>
-        <li>Your ROM never leaves this browser. It's stored locally so you don't need to re-provide it.</li>
-        <li>Emulation by <a href="https://github.com/binji/binjgb" target="_blank" rel="noopener">binjgb</a>. Saves persist per seed.</li>
-        <li>The multiworld can be hosted on <a href="https://archipelago.gg" target="_blank" rel="noopener">archipelago.gg</a> via a tiny proxy.</li>
+        <li>Sign in with Discord and join the queue. When it's your turn you have a few minutes to start.</li>
+        <li>You start a <b>fresh save</b>, with every item the players before you found already in your bag.</li>
+        <li>Your turn ends after <b>{limit()} new checks</b>. Locations someone already checked don't count.</li>
+        <li>You get <b>one turn, ever</b>. Your save is deleted when it ends.</li>
+        <li>You can connect <b>PopTracker</b> alongside the game. Connecting anything else ends your turn on the spot.</li>
+        <li>If the game loses its connection it pauses; stay away too long and your turn ends.</li>
+        <li>Bring your own vanilla Pokémon Crystal ROM (English 1.0 or 1.1). It never leaves your browser.</li>
       </ul>
     </aside>
   );
 }
 
-function ResumeList() {
-  // Sessions live in localStorage, but the data they reference (patched ROM,
-  // generation artifacts) lives in IndexedDB — which mobile browsers happily
-  // evict under storage pressure. Probe each session on mount so the row
-  // reflects current resumability instead of pretending it'll work.
-  const [evicted, setEvicted] = createSignal<Set<string>>(new Set());
-  createEffect(async () => {
-    const ids = app.sessions.map((s: any) => s.id);
-    const dbc = await db();
-    if (!dbc) return;
-    const dead = new Set<string>();
-    await Promise.all(ids.map(async (id: string) => {
-      // A probe *error* is not evidence of eviction — Chrome's IDB fails
-      // transiently (backing-store errors, disk pressure), and flagging a
-      // healthy session as dead hides its resume button. Only trust a
-      // successful "not there" answer from both stores.
-      const [hasRom, hasArt] = await Promise.all([
-        idbHas(dbc, id, ROM_STORE).catch(() => null),
-        idbHas(dbc, id, ARTIFACTS_STORE).catch(() => null),
-      ]);
-      if (hasRom === false && hasArt === false) dead.add(id);
-    }));
-    setEvicted(dead);
-  });
-
+function AccountCard() {
   return (
-    <Show when={app.sessions.length > 0}>
-      <div class="resume-list" id="resume-list">
-        <div class="resume-head">
-          <span class="eyebrow">active seeds</span>
-          <span class="resume-head-hint">saved locally · ROM cached</span>
-        </div>
-        <div id="resume-list-inner">
-          <For each={app.sessions}>{(s) => {
-            const dead = () => evicted().has(s.id);
-            const remoteRoom = () => s.hosted?.kind === "remote" ? s.hosted.room_url : null;
-            return (
-              <div class="resume-row" data-evicted={dead() ? "true" : undefined}>
-                <span class="slot">{s.slot || "?"}</span>
-                <span class="id">
-                  {s.id}
-                  <Show when={s.romCached && !dead()}>
-                    <span class="rom-cached" title="patched ROM cached locally">ROM</span>
-                  </Show>
-                  <Show when={dead()}>
-                    <span class="rom-evicted" title="browser cleared the cached files for this seed">cache cleared</span>
-                  </Show>
-                </span>
-                <span class="meta">
-                  <Show when={s.apworldVersion}>
-                    <span
-                      class="apw"
-                      title={s.generatorVersion && s.generatorVersion !== s.apworldVersion
-                        ? `generated with apworld ${s.generatorVersion}, plays on ${s.apworldVersion}`
-                        : `apworld ${s.apworldVersion}`}
-                    >v{s.apworldVersion}</span>
-                    {" "}
-                  </Show>
-                  <em>{s.hosted?.kind === "loopback" ? "self-hosted" : (s.hosted?.host ? `${s.hosted.host}:${s.hosted.port}` : "no host")}</em>
-                  {" "}{formatAge(Date.now() - s.savedAt)}
-                </span>
-                <span class="actions">
-                  <Show
-                    when={!dead()}
-                    fallback={
-                      <Show
-                        when={remoteRoom()}
-                        fallback={
-                          <span class="resume-dead-hint" title="drop the YAML on the dropzone below to roll a new seed">drop YAML to re-roll</span>
-                        }
-                      >
-                        <a class="btn-primary resume" href={remoteRoom()!} target="_blank" rel="noopener" title="open the archipelago.gg room — multidata still lives there">open room ↗</a>
-                      </Show>
-                    }
-                  >
-                    <button class="btn-primary resume" onClick={() => resumeSession(s.id)}>resume</button>
-                  </Show>
-                  <button class="forget" title="remove from this device" onClick={() => forgetSession(s.id)}>forget</button>
-                </span>
-              </div>
-            );
-          }}</For>
-        </div>
-      </div>
-    </Show>
-  );
-}
-
-function HostPrefSelect() {
-  return (
-    <select
-      class="host-pref-select"
-      value={app.hostPref}
-      onChange={(ev) => persistHostPref(ev.currentTarget.value as any)}
-    >
-      <option value="local">in this tab (no external connections)</option>
-      <option value="remote">on archipelago.gg (public room)</option>
-      <option value="off">off (I'll host it myself)</option>
-    </select>
-  );
-}
-
-function SavedYamlsList() {
-  const [editing, setEditing] = createSignal<string | null>(null);
-  const [draft, setDraft] = createSignal("");
-  const beginEdit = (hash: string, current: string) => {
-    setEditing(hash);
-    setDraft(current);
-  };
-  // Only while that row is still being edited: Esc (and Enter's own commit)
-  // end the edit before the input's removal fires blur, so blur mustn't
-  // commit a cancelled draft or commit twice.
-  const commitEdit = (hash: string) => {
-    if (editing() !== hash) return;
-    renameSavedYaml(hash, draft());
-    setEditing(null);
-  };
-
-  // Row-level click opens the YAML in the creator (raw-edit mode), but only
-  // when the click landed on "free space" — buttons/inputs/.actions handle
-  // their own behaviour and shouldn't double-fire.
-  const onRowClick = (y: SavedYaml) => (ev: MouseEvent) => {
-    const t = ev.target as HTMLElement;
-    if (t.closest("button, input, .actions")) return;
-    openYamlForEdit(y.hash);
-  };
-
-  return (
-    <Show when={app.yamls.length > 0}>
-      <div class="resume-list yaml-list">
-        <div class="resume-head">
-          <span class="eyebrow">saved yamls</span>
-          <span class="resume-head-hint">
-            <span class="hint-desktop">click row to edit · click name to rename</span>
-            <span class="hint-touch">tap row to edit · tap name to rename</span>
-          </span>
-        </div>
-        <div>
-          <For each={app.yamls}>{(y) => (
-            <div class="resume-row resume-row-clickable" onClick={onRowClick(y)} title="click to edit">
-              <span class="slot">{y.slotName || "?"}</span>
-              <span class="id yaml-name">
-                <Show
-                  when={editing() === y.hash}
-                  fallback={
-                    <button class="yaml-name-btn" onClick={() => beginEdit(y.hash, y.name)} title="rename">{y.name}</button>
-                  }
-                >
-                  <input
-                    class="yaml-name-input"
-                    value={draft()}
-                    // autofocus only applies at page load, not to an input
-                    // inserted later.
-                    ref={(el) => requestAnimationFrame(() => { el.focus(); el.select(); })}
-                    onInput={(e) => setDraft(e.currentTarget.value)}
-                    onBlur={() => commitEdit(y.hash)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") commitEdit(y.hash);
-                      else if (e.key === "Escape") setEditing(null);
-                    }}
-                  />
-                </Show>
-              </span>
-              <span class="meta">
-                <em>{(y.size / 1024).toFixed(1)} KB</em>
-                {" "}{formatAge(Date.now() - y.savedAt)}
-              </span>
-              <span class="actions">
-                <button class="forget" title="open in the YAML creator" onClick={() => openYamlForEdit(y.hash)}>edit</button>
-                <button class="btn-primary resume" onClick={() => useSavedYaml(y.hash)}>use</button>
-                <button class="forget" title="remove from this device" onClick={() => forgetSavedYaml(y.hash)}>forget</button>
-              </span>
-            </div>
-          )}</For>
-        </div>
-        <div class="resume-foot">
-          <label class="host-pref host-pref-inline" title="Where to run the MultiServer when you `use` one of these.">
-            <span class="host-pref-label">hosting</span>
-            <HostPrefSelect />
-          </label>
-        </div>
-      </div>
-    </Show>
-  );
-}
-
-function OptionsPane() {
-  return (
-    <div class="home-pane" data-pane="options">
-      <ResumeList />
-      <SavedYamlsList />
+    <Show when={meLoaded() && !you()}>
       <div class="home-card">
+        <div class="card-head"><span class="eyebrow">sign in</span></div>
+        <p class="tip">Sign in with Discord to join the queue. Only your Discord name and avatar are used.</p>
+        <div><a class="btn btn-primary btn-discord" href={loginUrl()}>sign in with discord</a></div>
+      </div>
+    </Show>
+  );
+}
+
+function NowPlayingCard() {
+  const ps = () => publicState();
+  return (
+    <div class="home-card">
+      <div class="card-head">
+        <span class="eyebrow">now playing</span>
+        <Show when={ps()}>
+          <span class="eyebrow">{ps()!.totals.checked}/{ps()!.totals.total} locations checked</span>
+        </Show>
+      </div>
+      <Show when={!liveConnected() && you()}>
+        <p class="muted">reconnecting to the server…</p>
+      </Show>
+      <Show when={ps()} fallback={<p class="muted">loading…</p>}>
+        <Show when={ps()!.complete}>
+          <p class="victory">The goal is complete. Thanks to everyone who took a turn!</p>
+        </Show>
+        <Show when={ps()!.goalPending && !ps()!.complete}>
+          <p class="victory">The goal has been reported! Waiting for an admin to confirm it.</p>
+        </Show>
+        <Show when={!ps()!.serverReady && !ps()!.complete}>
+          <p class="muted">{ps()!.serverProblem ? `the game can't start: ${ps()!.serverProblem}` : "the game server is starting up…"}</p>
+        </Show>
+        <Show when={ps()!.current} fallback={
+          <Show when={ps()!.offered} fallback={<p class="muted">{ps()!.complete ? "" : "nobody is playing right now"}</p>}>
+            <div class="now-row">
+              <UserBadge user={ps()!.offered!.user} />
+              <span class="muted">has <Countdown to={ps()!.offered!.expiresAt} /> to start their turn</span>
+            </div>
+          </Show>
+        }>
+          <div class="now-row">
+            <UserBadge user={ps()!.current!.user} />
+            <ChecksMeter checks={ps()!.current!.checks} limit={ps()!.checkLimit} />
+          </div>
+          <div class="now-flags">
+            <span data-on={ps()!.current!.gameConnected ? "true" : undefined}>game {ps()!.current!.gameConnected ? "connected" : "disconnected"}</span>
+            <span data-on={ps()!.current!.trackerConnected ? "true" : undefined}>poptracker {ps()!.current!.trackerConnected ? "connected" : "not connected"}</span>
+          </div>
+        </Show>
+        <Show when={ps()!.paused && !ps()!.complete}>
+          <p class="muted">the queue is paused by an admin</p>
+        </Show>
+        <div class="queue-block">
+          <span class="eyebrow">queue ({ps()!.queue.length})</span>
+          <Show when={ps()!.queue.length > 0} fallback={<p class="muted">nobody waiting</p>}>
+            <ol class="queue-list">
+              <For each={ps()!.queue}>{(u) => <li><UserBadge user={u} small /></li>}</For>
+            </ol>
+          </Show>
+        </div>
+        <div class="queue-block">
+          <span class="eyebrow">recent finds</span>
+          <FindList finds={ps()!.recent} empty="no finds yet" who={(f) => <><UserBadge user={f.who} small /> found </>} />
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+function SessionSummaryView(props: { s: SessionSummary }) {
+  return (
+    <>
+      <Show when={props.s.reason}>
+        <p class="tip">Your turn ended: {END_REASON_TEXT[props.s.reason!]}{props.s.detail ? ` (${props.s.detail})` : ""}.</p>
+      </Show>
+      <span class="eyebrow">what you found</span>
+      <FindList finds={props.s.finds} empty="no new checks" />
+    </>
+  );
+}
+
+function TurnCard() {
+  const y = () => you();
+  // What this tab is doing with the player's running turn, when the game
+  // isn't showing: starting it, failed to, or found it open in another tab.
+  const statusHere = () => {
+    const session = y()?.session, st = playStatus();
+    return session && app.step !== "play" && st?.sessionId === session.id ? st.kind : null;
+  };
+  const ps = () => publicState();
+  const ready = () => prep().kind === "ready";
+  return (
+    <Show when={y()}>
+      <div class="home-card turn-card" data-urgent={y()!.offer ? "true" : undefined}>
+        <div class="card-head"><span class="eyebrow">your turn</span></div>
+        {/* Until the turn's summary arrives (which then says how it ended, and
+            stays right if an admin settles a reported goal later). */}
+        <Show when={endedNotice() && !y()!.lastSession}>
+          <div class="error-box" role="status">
+            <span class="err-title">turn over</span>
+            <span>{END_REASON_TEXT[endedNotice()!.reason]}{endedNotice()!.detail ? ` — ${endedNotice()!.detail}` : ""}</span>
+          </div>
+        </Show>
+        {/* Branches, not one big expression: each branch's buttons are only
+            rebuilt when the branch changes, never by the countdown ticking or
+            an unrelated broadcast (a click mustn't land on a stale button). */}
+        <Switch>
+          <Match when={y()!.banned}>
+            <p class="tip">You can't take part in this event.</p>
+          </Match>
+          <Match when={statusHere() === "starting"}>
+            <p class="tip">Starting your turn…</p>
+          </Match>
+          <Match when={statusHere() === "other-tab"}>
+            <p class="tip">Your turn is open in another tab of this browser. Play there (or close it, then reload this one).</p>
+          </Match>
+          <Match when={statusHere() === "failed"}>
+            <p class="tip">Your turn has started, but the game couldn't be set up in this tab (see the log). Your turn's clock is running.</p>
+            <div><button class="btn-primary" onClick={resumeTurn}>try again</button></div>
+          </Match>
+          <Match when={y()!.session && app.step !== "play"}>
+            <p class="tip">Your turn is running somewhere else: another tab, browser or device. Playing here takes over from it (its game pauses), and this browser starts from its own save.</p>
+            <div><button class="btn-primary" onClick={resumeTurn}>play here</button></div>
+          </Match>
+          <Match when={y()!.attemptUsed && !y()!.session}>
+            <p class="tip">You've had your turn. Thanks for playing!</p>
+            <Show when={y()!.lastSession}><SessionSummaryView s={y()!.lastSession!} /></Show>
+          </Match>
+          <Match when={ps()?.complete}>
+            <p class="tip">The goal is complete, so there are no more turns.</p>
+          </Match>
+          <Match when={y()!.offer}>
+            <p class="tip"><strong>It's your turn!</strong> Start within <Countdown to={y()!.offer?.expiresAt ?? 0} /> or it passes to the next player, and you'd have to join the queue again. Missing it doesn't use up your turn.</p>
+            <div class="turn-actions">
+              <button class="btn-primary" disabled={!ready()} onClick={startTurn}>start my turn</button>
+              <button onClick={leaveQueue}>pass</button>
+            </div>
+            <Show when={!ready()}><p class="muted">your ROM needs to be ready before you can start — see below</p></Show>
+          </Match>
+          <Match when={y()!.inQueue}>
+            <p class="tip">You're <strong>#{y()!.position}</strong> in the queue. Keep this tab open: closing it for more than {formatAway(ps()?.queueAbsentSeconds ?? 60)} drops you from the queue.</p>
+            <div class="turn-actions"><button onClick={leaveQueue}>leave the queue</button></div>
+          </Match>
+          <Match when={!y()!.session}>
+            <p class="tip">You haven't had your turn yet. Join the queue when you're ready to play; it starts as soon as the people ahead of you are done.</p>
+            <div class="turn-actions"><button class="btn-primary" onClick={joinQueue}>join the queue</button></div>
+          </Match>
+        </Switch>
+      </div>
+    </Show>
+  );
+}
+
+function RomCard() {
+  const show = () => {
+    const y = you();
+    return !!y && !y.banned && (!y.attemptUsed || !!y.session) && !publicState()?.complete;
+  };
+  return (
+    <Show when={show()}>
+      <div class="home-card" data-pane="rom">
         <div class="card-head">
-          <span class="eyebrow">generate or import seed</span>
-          <button class="btn-primary yc-open-btn" onClick={() => setYamlCreatorOpen(true)} title="Build a YAML in the browser">Create YAML</button>
+          <span class="eyebrow">your rom</span>
+          <Show when={app.runningApworld}><span class="eyebrow">apworld v{app.runningApworld}</span></Show>
         </div>
-        <Dropzone id="dz-yaml" inputId="yaml-file" accept=".yaml,.yml,.apcrystal,.apcrystalpre,.zip,text/yaml,application/octet-stream" onFile={handleYamlDrop}>
-          <div class="dz-mark">◇</div>
-          <div class="dz-primary">Drop YAML, <b>.apcrystal</b>, or <b>output .zip</b></div>
-        </Dropzone>
-        <label class="host-pref" title="Where to run the MultiServer for this seed.">
-          <span class="host-pref-label">hosting</span>
-          <HostPrefSelect />
-        </label>
-        <Show when={app.yamlErr}>
-          <div class="error-box" id="yaml-err">
-            <span class="err-title">rejected</span>
-            <span id="yaml-err-msg">{app.yamlErr}</span>
-          </div>
+        <Show when={prep().kind === "ready"}>
+          <p class="tip">Your ROM is patched and ready to go.</p>
         </Show>
-      </div>
-    </div>
-  );
-}
-
-function ArtifactChips() {
-  const artifacts = () => app.artifacts || {};
-  const urls = useArtifactUrls(() => app.artifacts);
-  const blobUrl = (name) => urls()[name];
-  const chips = () => {
-    const a = artifacts();
-    const out = [];
-    if (app.hosted) out.push({ href: app.hosted.room_url, title: "archipelago.gg room", kind: "external", sublabel: "host" });
-    const patch = Object.keys(a).find(isPatchName);
-    const spoil = Object.keys(a).find(n => n.endsWith("_Spoiler.txt"));
-    const multi = Object.keys(a).find(n => n.endsWith(".archipelago"));
-    if (patch) out.push({ href: blobUrl(patch), title: patch,       kind: "download", sublabel: "patch",       download: patch });
-    if (spoil) out.push({ href: blobUrl(spoil), title: "spoiler",   kind: "download", sublabel: "txt",         download: spoil });
-    if (multi) out.push({ href: blobUrl(multi), title: "multidata", kind: "download", sublabel: "archipelago", download: multi });
-    return out;
-  };
-  return (
-    <div class="result-grid" id="result-grid">
-      <For each={chips()}>{(c) => (
-        <a class="result-chip" href={c.href} target="_blank" rel="noopener" title={c.title}
-           download={c.kind === "download" ? (c.download || c.title) : undefined}>
-          <span class="chip-left">
-            <span class="label">{c.sublabel}</span>
-            <span class="title">{c.title}</span>
-          </span>
-          <span class="arrow">{c.kind === "download" ? "↓" : "↗"}</span>
-        </a>
-      )}</For>
-    </div>
-  );
-}
-
-function GeneratingPane() {
-  // "Continue" label flips based on whether we have a cached vanilla ROM —
-  // if yes, we skip straight to Play; if not, the user has to upload a ROM.
-  const [continueLabel, setContinueLabel] = createSignal("Continue → ROM");
-  createEffect(async () => {
-    if (!app.gen.done) return;
-    const dbc = await db();
-    const cached = dbc ? await idbGet(dbc, "rom", VANILLA_STORE).catch(() => null) : null;
-    setContinueLabel((cached && cached.byteLength === GB_ROM_SIZE) ? "Continue → Play" : "Continue → ROM");
-  });
-  return (
-    <div class="home-pane" data-pane="generating">
-      <div class="home-card">
-        <div class="card-head"><span class="eyebrow">rolling seed</span></div>
-        <Show when={app.gen.visible}>
-          <div class="progress-bar" id="gen-progress"><div class="progress-sweep"></div></div>
+        <Show when={prep().kind === "saved"}>
+          <p class="tip">Your ROM is saved in this browser. It'll be patched when you join the queue. To use a different one, drop it here.</p>
         </Show>
-        <dl class="seed-meta">
-          <dt>seed id</dt><dd id="gen-seed">{app.seedId || "—"}</dd>
-          <dt>status</dt><dd id="gen-status">{app.gen.status}</dd>
-          <dt>elapsed</dt><dd id="gen-elapsed">{app.gen.elapsed}</dd>
-        </dl>
-        <Show when={app.gen.done}>
-          <div class="seed-result" id="seed-result">
-            <ArtifactChips />
-            <div style="display:flex; gap:12px; margin-top:4px;">
-              <button class="btn-primary" id="next-rom" onClick={continueToRom}>{continueLabel()}</button>
-            </div>
-          </div>
+        <Show when={prep().kind === "need-rom"}>
+          <p class="tip">Get your ROM ready while you wait. Patching happens entirely in your browser, and your ROM never leaves this tab.</p>
+          <p class="legend">accepts: <kbd>.gbc</kbd> · 2,097,152 bytes · Crystal v1.0 or v1.1</p>
         </Show>
-        <Show when={app.gen.error}>
-          <div class="error-box" id="gen-err">
-            <span class="err-title">generation failed</span>
-            <span id="gen-err-msg">{app.gen.error}</span>
-          </div>
-          <button class="err-back" onClick={resetTransient}>← start over</button>
+        <Show when={prep().kind === "saved" || prep().kind === "need-rom"}>
+          <Dropzone id="dz-rom" inputId="rom-file" accept=".gbc,.gb,application/octet-stream" onFile={handleRomDrop}>
+            <div class="dz-mark">▱</div>
+            <div class="dz-primary">Drop vanilla Pokémon Crystal ROM</div>
+          </Dropzone>
         </Show>
-      </div>
-    </div>
-  );
-}
-
-function RomPane() {
-  return (
-    <div class="home-pane" data-pane="rom">
-      <div class="home-card">
-        <div class="card-head"><span class="eyebrow">your rom</span></div>
-        <p class="tip">Patching happens entirely in your browser — Python via Pyodide, in a Web Worker. Your ROM never leaves this tab.</p>
-        <p class="legend">accepts: <kbd>.gbc</kbd> · 2,097,152 bytes · Crystal v1.0 or v1.1</p>
-        <Dropzone id="dz-rom" inputId="rom-file" accept=".gbc,.gb,application/octet-stream" onFile={handleRomDrop}>
-          <div class="dz-mark">▱</div>
-          <div class="dz-primary">Drop vanilla Pokémon Crystal ROM</div>
-        </Dropzone>
-        <Show when={app.rom.progressText}>
+        <Show when={prep().kind === "working"}>
           <div class="rom-progress" id="rom-progress">
             <span class="spinner" aria-hidden="true">◐</span>
-            <span id="rom-progress-text">{app.rom.progressText}</span>
+            <span id="rom-progress-text">{(prep() as any).text}</span>
           </div>
         </Show>
-        <Show when={app.rom.error}>
+        <Show when={prep().kind === "error" || (app.rom.error && (prep().kind === "need-rom" || prep().kind === "saved"))}>
           <div class="error-box" id="rom-err">
-            <span class="err-title">patch failed</span>
-            <span id="rom-err-msg">{app.rom.error}</span>
+            <span class="err-title">rom not ready</span>
+            <span id="rom-err-msg">{prep().kind === "error" ? (prep() as any).message : app.rom.error}</span>
           </div>
-          <button class="err-back" onClick={resetTransient}>← start over</button>
+          <Show when={prep().kind === "error"}>
+            <div><button onClick={() => prepareRom()}>try again</button></div>
+          </Show>
         </Show>
       </div>
-    </div>
+    </Show>
   );
 }
 
@@ -350,9 +299,10 @@ export function Home() {
     <section class="home">
       <Blurb />
       <div class="home-main">
-        <OptionsPane />
-        <GeneratingPane />
-        <RomPane />
+        <AccountCard />
+        <TurnCard />
+        <RomCard />
+        <NowPlayingCard />
       </div>
     </section>
   );

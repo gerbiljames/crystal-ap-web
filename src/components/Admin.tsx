@@ -1,0 +1,187 @@
+import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
+import { adminOpen, setAdminOpen, publicState, you } from "../state.js";
+import { api } from "../lib/api.js";
+import { END_REASON_ADMIN_TEXT, type AdminState, type AdminUserRow } from "../../shared/protocol.js";
+import { UserBadge, ChecksMeter, FindList } from "./Home.jsx";
+
+function fmtTime(ms: number | null) {
+  return ms ? new Date(ms).toLocaleString() : "—";
+}
+
+function AdminBody() {
+  // The last state that loaded: a failed poll keeps showing it (with the
+  // error above) rather than blanking the page. Each poll is reconciled in by
+  // id, so rows that didn't change keep their DOM (and the button under the
+  // pointer, and what's selected or scrolled).
+  const [store, setStore] = createStore<{ data: (AdminState & { users: (AdminState["users"][number] & { id: string })[] }) | null }>({ data: null });
+  const state = () => store.data;
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+  const [loadError, setLoadError] = createSignal<string | null>(null);
+  const refetch = async () => {
+    try {
+      const data = await api.admin.state();
+      setStore("data", reconcile({ ...data, users: data.users.map((r) => ({ ...r, id: r.user.id })) }, { key: "id" }));
+      setLoadError(null);
+    }
+    catch (err: any) { setLoadError(`couldn't load the admin state: ${err?.message || err}`); }
+  };
+  void refetch();
+  const [filter, setFilter] = createSignal("");
+  // Expanded turns, by id: each poll brings new row objects, and this keeps
+  // the ones being read open.
+  const [openTurns, setOpenTurns] = createSignal<Set<string>>(new Set());
+  const toggleTurn = (id: string, open: boolean) => setOpenTurns((prev) => {
+    const next = new Set(prev);
+    if (open) next.add(id); else next.delete(id);
+    return next;
+  });
+  // The public state is pushed live; the user and session lists are fetched,
+  // so poll them while the page is open and visible (and catch up as soon as
+  // it's shown again).
+  const t = setInterval(() => { if (document.visibilityState === "visible") refetch(); }, 5000);
+  const onVisible = () => { if (document.visibilityState === "visible") refetch(); };
+  document.addEventListener("visibilitychange", onVisible);
+  onCleanup(() => { clearInterval(t); document.removeEventListener("visibilitychange", onVisible); });
+
+  const act = async (action: string, body: Record<string, unknown> = {}, confirmText?: string) => {
+    if (confirmText && !confirm(confirmText)) return;
+    setBusy(true);
+    setError(null);
+    try { await api.admin.action(action, body); await refetch(); }
+    catch (err: any) { setError(err?.message || String(err)); }
+    finally { setBusy(false); }
+  };
+
+  const users = () => {
+    const q = filter().trim().toLowerCase();
+    const rows = state()?.users ?? [];
+    return q ? rows.filter((r: AdminUserRow) => r.user.name.toLowerCase().includes(q) || r.user.id.includes(q)) : rows;
+  };
+  const ps = () => publicState();
+
+  return (
+    <div class="admin-body">
+      <Show when={error() || loadError()}><div class="error-box"><span class="err-title">admin</span><span>{error() || loadError()}</span></div></Show>
+
+      <Show when={state()?.goalClaim}>
+        <section class="admin-section admin-goal">
+          <h3>goal reported</h3>
+          <div class="admin-row">
+            <UserBadge user={state()!.goalClaim!.user} small />
+            <span>'s game reported the goal at {fmtTime(state()!.goalClaim!.at)}. The queue is paused until you decide: confirming ends the event; dismissing puts the queue back how it was.</span>
+          </div>
+          <div class="admin-row">
+            <button class="btn-primary" disabled={busy()} onClick={() => act("confirm-goal", {}, "Confirm the goal? The event ends for everyone.")}>confirm — event complete</button>
+            <button disabled={busy()} onClick={() => act("dismiss-goal", {}, "Dismiss the goal claim? The queue goes back to how it was before the claim (still paused, if you'd paused it).")}>dismiss</button>
+          </div>
+        </section>
+      </Show>
+
+      <section class="admin-section">
+        <h3>run</h3>
+        <Show when={ps()}>
+          <div class="admin-row">
+            <span>queue {ps()!.paused ? "paused" : "running"}{ps()!.complete ? " · goal complete" : ""}{ps()!.serverReady ? "" : " · server not ready"}</span>
+            <Show when={ps()!.paused} fallback={<button disabled={busy()} onClick={() => act("pause")}>pause queue</button>}>
+              <button disabled={busy()} onClick={() => act("resume")}>resume queue</button>
+            </Show>
+          </div>
+          <Show when={ps()!.current}>
+            <div class="admin-row">
+              <UserBadge user={ps()!.current!.user} small />
+              <ChecksMeter checks={ps()!.current!.checks} limit={ps()!.checkLimit} />
+              <button class="btn-danger" disabled={busy()} onClick={() => act("end-session", { sessionId: ps()!.current!.sessionId }, `End ${ps()!.current!.user.name}'s turn? It counts as their one turn.`)}>end turn</button>
+            </div>
+          </Show>
+          <Show when={ps()!.offered}>
+            <div class="admin-row">
+              <UserBadge user={ps()!.offered!.user} small />
+              <span class="muted">offered a turn</span>
+              <button disabled={busy()} onClick={() => act("skip", { userId: ps()!.offered!.user.id })}>skip</button>
+            </div>
+          </Show>
+          <h4>queue</h4>
+          <Show when={ps()!.queue.length > 0} fallback={<p class="muted">empty</p>}>
+            <ol class="queue-list">
+              <For each={ps()!.queue}>{(u) => (
+                <li class="admin-row">
+                  <UserBadge user={u} small />
+                  <button disabled={busy()} onClick={() => act("dequeue", { userId: u.id })}>remove</button>
+                </li>
+              )}</For>
+            </ol>
+          </Show>
+        </Show>
+      </section>
+
+      <section class="admin-section">
+        <h3>users</h3>
+        <input class="admin-filter" type="search" placeholder="filter by name or id" value={filter()} onInput={(ev) => setFilter(ev.currentTarget.value)} />
+        <table class="admin-table">
+          <thead><tr><th>user</th><th>id</th><th>turn</th><th></th></tr></thead>
+          <tbody>
+            <For each={users()}>{(r) => (
+              <tr>
+                <td><UserBadge user={r.user} small /></td>
+                <td class="mono-small">{r.user.id}</td>
+                <td>{r.banned ? "banned" : r.attemptUsed ? "used" : "available"}</td>
+                <td class="admin-actions">
+                  <Show when={r.attemptUsed}>
+                    <button disabled={busy()} onClick={() => act("reset-user", { userId: r.user.id }, `Give ${r.user.name} another turn?`)}>reset turn</button>
+                  </Show>
+                  <Show when={r.banned} fallback={
+                    <button class="btn-danger" disabled={busy() || r.user.id === you()?.user.id} onClick={() => act("ban", { userId: r.user.id }, `Ban ${r.user.name}? This also ends their turn or removes them from the queue.`)}>ban</button>
+                  }>
+                    <button disabled={busy()} onClick={() => act("unban", { userId: r.user.id })}>unban</button>
+                  </Show>
+                </td>
+              </tr>
+            )}</For>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="admin-section">
+        <h3>turns</h3>
+        <For each={state()?.sessions ?? []} fallback={<p class="muted">no turns yet</p>}>{(s) => (
+          <details class="admin-session" open={openTurns().has(s.id)} onToggle={(ev) => toggleTurn(s.id, ev.currentTarget.open)}>
+            <summary>
+              <UserBadge user={s.user} small />
+              <span>{fmtTime(s.startedAt)}</span>
+              <span>{s.finds.length} check{s.finds.length === 1 ? "" : "s"}</span>
+              <span class="muted">{s.reason ? END_REASON_ADMIN_TEXT[s.reason] : "running"}</span>
+            </summary>
+            <Show when={s.detail}><p class="muted">{s.detail}</p></Show>
+            <p class="muted">ended {fmtTime(s.endedAt)}</p>
+            <FindList finds={s.finds} empty="no new checks" />
+          </details>
+        )}</For>
+      </section>
+    </div>
+  );
+}
+
+export function Admin() {
+  const syncFromHash = () => setAdminOpen(location.hash === "#admin");
+  onMount(() => {
+    syncFromHash();
+    window.addEventListener("hashchange", syncFromHash);
+    onCleanup(() => window.removeEventListener("hashchange", syncFromHash));
+  });
+  const close = () => { history.replaceState(null, "", location.pathname + location.search); setAdminOpen(false); };
+  return (
+    <Show when={adminOpen() && you()?.admin}>
+      <div class="modal-backdrop">
+        <div class="modal admin-modal" role="dialog" aria-modal="true" aria-label="admin">
+          <div class="modal-head">
+            <span class="modal-title">admin</span>
+            <button class="modal-close" onClick={close} aria-label="close">✕</button>
+          </div>
+          <div class="modal-body"><AdminBody /></div>
+        </div>
+      </div>
+    </Show>
+  );
+}

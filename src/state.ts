@@ -6,52 +6,18 @@
 
 import { createStore } from "solid-js/store";
 import { createSignal } from "solid-js";
-import { loadSessions } from "./lib/sessions.js";
-import { loadYamls } from "./lib/yamls.js";
 import type { OverridePrefs } from "./lib/overrides.js";
-import type { BundledWorld } from "./lib/apworld.js";
-
-const HOST_PREF_KEY = "crystal-ap-host-pref";
-
-// Hosting modes for newly-generated seeds:
-//   "local"  — run MultiServer.py inside this tab (Pyodide loopback). Default.
-//   "remote" — upload multidata to archipelago.gg via the Cloudflare Worker.
-//   "off"    — produce artifacts only; user hosts externally.
-export type HostPref = "local" | "remote" | "off";
-
-function loadHostPref(): HostPref {
-  // Blocked site data makes the accessor throw, which at module load would
-  // take the whole app down with it.
-  let raw: string | null = null;
-  try { raw = localStorage.getItem(HOST_PREF_KEY); } catch {}
-  // Migrate the prior boolean form: "on" meant archipelago.gg; anything else
-  // (including absent) now defaults to "local" since fully-local hosting is
-  // the new zero-config path.
-  if (raw === "on")  return "remote";
-  if (raw === "local" || raw === "remote" || raw === "off") return raw;
-  return "local";
-}
+import type { PublicState, YouState, EndReason } from "../shared/protocol.js";
 
 export const [app, setApp] = createStore({
-  step: "options",                                  // options | generating | rom | patching | play
-  session: { state: "idle", label: "disconnected" }, // drives data-session
+  step: "lobby",                                     // lobby | play
+  session: { state: "idle", label: "offline" },      // drives data-session
 
-  seedId: null,
-  slotName: "Player1",
-  artifacts: null,     // {name: Uint8Array}
-  hosted: null,        // { kind: "remote" | "loopback", ws_url, host?, port?, room_url? }
-  patchedRom: null,    // ArrayBuffer
-  sessions: loadSessions(),
-  yamls: loadYamls(),
+  patchedRom: null as ArrayBuffer | null,
 
-  hostPref: loadHostPref() as HostPref,
-
-  // Transient UI state per-step.
-  gen:   { visible: false, status: "queued", elapsed: "0.0s", error: null, done: false },
-  rom:   { progressText: null, error: null },
-  yamlErr: null,
-  // Display version of the apworld the current seed runs on, once resolved.
-  // The session's recorded version describes its cached ROM, which can lag.
+  // Transient UI state for preparing the ROM.
+  rom: { error: null as string | null },
+  // Display version of the apworld the ROM is patched with, once resolved.
   runningApworld: null as string | null,
 });
 
@@ -59,30 +25,42 @@ export const [app, setApp] = createStore({
 // updated underneath it). Shown above everything, and never cleared.
 export const [pageNotice, setPageNotice] = createSignal<string | null>(null);
 
-export function persistHostPref(mode: HostPref) {
-  try { localStorage.setItem(HOST_PREF_KEY, mode); } catch {}
-  setApp("hostPref", mode);
-}
-
-export function refreshSessions() { setApp("sessions", loadSessions()); }
-export function refreshYamls()    { setApp("yamls", loadYamls()); }
-
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 
-// A pending "which bundled apworld version should play this seed?" question.
-// Raised when a stable patch's basepatch matches no bundled version, so the
-// generator can't be identified and more than one stable version is bundled.
-// `resolve` hands the choice (or null for cancel) back to the resolver.
-export type VersionPick = {
-  game: string;
-  reason: string;
-  candidates: BundledWorld[];
-  resolve: (world: BundledWorld | null) => void;
-};
-export const [versionPick, setVersionPick] = createSignal<VersionPick | null>(null);
-export const [yamlCreatorOpen, setYamlCreatorOpen] = createSignal(false);
+// ---------- server state ----------
+// Whether /api/me has answered yet, and what it said: the signed-in user (null
+// when signed out) and where the Discord sign-in starts.
+export const [meLoaded, setMeLoaded] = createSignal(false);
+export const [loginUrl, setLoginUrl] = createSignal("/api/auth/login");
+export const [you, setYou] = createSignal<YouState | null>(null);
+// What everyone sees, pushed over the live socket.
+export const [publicState, setPublicState] = createSignal<PublicState | null>(null);
+// The server's clock minus ours, from its last push: countdowns to server
+// deadlines (offers, grace) use it so a skewed device clock doesn't mislead.
+export const [clockOffset, setClockOffset] = createSignal(0);
+// Whether the live socket is up; the lobby shows a reconnecting notice when not.
+export const [liveConnected, setLiveConnected] = createSignal(false);
+// How the player's last session ended, shown on the lobby afterwards.
+export const [endedNotice, setEndedNotice] = createSignal<{ reason: EndReason; detail: string | null } | null>(null);
+// Whether the admin page is showing (#admin).
+export const [adminOpen, setAdminOpen] = createSignal(false);
 
-// On mobile the connection form lives in a popup opened from the session chip
+// The ROM the player will play, prepared while they wait: the verified vanilla
+// ROM is in IndexedDB, and the patched ROM is held here once made.
+export type Prep =
+  | { kind: "need-rom" }
+  // The vanilla ROM is in this browser; it's patched once the player queues.
+  | { kind: "saved" }
+  | { kind: "working"; text: string }
+  | { kind: "ready"; overridesHash: string }
+  | { kind: "error"; message: string };
+export const [prep, setPrep] = createSignal<Prep>({ kind: "need-rom" });
+
+// This tab starting a running turn, or having failed to: tells the lobby the
+// turn isn't elsewhere.
+export const [playStatus, setPlayStatus] = createSignal<{ sessionId: string; kind: "starting" | "failed" | "other-tab" } | null>(null);
+
+// On mobile the session panel lives in a popup opened from the session chip
 // rather than below the fold. `connectOpen` toggles that overlay; `isMobile`
 // tracks the same breakpoint the touch play layout uses so the chip only acts
 // as a trigger when the popup presentation is actually in effect.
@@ -93,12 +71,6 @@ const mobileMedia = typeof window !== "undefined" && window.matchMedia
   : null;
 export const [isMobile, setIsMobile] = createSignal(mobileMedia?.matches ?? false);
 mobileMedia?.addEventListener("change", (e) => setIsMobile(e.matches));
-
-// When set, the YAML creator opens in raw-text edit mode pre-populated with
-// this saved YAML. Save will replace the original entry (the hash changes
-// whenever the text changes, so we forget the old one).
-export type YamlEditTarget = { hash: string; text: string; displayName: string };
-export const [yamlEditTarget, setYamlEditTarget] = createSignal<YamlEditTarget | null>(null);
 
 // ---------- overlay settings ----------
 const OVERLAY_KEY = "crystal-ap-overlay";
@@ -178,30 +150,6 @@ export function setControllerPrefs(next: ControllerPrefs) {
   try { localStorage.setItem(CONTROLLER_PREFS_KEY, JSON.stringify(next)); } catch {}
 }
 
-// ---------- tracker settings ----------
-// deferEntrances: Universal Tracker's deferred-entrances mode. On, it leaves
-// randomized entrances unconnected until the player discovers them (so the
-// tracker doesn't spoil the layout) and the console's entrances tab lists the
-// discovered ones. Off, it knows every connection up front and the tab is hidden.
-const TRACKER_PREFS_KEY = "crystal-ap-tracker-prefs";
-export type TrackerPrefs = { deferEntrances: boolean };
-const TRACKER_DEFAULTS: TrackerPrefs = { deferEntrances: true };
-
-function loadTrackerPrefs(): TrackerPrefs {
-  try {
-    const raw = localStorage.getItem(TRACKER_PREFS_KEY);
-    if (!raw) return { ...TRACKER_DEFAULTS };
-    const p = JSON.parse(raw);
-    return { deferEntrances: p.deferEntrances !== false };
-  } catch { return { ...TRACKER_DEFAULTS }; }
-}
-
-export const [trackerPrefs, _setTrackerPrefs] = createSignal<TrackerPrefs>(loadTrackerPrefs());
-export function setTrackerPrefs(next: TrackerPrefs) {
-  _setTrackerPrefs(next);
-  try { localStorage.setItem(TRACKER_PREFS_KEY, JSON.stringify(next)); } catch {}
-}
-
 // ---------- ui settings ----------
 const UI_PREFS_KEY = "crystal-ap-ui-prefs";
 export type UiPrefs = { hideGamepad: boolean };
@@ -254,58 +202,3 @@ export function setRomOverridePrefs(next: OverridePrefs) {
 // overlay expiry. Exactly one of `text` (plain) / `ansi` (SGR-coloured) is set.
 export type LogEntry = { kind: string; time: string; ts: number; text?: string; ansi?: string };
 export const [logLines, setLogLines] = createSignal<LogEntry[]>([]);
-
-// Universal Tracker state. trackerInLogic is the list of in-logic location
-// names from UT's last update. trackerStatus drives the Tracker tab placeholder
-// when a session has no tracker (no yaml, import failed, world incompatible).
-export const [trackerInLogic, setTrackerInLogic] = createSignal<string[]>([]);
-export type TrackerGoMode = "no" | "yes" | "glitched";
-export const [trackerGoMode, setTrackerGoMode] = createSignal<TrackerGoMode>("no");
-// Randomized entrances the tracker knows about, from the same update as
-// trackerInLogic. null until the first update; randomized=false when the seed
-// doesn't shuffle entrances. Deferred, `hidden` counts the undiscovered ones.
-export type TrackerEntrances = { randomized: boolean; deferred: boolean; hidden: number; rows: [string, string][] };
-export const [trackerEntrances, setTrackerEntrances] = createSignal<TrackerEntrances | null>(null);
-export const [trackerStatus, setTrackerStatus] = createSignal<
-  { kind: "idle" } | { kind: "ready" } | { kind: "error"; reason: string }
->({ kind: "idle" });
-
-// Hints relevant to the local player, mirrored from the live session's
-// _read_hints data-storage key. `forYou` is true when we receive the hinted
-// item; otherwise the item is on one of our locations for another player.
-// `hints` is null until the server has replied with the hint list.
-export type HintRow = {
-  receiving: string;
-  finding: string;
-  item: string;
-  location: string;
-  entrance: string;
-  found: boolean;
-  status: string;
-  forYou: boolean;
-  itemFlags: number;
-};
-export const [hints, setHints] = createSignal<HintRow[] | null>(null);
-export const [hintsStatus, setHintsStatus] = createSignal<
-  { kind: "idle" } | { kind: "ready" } | { kind: "error"; reason: string }
->({ kind: "idle" });
-// Hint-point readout for the Hints tab. The server grants points per checked
-// location and charges `costPoints` (derived from the `costPercent`-of-total
-// hint cost) per hint; `available` is how many hints the current `points`
-// balance affords. `available` is null when hints are free (cost 0) or the
-// balance/total isn't known yet. Null until the session reports any of it.
-export type HintPoints = {
-  points: number | null;
-  costPercent: number | null;
-  costPoints: number;
-  available: number | null;
-};
-export const [hintPoints, setHintPoints] = createSignal<HintPoints | null>(null);
-// Own-game item names (and item-name groups) for hint-box autocomplete. Static
-// per game, so fetched once per session.
-export const [hintItemNames, setHintItemNames] = createSignal<string[]>([]);
-// Transient feedback shown in the hints tab right after a !hint request, so the
-// server's response (success text or an error) is visible without switching to
-// the console. Captured from the server log for a short window post-request.
-export type HintFeedback = { text: string; kind: "info" | "ok" | "err" };
-export const [hintFeedback, setHintFeedback] = createSignal<HintFeedback | null>(null);

@@ -1,12 +1,11 @@
-import { onMount, onCleanup, Show } from "solid-js";
+import { onMount, Show } from "solid-js";
 import { app, pageNotice } from "./state.js";
-import { teardownAndReload } from "./actions.js";
+import { startApp } from "./actions.js";
 import { Nav } from "./components/Nav.jsx";
 import { Home } from "./components/Home.jsx";
 import { PlayStep } from "./components/Play.jsx";
 import { Settings } from "./components/Settings.jsx";
-import { YamlCreator } from "./components/YamlCreator.jsx";
-import { VersionPicker } from "./components/VersionPicker.jsx";
+import { Admin } from "./components/Admin.jsx";
 // Side-effect import: installs one-shot gesture listeners on document so
 // the AudioContext is primed by the time the emulator boots (avoids a
 // silent window before the user's first in-emulator input).
@@ -14,17 +13,10 @@ import "./lib/audio.js";
 
 export function App() {
   onMount(() => {
-    // Browser back while in-app: same teardown as clicking the brand.
-    const onPop = () => teardownAndReload();
-    window.addEventListener("popstate", onPop);
-    onCleanup(() => window.removeEventListener("popstate", onPop));
-
-    // Ask the browser to make our IndexedDB storage persistent. Without this,
-    // Chrome (especially on Android) evicts under pressure and the patched
-    // ROM + gen artifacts disappear silently, breaking resume. The promise
-    // resolves with the eventual decision — Chrome grants it based on
-    // engagement heuristics, no permission prompt is shown.
+    // Ask the browser to make our IndexedDB storage persistent, so a reload
+    // mid-turn still finds the session's save.
     navigator.storage?.persist?.().catch(() => {});
+    void startApp();
   });
   return (
     <div class="app" data-step={app.step} data-session={app.session.state}>
@@ -40,8 +32,7 @@ export function App() {
         <PlayStep />
       </main>
       <Settings />
-      <YamlCreator />
-      <VersionPicker />
+      <Admin />
     </div>
   );
 }

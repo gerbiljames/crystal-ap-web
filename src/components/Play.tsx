@@ -1,14 +1,9 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { app, logLines, type LogEntry, overlayPrefs, audioPrefs, setAudioPrefs, trackerInLogic, trackerGoMode, trackerStatus, trackerEntrances, trackerPrefs, hints, hintsStatus, hintPoints, hintItemNames, hintFeedback, connectOpen, setConnectOpen, isMobile, uiPrefs } from "../state.js";
+import { app, logLines, type LogEntry, overlayPrefs, audioPrefs, setAudioPrefs, connectOpen, setConnectOpen, isMobile, uiPrefs, you, publicState } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
-import { isPatchName } from "../lib/zip.js";
-import { connectSession, disconnectSession, disposeEmulator, ensureEmulator, ensureTracker, ensureHints, requestHint, importSaveFile, liveSram, stopTrackerPolling } from "../actions.js";
-import { db, idbGet } from "../lib/idb.js";
-import { SAVE_STORE } from "../lib/constants.js";
-import { logErr, logWarn } from "../lib/log.js";
-import { apWorker } from "../lib/ap-worker.js";
+import { disposeEmulator, ensureEmulator, giveUp } from "../actions.js";
 import { keyBindings, isDefaultKeyBindings } from "../lib/keyboard.js";
-import { useArtifactUrls } from "../lib/artifact-urls.js";
+import { ChecksMeter, FindList, formatCountdown, useNow } from "./Home.jsx";
 
 // Recent log lines drawn over the game canvas while fullscreen. Mounted only
 // for the duration of fullscreen (see ScreenFrame), so everything here —
@@ -71,6 +66,34 @@ function LogOverlay() {
   );
 }
 
+// Over the game while it is frozen: the game only runs while its checks can
+// reach the server.
+function PauseOverlay() {
+  return (
+    <Show when={app.step === "play" && app.session.state !== "live"}>
+      <PauseMessage />
+    </Show>
+  );
+}
+
+// Mounted only while paused, so its clock only ticks then.
+function PauseMessage() {
+  const now = useNow();
+  const graceEndsAt = () => you()?.session?.graceEndsAt ?? null;
+  return (
+    <div class="pause-overlay" role="status">
+      <span class="pause-title">paused</span>
+      <span class="pause-text">
+        {app.session.state === "error"
+          ? `the game couldn't connect — reload the page to try again${graceEndsAt() ? ` (your turn ends in ${formatCountdown(graceEndsAt()! - now())} without a connection)` : ""}`
+          : graceEndsAt()
+            ? `reconnecting… your turn ends in ${formatCountdown(graceEndsAt()! - now())} unless the game reconnects`
+            : "connecting to the server…"}
+      </span>
+    </div>
+  );
+}
+
 function ScreenFrame() {
   let frameRef!: HTMLDivElement;
   const toggleFullscreen = () => {
@@ -103,6 +126,7 @@ function ScreenFrame() {
       <Show when={fullscreen()}><LogOverlay /></Show>
       <div class="screen-wrap">
         <canvas id="screen" width="160" height="144"></canvas>
+        <PauseOverlay />
       </div>
       <div class="screen-label-bottom">
         <Show when={isDefaultKeyBindings(keyBindings())}>
@@ -155,397 +179,97 @@ function Gamepad() {
   );
 }
 
-function TrackerPanel() {
-  const status = () => trackerStatus();
-  const placeholder = () => {
-    const s = status();
-    if (app.session.state !== "live") return "connect a session to see what's in logic";
-    if (s.kind === "error")  return "tracker unavailable: " + (s.reason || "").split("\n")[0];
-    if (s.kind === "idle")   return "waiting for tracker…";
-    if (trackerInLogic().length === 0) return "no locations in logic right now";
-    return null;
-  };
-  return (
-    <div class="tracker-panel">
-      <Show when={app.session.state === "live"}>
-        <div class="tracker-header">
-          <span>{trackerInLogic().length} in logic</span>
-          <Show when={trackerGoMode() !== "no"}>
-            <span
-              class="tracker-go"
-              data-mode={trackerGoMode()}
-              title="UT has_beaten_game on the current logic state"
-            >go mode{trackerGoMode() === "glitched" ? " (glitched)" : ""}</span>
-          </Show>
-        </div>
-      </Show>
-      <Show when={placeholder() !== null}>
-        <div class="tracker-empty">{placeholder()}</div>
-      </Show>
-      <Show when={placeholder() === null}>
-        <ul class="tracker-list">
-          <For each={trackerInLogic()}>{(name) => (
-            <li class="tracker-loc">{name}</li>
-          )}</For>
-        </ul>
-      </Show>
-    </div>
-  );
-}
-
-// Randomized entrances the tracker knows, from the same UT update as the
-// Tracker tab. With deferral on (settings → tracker) that is the ones the
-// player has been through; off, it is every pairing in the seed.
-function EntrancesPanel() {
-  const status = () => trackerStatus();
-  const ents = () => trackerEntrances();
-  const placeholder = () => {
-    const s = status();
-    const e = ents();
-    if (app.session.state !== "live") return "connect a session to see entrances";
-    if (s.kind === "error") return "tracker unavailable: " + (s.reason || "").split("\n")[0];
-    if (s.kind === "idle" || e === null) return "waiting for tracker…";
-    if (!e.randomized) return "entrances aren't randomized in this seed";
-    if (e.rows.length === 0) return "no entrances discovered yet — go through one to see where it leads";
-    return null;
-  };
-  return (
-    <div class="tracker-panel">
-      <Show when={app.session.state === "live" && ents()?.randomized}>
-        <div class="tracker-header">
-          <span>
-            {ents()!.deferred
-              ? `${ents()!.rows.length} discovered · ${ents()!.hidden} unknown`
-              : `${ents()!.rows.length} entrances`}
-          </span>
-          <Show when={!ents()!.deferred}>
-            <span title="this world doesn't defer entrances, so all are known">all known</span>
-          </Show>
-        </div>
-      </Show>
-      <Show when={placeholder() !== null}>
-        <div class="tracker-empty">{placeholder()}</div>
-      </Show>
-      <Show when={placeholder() === null}>
-        <ul class="tracker-list">
-          <For each={ents()!.rows}>{([from, to]) => (
-            <li class="tracker-loc">{from} → {to}</li>
-          )}</For>
-        </ul>
-      </Show>
-    </div>
-  );
-}
-
-function HintsPanel() {
-  let inputRef: HTMLInputElement | undefined;
-  const status = () => hintsStatus();
-  const list = () => hints() || [];
-  const placeholder = () => {
-    const s = status();
-    if (app.session.state !== "live") return "connect a session to see your hints";
-    if (s.kind === "error") return "hints unavailable: " + (s.reason || "").split("\n")[0];
-    if (hints() === null)   return "waiting for hints…";
-    if (list().length === 0) return "no hints yet — request one below";
-    return null;
-  };
-  // Show outstanding (not-yet-found) hints first; stable within each group so
-  // the server's ordering is otherwise preserved.
-  const sorted = () => list()
-    .map((h, i) => [h, i] as const)
-    .sort((a, b) => (Number(a[0].found) - Number(b[0].found)) || (a[1] - b[1]))
-    .map(([h]) => h);
-  // Index of the first found hint — used to drop a divider between the
-  // outstanding group and the found group. -1 when one group is empty (no
-  // boundary to mark).
-  const dividerAt = () => {
-    const s = sorted();
-    const idx = s.findIndex((h) => h.found);
-    return idx > 0 ? idx : -1;
-  };
-  // Type an item name to request a hint. requestHint wraps a bare name in !hint,
-  // sends it, and mirrors the server's response into hintFeedback (below) so the
-  // outcome is visible without switching to the console.
-  const submitHint = () => {
-    if (!inputRef) return;
-    if (requestHint(inputRef.value)) inputRef.value = "";
-  };
-  const onKey = (ev: KeyboardEvent) => {
-    if (ev.key === "Enter") { ev.preventDefault(); submitHint(); }
-  };
-  // Right-hand point readout. Free hints (cost 0) say so; otherwise show how many
-  // hints the balance affords, with the raw points and per-hint price on hover.
-  const pts = () => hintPoints();
-  const pointsLabel = () => {
-    const p = pts();
-    if (!p) return null;
-    if (!p.costPoints) return "hints free";
-    if (p.available === null) return null;
-    return `${p.available} hint${p.available === 1 ? "" : "s"} available`;
-  };
-  const pointsTitle = () => {
-    const p = pts();
-    if (!p || !p.costPoints) return undefined;
-    const bal = p.points === null ? "?" : p.points;
-    return `${bal} points · ${p.costPoints} per hint`;
-  };
-  return (
-    <div class="tracker-panel">
-      <Show when={app.session.state === "live" && (hints() !== null || pointsLabel() !== null)}>
-        <div class="tracker-header">
-          <span>{list().length} hint{list().length === 1 ? "" : "s"}</span>
-          <Show when={pointsLabel() !== null}>
-            <span class="hint-points" title={pointsTitle()}>{pointsLabel()}</span>
-          </Show>
-        </div>
-      </Show>
-      <Show when={placeholder() !== null}>
-        <div class="tracker-empty">{placeholder()}</div>
-      </Show>
-      <Show when={placeholder() === null}>
-        <ul class="tracker-list">
-          <For each={sorted()}>{(h, i) => (
-            <>
-            <Show when={i() === dividerAt()}>
-              <li class="hint-divider" aria-hidden="true"><span>found</span></li>
-            </Show>
-            <li class="hint-row" data-found={h.found}>
-              <span class="hint-item">{h.item}</span>
-              <span class="hint-sep"> is at </span>
-              <span class="hint-loc">{h.location}</span>
-              <span class="hint-who">
-                {h.forYou ? ` (${h.finding})` : ` — for ${h.receiving}`}
-              </span>
-              <span class="hint-status" data-status={h.status}>{h.status}</span>
-            </li>
-            </>
-          )}</For>
-        </ul>
-      </Show>
-      <Show when={hintFeedback()}>
-        <div class="hint-feedback" data-kind={hintFeedback()!.kind}>{hintFeedback()!.text}</div>
-      </Show>
-      <div class="log-input-row">
-        <input
-          ref={inputRef}
-          class="log-input"
-          type="text"
-          list="hint-item-list"
-          autocomplete="off"
-          spellcheck={false}
-          placeholder={app.session.state === "live" ? "item to hint… (sends !hint)" : "connect to request hints"}
-          disabled={app.session.state !== "live"}
-          onKeyDown={onKey}
-        />
-        <datalist id="hint-item-list">
-          <For each={hintItemNames()}>{(name) => <option value={name} />}</For>
-        </datalist>
-        <button
-          class="log-send-btn"
-          type="button"
-          disabled={app.session.state !== "live"}
-          onClick={submitHint}
-          aria-label="request hint"
-          title="request hint"
-        >hint</button>
-      </div>
-    </div>
-  );
-}
-
 function LogArea() {
   let wrapRef;
-  let inputRef: HTMLInputElement | undefined;
   let atBottom = true;
-  const [tab, setTab] = createSignal<"console" | "tracker" | "entrances" | "hints">("console");
-  // Counts shown in the tab names, once a live session has produced them:
-  // locations in logic, entrances known (discovered, or all when not
-  // deferred), and hints not yet found.
-  const live = () => app.session.state === "live";
-  const count = (n: number | null | undefined) => (live() && n != null ? ` (${n})` : "");
-  const trackerCount = () => count(trackerStatus().kind === "ready" ? trackerInLogic().length : null);
-  const entranceCount = () => { const e = trackerEntrances(); return count(e?.randomized ? e.rows.length : null); };
-  const hintCount = () => { const h = hints(); return count(h ? h.filter((x) => !x.found).length : null); };
-  // The entrances tab only exists with deferred entrances on; turning them off
-  // while it is open falls back to the console.
-  createEffect(() => {
-    if (!trackerPrefs().deferEntrances && tab() === "entrances") setTab("console");
-  });
   const onScroll = () => {
     atBottom = wrapRef.scrollHeight - wrapRef.clientHeight - wrapRef.scrollTop < 16;
   };
   createEffect(() => {
     logLines();
     if (!wrapRef) return;
-    if (tab() !== "console") return;
     if (atBottom) queueMicrotask(() => { wrapRef.scrollTop = wrapRef.scrollHeight; });
   });
-  const submitInput = () => {
-    if (!inputRef) return;
-    const text = inputRef.value.trim();
-    if (!text) return;
-    if (app.session.state !== "live") { logWarn("not connected — can't send"); return; }
-    inputRef.value = "";
-    try { apWorker.sendInput(text); }
-    catch (err: any) { logErr("send failed: " + (err?.message || err)); }
-  };
-  const onKey = (ev: KeyboardEvent) => {
-    if (ev.key === "Enter") { ev.preventDefault(); submitInput(); }
-  };
   return (
     <div class="log-area">
       <div class="log-tabs" role="tablist">
-        <button
-          type="button"
-          class="log-tab"
-          role="tab"
-          aria-selected={tab() === "console"}
-          data-active={tab() === "console"}
-          onClick={() => { setTab("console"); stopTrackerPolling(); }}
-        >console</button>
-        <button
-          type="button"
-          class="log-tab"
-          role="tab"
-          aria-selected={tab() === "tracker"}
-          data-active={tab() === "tracker"}
-          onClick={() => { setTab("tracker"); ensureTracker().catch(() => {}); }}
-        >tracker{trackerCount()}</button>
-        <Show when={trackerPrefs().deferEntrances}>
-          <button
-            type="button"
-            class="log-tab"
-            role="tab"
-            aria-selected={tab() === "entrances"}
-            data-active={tab() === "entrances"}
-            onClick={() => { setTab("entrances"); ensureTracker().catch(() => {}); }}
-          >entrances{entranceCount()}</button>
-        </Show>
-        <button
-          type="button"
-          class="log-tab"
-          role="tab"
-          aria-selected={tab() === "hints"}
-          data-active={tab() === "hints"}
-          onClick={() => { setTab("hints"); stopTrackerPolling(); ensureHints().catch(() => {}); }}
-        >hints{hintCount()}</button>
+        <button type="button" class="log-tab" role="tab" aria-selected="true" data-active="true">console</button>
       </div>
-      <Show when={tab() === "console"}>
-        <div id="log-wrap" class="log-wrap" ref={wrapRef} onScroll={onScroll}>
-          <pre id="log">
-            <For each={logLines()}>{(entry) => (
-              <>
-                <span class="log-time">{entry.time} </span>
-                {entry.ansi !== undefined
-                  ? <span class={`log-${entry.kind}`} innerHTML={ansiToHtml(entry.ansi)} />
-                  : <span class={`log-${entry.kind}`}>{entry.text}</span>}
-                {"\n"}
-              </>
-            )}</For>
-          </pre>
-        </div>
-        <div class="log-input-row">
-          <input
-            ref={inputRef}
-            class="log-input"
-            type="text"
-            autocomplete="off"
-            spellcheck={false}
-            placeholder={app.session.state === "live" ? "send message or !command…" : "connect to send messages"}
-            disabled={app.session.state !== "live"}
-            onKeyDown={onKey}
-          />
-          <button
-            class="log-send-btn"
-            type="button"
-            disabled={app.session.state !== "live"}
-            onClick={submitInput}
-            aria-label="send"
-            title="send"
-          >send</button>
-        </div>
-      </Show>
-      <Show when={tab() === "tracker"}>
-        <TrackerPanel />
-      </Show>
-      <Show when={tab() === "entrances"}>
-        <EntrancesPanel />
-      </Show>
-      <Show when={tab() === "hints"}>
-        <HintsPanel />
-      </Show>
+      <div id="log-wrap" class="log-wrap" ref={wrapRef} onScroll={onScroll}>
+        <pre id="log">
+          <For each={logLines()}>{(entry) => (
+            <>
+              <span class="log-time">{entry.time} </span>
+              {entry.ansi !== undefined
+                ? <span class={`log-${entry.kind}`} innerHTML={ansiToHtml(entry.ansi)} />
+                : <span class={`log-${entry.kind}`}>{entry.text}</span>}
+              {"\n"}
+            </>
+          )}</For>
+        </pre>
+      </div>
     </div>
   );
 }
 
-function SessionLinks() {
-  const urls = useArtifactUrls(() => app.artifacts);
-  const items = () => {
-    const out = [];
-    if (app.hosted?.room_url) out.push({ href: app.hosted.room_url, label: "archipelago.gg room", kind: "external" });
-    const a = app.artifacts || {};
-    const blobUrl = (name) => urls()[name];
-    const patch = Object.keys(a).find(isPatchName);
-    const spoil = Object.keys(a).find(n => n.endsWith("_Spoiler.txt"));
-    const multi = Object.keys(a).find(n => n.endsWith(".archipelago"));
-    if (patch) out.push({ href: blobUrl(patch), label: "patch (.apcrystal)", kind: "download", download: patch });
-    if (multi) out.push({ href: blobUrl(multi), label: "multidata",          kind: "download", download: multi });
-    if (spoil) out.push({ href: blobUrl(spoil), label: "spoiler log",        kind: "download", download: spoil });
-    return out;
+// A value with a copy button, for the PopTracker details.
+function CopyField(props: { label: string; value: string; secret?: boolean }) {
+  const [copied, setCopied] = createSignal(false);
+  const [shown, setShown] = createSignal(!props.secret);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(props.value); setCopied(true); setTimeout(() => setCopied(false), 1500); }
+    catch { /* clipboard blocked: the value is selectable anyway */ }
   };
-
-  const downloadSave = async () => {
-    const session = app.sessions.find((s) => s.id === app.seedId);
-    const seedId = app.seedId;
-    if (!seedId) { logErr("no active seed — can't locate save"); return; }
-    const dbc = await db();
-    if (!dbc) { logErr("IDB unavailable"); return; }
-    const stored = await idbGet<ArrayBuffer>(dbc, seedId, SAVE_STORE).catch(() => null);
-    if (!stored || !stored.byteLength) { logWarn("no save data yet — play a bit first"); return; }
-    // The stored copy trails the game by up to a save tick: a save made just
-    // before clicking would be missing from it.
-    const sram = (app.seedId === seedId && liveSram()) || stored;
-    const url = URL.createObjectURL(new Blob([sram], { type: "application/octet-stream" }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${session?.slot || app.slotName || "pokecrystal"}.sav`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
-
-  let importInput!: HTMLInputElement;
-  const onImportPicked = async (ev: Event) => {
-    const input = ev.currentTarget as HTMLInputElement;
-    const f = input.files?.[0];
-    // Reset first so picking the same file again still fires onChange.
-    input.value = "";
-    if (f) await importSaveFile(f);
-  };
-
   return (
-    <div class="session-links" id="session-links">
-      <For each={items()}>{(l) => (
-        <a href={l.href} target="_blank" rel="noopener"
-           data-kind={l.kind === "download" ? "download" : undefined}
-           download={l.kind === "download" ? l.download : undefined}>
-          {l.label}
-        </a>
-      )}</For>
-      <a href="#" data-kind="download" onClick={(ev) => { ev.preventDefault(); downloadSave(); }}>save file</a>
-      <a href="#" data-kind="upload" onClick={(ev) => { ev.preventDefault(); importInput.click(); }}>import save</a>
-      <input ref={importInput} type="file" accept=".sav,.saveRAM,application/octet-stream"
-             style="display:none" onChange={onImportPicked} />
+    <label class="copy-field">
+      <span class="copy-label">{props.label}</span>
+      <input type={shown() ? "text" : "password"} readOnly value={props.value} onFocus={(ev) => ev.currentTarget.select()} />
+      <Show when={props.secret}>
+        <button type="button" onClick={() => setShown((v) => !v)}>{shown() ? "hide" : "show"}</button>
+      </Show>
+      <button type="button" onClick={copy}>{copied() ? "copied" : "copy"}</button>
+    </label>
+  );
+}
+
+function SessionPanel() {
+  const session = () => you()?.session ?? null;
+  const limit = () => publicState()?.checkLimit ?? 10;
+  return (
+    <div class="session-panel">
+      <Show when={session()} fallback={<p class="muted">no session running</p>}>
+        <div class="session-row">
+          <span class="eyebrow">checks</span>
+          <ChecksMeter checks={session()!.checks} limit={limit()} />
+        </div>
+        <FindList finds={session()!.finds} empty="no new checks yet" />
+        <details class="poptracker" open={!session()!.trackerConnected}>
+          <summary>
+            <span class="eyebrow">poptracker</span>
+            <span class="tracker-state" data-on={session()!.trackerConnected ? "true" : undefined}>
+              {session()!.trackerConnected ? "connected" : "not connected"}
+            </span>
+          </summary>
+          <p class="muted">
+            In PopTracker, load the Pokémon Crystal Archipelago pack, click the AP button and enter these.
+            They only work during this turn. <strong>Only PopTracker may use them: anything else that connects with them ends your turn.</strong>
+          </p>
+          <CopyField label="host" value={session()!.credentials.apAddress} />
+          <CopyField label="slot" value={session()!.credentials.slot} />
+          <CopyField label="password" value={session()!.credentials.trackerPassword} secret />
+        </details>
+        <div class="session-actions">
+          <button onClick={giveUp}>end my turn</button>
+        </div>
+      </Show>
     </div>
   );
 }
 
 function PlayControls() {
-  const isLoopback = () => app.hosted?.kind === "loopback";
   const closePopup = () => setConnectOpen(false);
 
-  // Esc closes the mobile connection popup while it's open. PlayStep stays
+  // Esc closes the mobile session popup while it's open. PlayStep stays
   // mounted across steps (CSS-toggled), so guard on the play step too.
   createEffect(() => {
     if (app.step !== "play" || !connectOpen()) return;
@@ -554,39 +278,15 @@ function PlayControls() {
     onCleanup(() => window.removeEventListener("keydown", onKey));
   });
 
-  // Once a session goes live there's nothing left to fill in — dismiss the
-  // popup so the player drops straight back to the emulator.
-  createEffect(() => {
-    if (app.step === "play" && app.session.state === "live") setConnectOpen(false);
-  });
-
   return (
     <div class="play-controls" data-connect-open={connectOpen() ? "true" : undefined}>
       <div class="connect-backdrop" onClick={closePopup}></div>
-      <div class="connect-panel" role={isMobile() ? "dialog" : undefined} aria-modal={isMobile() ? "true" : undefined} aria-label="connection">
+      <div class="connect-panel" role={isMobile() ? "dialog" : undefined} aria-modal={isMobile() ? "true" : undefined} aria-label="your turn">
         <div class="connect-panel-head">
-          <span class="connect-panel-title">connection</span>
+          <span class="connect-panel-title">your turn</span>
           <button class="connect-panel-close" onClick={closePopup} aria-label="close">✕</button>
         </div>
-        <div class="session-form" id="session-form">
-          <label>
-            server
-            <input type="text" id="sess-server" autocomplete="off" spellcheck={false}
-                   placeholder="archipelago.gg:xxxxx"
-                   readOnly={isLoopback()}
-                   title={isLoopback() ? "this seed is self-hosted in this tab" : undefined} />
-          </label>
-          <label>slot<input type="text" id="sess-slot" autocomplete="off" spellcheck={false} value="Player1" readOnly={app.session.state === "live"} /></label>
-          <label>password<input type="password" id="sess-pw" autocomplete="off" readOnly={app.session.state === "live"} /></label>
-          <Show when={!isLoopback()}>
-            <div class="session-actions">
-              <button class="btn-primary" id="btn-connect" onClick={connectSession}
-                      disabled={app.session.state === "connecting"}>connect</button>
-              <button id="btn-disconnect" onClick={disconnectSession}>disconnect</button>
-            </div>
-          </Show>
-        </div>
-        <SessionLinks />
+        <SessionPanel />
       </div>
       <LogArea />
     </div>

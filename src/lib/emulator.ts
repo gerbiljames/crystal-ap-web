@@ -42,6 +42,9 @@ export interface EmulatorHandle {
   sramSize: number;
   // Cart RAM as the game has it right now, ahead of the debounced IDB copy.
   readSram: () => Uint8Array;
+  // Freeze the game in place (no stepping, no audio, inputs released) without
+  // tearing anything down. Memory stays readable for the BizHawk bridge.
+  setPaused: (paused: boolean) => void;
   dispose: () => void;
 }
 
@@ -53,9 +56,11 @@ export interface BootEmulatorOptions {
   // keyed per seed, not per ROM, so a re-patched ROM keeps its save. Null
   // disables persistence.
   saveKey: string | null;
+  // Boot frozen; the caller unpauses once it's allowed to play.
+  startPaused?: boolean;
 }
 
-export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmulatorOptions): Promise<EmulatorHandle | null> {
+export async function bootEmulator({ canvas, romBuf, saveDb, saveKey, startPaused = false }: BootEmulatorOptions): Promise<EmulatorHandle | null> {
   log("booting binjgb…");
   const Module = await Binjgb();
 
@@ -282,9 +287,13 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
   // the natural browser repaint cadence, which is all that matters
   // visually — and audio is gated separately in pushAudio.
   let lastTickSec = 0, leftoverTicks = 0, stateDirty = false;
+  let paused = startPaused;
   function step() {
     if (disposed) return;
     const nowSec = performance.now() / 1000;
+    // Keep the clock moving while paused so unpausing doesn't try to catch
+    // up on the time spent frozen.
+    if (paused) { lastTickSec = nowSec; return; }
     const deltaSec = Math.max(nowSec - (lastTickSec || nowSec), 0);
     const deltaTicks = Math.min(deltaSec, MAX_UPDATE_SEC) * CPU_TICKS_PER_SECOND;
     const ticks = Module._emulator_get_ticks_f64(e);
@@ -427,6 +436,17 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     heldKeys.clear();
   };
   const onVisibility = () => { if (document.visibilityState === "hidden") releaseKeys(); };
+  const setPaused = (p: boolean) => {
+    if (disposed || p === paused) return;
+    paused = p;
+    // Inputs held when the game froze would otherwise still be held when it
+    // resumes, long after the keys were let go.
+    if (p) {
+      releaseKeys();
+      for (const name of ["up", "down", "left", "right", "A", "B", "start", "select"])
+        Module[`_set_joyp_${name}`](e, false);
+    }
+  };
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup",   onKeyUp);
   window.addEventListener("blur",    releaseKeys);
@@ -471,6 +491,7 @@ export async function bootEmulator({ canvas, romBuf, saveDb, saveKey }: BootEmul
     DOMAIN_SIZE,
     sramSize,
     readSram: extractSram,
+    setPaused,
     dispose,
   };
 }
