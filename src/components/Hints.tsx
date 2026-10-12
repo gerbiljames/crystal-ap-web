@@ -64,26 +64,25 @@ export function HintPicker(props: { allowance: HintAllowance }) {
             <li><button disabled={busy() || left() <= 0} onClick={() => setChosen([...chosen(), l])}>{l.name}</button></li>
           )}</For>
         </ul>
-        <Show when={left() <= 0} fallback={
-          <>
-            <Show when={matches().length > SHOWN}><p class="muted">{(matches().length - SHOWN).toLocaleString()} more — narrow the search</p></Show>
-            <Show when={!matches().length}><p class="muted">no unchecked location matches</p></Show>
-          </>
-        }>
-          <p class="muted">that's all your hints — remove one to pick another</p>
-        </Show>
+        <p class="muted hint-status">{
+          left() <= 0 ? "that's all your hints — remove one to pick another"
+            : !matches().length ? "no unchecked location matches"
+            : matches().length > SHOWN ? `${(matches().length - SHOWN).toLocaleString()} more — narrow the search`
+            : ""
+        }</p>
       </Show>
-      {/* Under the list, by the buttons that send them, so picking doesn't move the list. */}
-      <Show when={chosen().length > 0}>
-        <ul class="hint-chosen">
-          <For each={chosen()}>{(l) => (
+      {/* A row for every hint from the start, filled as they're picked, so
+          picking never changes the size of anything. */}
+      <ol class="hint-chosen">
+        <For each={Array.from({ length: a().allowance }, (_, i) => i)}>{(i) => (
+          <Show when={chosen()[i]} fallback={<li class="hint-slot-empty">hint {i + 1}: pick a location above</li>}>
             <li>
-              <span>{l.name}</span>
-              <button class="hint-remove" aria-label={`remove ${l.name}`} disabled={busy()} onClick={() => setChosen(chosen().filter((c) => c.id !== l.id))}>✕</button>
+              <span>{chosen()[i].name}</span>
+              <button class="hint-remove" aria-label={`remove ${chosen()[i].name}`} disabled={busy()} onClick={() => setChosen(chosen().filter((_, j) => j !== i))}>✕</button>
             </li>
-          )}</For>
-        </ul>
-      </Show>
+          </Show>
+        )}</For>
+      </ol>
       <div class="turn-actions">
         <button class="btn-primary" disabled={busy() || !chosen().length} onClick={() => send(chosen().map((l) => l.id))}>
           hint {chosen().length || ""} location{chosen().length === 1 ? "" : "s"} and finish
