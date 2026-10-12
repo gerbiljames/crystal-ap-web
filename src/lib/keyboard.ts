@@ -49,6 +49,46 @@ export function isDefaultKeyBindings(b: Record<InputName, string>): boolean {
   return true;
 }
 
+// What each key (KeyboardEvent.code) is marked with on the player's layout.
+// Bindings are by position, so on AZERTY the default B button (KeyZ) is the
+// key marked W. Chromium can read the whole layout up front; elsewhere a key's
+// mark is learnt the first time it's pressed.
+const [layoutLabels, setLayoutLabels] = createSignal<Record<string, string>>({});
+
+function learnLabel(code: string, key: string) {
+  if (key.length !== 1 || key === " " || layoutLabels()[code] === key) return;
+  setLayoutLabels({ ...layoutLabels(), [code]: key });
+}
+
+if (typeof window !== "undefined") {
+  try {
+    (navigator as any).keyboard?.getLayoutMap?.().then((map: Map<string, string>) => {
+      const labels: Record<string, string> = {};
+      map.forEach((key, code) => { labels[code] = key; });
+      // Keys already pressed know better.
+      setLayoutLabels({ ...labels, ...layoutLabels() });
+    }).catch(() => {});
+  } catch {}
+  // Unmodified presses only: Shift or AltGr give a different character than
+  // the one on the key.
+  window.addEventListener("keydown", (ev) => {
+    if (!ev.shiftKey && !ev.altKey && !ev.ctrlKey && !ev.metaKey) learnLabel(ev.code, ev.key);
+  }, true);
+}
+
+// A key's name for display, as marked on the player's keyboard.
+export function keyLabel(code: string): string {
+  if (code === "ArrowUp") return "↑";
+  if (code === "ArrowDown") return "↓";
+  if (code === "ArrowLeft") return "←";
+  if (code === "ArrowRight") return "→";
+  const key = layoutLabels()[code];
+  if (key) return key.toUpperCase();
+  if (code.startsWith("Key")) return code.slice(3);
+  if (code.startsWith("Digit")) return code.slice(5);
+  return code;
+}
+
 const MODIFIER_CODES = new Set([
   "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight",
   "AltLeft", "AltRight", "MetaLeft", "MetaRight",

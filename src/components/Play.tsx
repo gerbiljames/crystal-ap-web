@@ -7,7 +7,7 @@ import { db, idbGet } from "../lib/idb.js";
 import { SAVE_STORE } from "../lib/constants.js";
 import { logErr, logWarn } from "../lib/log.js";
 import { apWorker } from "../lib/ap-worker.js";
-import { keyBindings, isDefaultKeyBindings } from "../lib/keyboard.js";
+import { keyBindings, isDefaultKeyBindings, keyLabel, DEFAULT_KEY_BINDINGS } from "../lib/keyboard.js";
 import { useArtifactUrls } from "../lib/artifact-urls.js";
 
 // Recent log lines drawn over the game canvas while fullscreen. Mounted only
@@ -106,7 +106,7 @@ function ScreenFrame() {
       </div>
       <div class="screen-label-bottom">
         <Show when={isDefaultKeyBindings(keyBindings())}>
-          <span class="screen-keys">arrows · <kbd>Z</kbd> b · <kbd>X</kbd> a · <kbd>↵</kbd> start · <kbd>⇥</kbd> select</span>
+          <span class="screen-keys">arrows · <kbd>{keyLabel(DEFAULT_KEY_BINDINGS.B)}</kbd> b · <kbd>{keyLabel(DEFAULT_KEY_BINDINGS.A)}</kbd> a · <kbd>↵</kbd> start · <kbd>⇥</kbd> select</span>
         </Show>
         <label class="vol" title="volume">
           <span class="vol-label" classList={{ muted: audioPrefs().volume === 0 }}>
