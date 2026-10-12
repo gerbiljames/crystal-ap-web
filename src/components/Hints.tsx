@@ -56,6 +56,24 @@ export function HintPicker(props: { allowance: HintAllowance }) {
       <Show when={error()}>
         <div class="error-box" role="alert"><span class="err-title">couldn't do that</span><span>{error()}</span></div>
       </Show>
+      <Show when={locations()} fallback={<p class="muted">{error() ? "" : "loading locations…"}</p>}>
+        <input class="admin-filter hint-search" type="search" placeholder={`search ${locations()!.length.toLocaleString()} unchecked locations`}
+          value={query()} onInput={(ev) => setQuery(ev.currentTarget.value)} />
+        <ul class="hint-options">
+          <For each={matches().slice(0, SHOWN)}>{(l) => (
+            <li><button disabled={busy() || left() <= 0} onClick={() => setChosen([...chosen(), l])}>{l.name}</button></li>
+          )}</For>
+        </ul>
+        <Show when={left() <= 0} fallback={
+          <>
+            <Show when={matches().length > SHOWN}><p class="muted">{(matches().length - SHOWN).toLocaleString()} more — narrow the search</p></Show>
+            <Show when={!matches().length}><p class="muted">no unchecked location matches</p></Show>
+          </>
+        }>
+          <p class="muted">that's all your hints — remove one to pick another</p>
+        </Show>
+      </Show>
+      {/* Under the list, by the buttons that send them, so picking doesn't move the list. */}
       <Show when={chosen().length > 0}>
         <ul class="hint-chosen">
           <For each={chosen()}>{(l) => (
@@ -65,19 +83,6 @@ export function HintPicker(props: { allowance: HintAllowance }) {
             </li>
           )}</For>
         </ul>
-      </Show>
-      <Show when={locations()} fallback={<p class="muted">{error() ? "" : "loading locations…"}</p>}>
-        <Show when={left() > 0} fallback={<p class="muted">that's all your hints</p>}>
-          <input class="admin-filter hint-search" type="search" placeholder={`search ${locations()!.length.toLocaleString()} unchecked locations`}
-            value={query()} onInput={(ev) => setQuery(ev.currentTarget.value)} />
-          <ul class="hint-options">
-            <For each={matches().slice(0, SHOWN)}>{(l) => (
-              <li><button disabled={busy()} onClick={() => setChosen([...chosen(), l])}>{l.name}</button></li>
-            )}</For>
-          </ul>
-          <Show when={matches().length > SHOWN}><p class="muted">{(matches().length - SHOWN).toLocaleString()} more — narrow the search</p></Show>
-          <Show when={!matches().length}><p class="muted">no unchecked location matches</p></Show>
-        </Show>
       </Show>
       <div class="turn-actions">
         <button class="btn-primary" disabled={busy() || !chosen().length} onClick={() => send(chosen().map((l) => l.id))}>
