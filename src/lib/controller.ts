@@ -42,11 +42,41 @@ let currentBindings: Record<InputName, number> = loadBindings();
 
 const AXIS_THRESHOLD = 0.5;
 
+// The controller in use: whichever last had a button newly pressed.
+// Browsers list other devices as gamepads too (Steam's virtual pads, vJoy,
+// keyboards and headsets with a gamepad interface), sometimes ahead of the
+// player's, so the first one listed may be one nobody presses. Until a
+// button is pressed, a pad with the standard layout is preferred. (Presses,
+// not stick movement: a pedal or a drifting stick never rests at zero.)
+let activeIndex: number | null = null;
+const lastButtons = new Map<number, boolean[]>();
+
+function connectedPads(): Gamepad[] {
+  return (navigator.getGamepads?.() ?? []).filter((p): p is Gamepad => !!p && p.connected);
+}
+
 // Exposed so the settings panel can peek at what's connected without
 // having to reimplement controller enumeration.
 export function getActivePad(): Gamepad | null {
-  const pads = navigator.getGamepads?.() ?? [];
-  return pads.find(p => p && p.connected) ?? null;
+  const pads = connectedPads();
+  for (const p of pads) {
+    const now = p.buttons.map((b) => !!b?.pressed);
+    const before = lastButtons.get(p.index);
+    lastButtons.set(p.index, now);
+    if (p.index !== activeIndex && now.some((down, i) => down && !before?.[i])) {
+      activeIndex = p.index;
+      log(`using controller: ${p.id}`);
+    }
+  }
+  return pads.find((p) => p.index === activeIndex)
+    ?? pads.find((p) => p.mapping === "standard")
+    ?? pads[0]
+    ?? null;
+}
+
+// How many controllers the browser reports.
+export function connectedPadCount(): number {
+  return connectedPads().length;
 }
 
 export function bindController({ emulator, module }: { emulator: number; module: any }) {
