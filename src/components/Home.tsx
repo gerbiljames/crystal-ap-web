@@ -322,7 +322,7 @@ function RomPane() {
       <div class="home-card">
         <div class="card-head"><span class="eyebrow">your rom</span></div>
         <p class="tip">Patching happens entirely in your browser — Python via Pyodide, in a Web Worker. Your ROM never leaves this tab.</p>
-        <p class="legend">accepts: <kbd>.gbc</kbd> · 2,097,152 bytes · Crystal v1.0 or v1.1</p>
+        <p class="legend">accepts: <kbd>.gbc</kbd> · Crystal v1.0 or v1.1</p>
         <Dropzone id="dz-rom" inputId="rom-file" accept=".gbc,.gb,application/octet-stream" onFile={handleRomDrop}>
           <div class="dz-mark">▱</div>
           <div class="dz-primary">Drop vanilla Pokémon Crystal ROM</div>
