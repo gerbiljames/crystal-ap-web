@@ -76,7 +76,7 @@ function Blurb() {
   return (
     <aside class="blurb">
       <h1><span class="blurb-title">You only get one slot</span><br /><em>one game, everyone's turn.</em></h1>
-      <p>A single Pokémon Crystal Archipelago slot, played in relay. Everyone takes one turn, one at a time, in your browser.</p>
+      <p>A single Pokémon Crystal Archipelago slot, played in relay. Everyone takes one turn, one at a time.</p>
       <ul class="blurb-list">
         <li>Sign in with Discord and join the queue. When it's your turn you have a few minutes to start.</li>
         <li>You start a <b>fresh save</b>, with every item the players before you found already in your bag.</li>
@@ -84,7 +84,6 @@ function Blurb() {
         <li>You get <b>one turn, ever</b>. Your save is deleted when it ends.</li>
         <li>You can connect <b>PopTracker</b> alongside the game. Connecting anything else ends your turn on the spot.</li>
         <li>If the game loses its connection it pauses; stay away too long and your turn ends.</li>
-        <li>Bring your own vanilla Pokémon Crystal ROM (English 1.0 or 1.1). It never leaves your browser.</li>
       </ul>
     </aside>
   );
@@ -265,7 +264,7 @@ function RomCard() {
           <p class="tip">Your ROM is saved in this browser. It'll be patched when you join the queue. To use a different one, drop it here.</p>
         </Show>
         <Show when={prep().kind === "need-rom"}>
-          <p class="tip">Get your ROM ready while you wait. Patching happens entirely in your browser, and your ROM never leaves this tab.</p>
+          <p class="tip">Get your ROM ready while you wait.</p>
           <p class="legend">accepts: <kbd>.gbc</kbd> · 2,097,152 bytes · Crystal v1.0 or v1.1</p>
         </Show>
         <Show when={prep().kind === "saved" || prep().kind === "need-rom"}>
