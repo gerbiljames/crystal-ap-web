@@ -52,6 +52,14 @@ export type Find = {
   undone?: boolean;
 };
 
+// A hint a player made at the end of their turn (shown to admins).
+export type HintMade = {
+  location: string;
+  item: string | null;
+  // Hinted as priority: the item is progression.
+  priority: boolean;
+};
+
 export type SessionSummary = {
   id: string;
   user: PublicUser;
@@ -60,6 +68,8 @@ export type SessionSummary = {
   reason: EndReason | null;
   detail: string | null;
   finds: Find[];
+  // (Admins only.)
+  hints?: HintMade[];
 };
 
 // What everyone sees: who is playing, who is waiting, and recent finds.
@@ -68,6 +78,8 @@ export type PublicState = {
   // earlier one patches again.
   seed: string;
   checkLimit: number;
+  // Hints a turn that uses all its checks may make (less its progression items).
+  hintsPerTurn: number;
   // Admin paused the queue: the current session (if any) carries on, but
   // nobody new is offered a turn.
   paused: boolean;
@@ -89,6 +101,9 @@ export type PublicState = {
   } | null;
   // The player whose turn it is but who hasn't started yet.
   offered: { user: PublicUser; expiresAt: number } | null;
+  // The player who just used all their checks, choosing hints before the
+  // next turn is offered.
+  hinting: { user: PublicUser } | null;
   queue: PublicUser[];
   // Newest first, across all sessions.
   recent: (Find & { who: PublicUser })[];
@@ -132,6 +147,23 @@ export type YouState = {
   } | null;
   // The user's own finished session, once they've had their go.
   lastSession: SessionSummary | null;
+  // Set while it's this user's turn to choose hints (their turn used all its
+  // checks): how many they may make.
+  hints: HintAllowance | null;
+};
+
+// A turn that used all its checks may hint `allowance` locations: the hints
+// per turn, less the progression items the turn found.
+export type HintAllowance = {
+  allowance: number;
+  perTurn: number;
+  progressionFound: number;
+};
+
+// What the player choosing hints may pick from: the slot's locations nobody
+// has checked or hinted.
+export type HintOptions = HintAllowance & {
+  locations: { id: number; name: string }[];
 };
 
 export type ServerMessage =
@@ -178,6 +210,8 @@ export type CheckpointRow = {
 };
 
 export type AdminState = {
+  // Who is choosing hints, and how many they may make.
+  hinting: (HintAllowance & { user: PublicUser }) | null;
   sessions: SessionSummary[];
   users: AdminUserRow[];
   checkpoints: CheckpointRow[];

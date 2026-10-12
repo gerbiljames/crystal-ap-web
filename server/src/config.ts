@@ -23,6 +23,9 @@ export type Config = {
   sessionSecret: string;
   admins: Set<string>;
   checkLimit: number;
+  // Hints a turn that uses all its checks may make, less the progression
+  // items it found.
+  hintsPerTurn: number;
   graceMs: number;
   offerMs: number;
   // How long a queued player can be without an open page before losing their place.
@@ -101,6 +104,7 @@ export function loadConfig(): Config {
     admins: new Set((process.env.ADMIN_DISCORD_IDS || "").split(",").map((s) => s.trim()).filter(Boolean)),
     // Zero would end every turn (or offer) the moment it began.
     checkLimit: int("CHECK_LIMIT", 10, 1),
+    hintsPerTurn: int("HINTS_PER_TURN", 5),
     graceMs: int("DISCONNECT_GRACE_SECONDS", 120, 1) * 1000,
     offerMs: int("READY_TIMEOUT_SECONDS", 180, 1) * 1000,
     queueAbsentMs: int("QUEUE_ABSENT_SECONDS", 60, 1) * 1000,

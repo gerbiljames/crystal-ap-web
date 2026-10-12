@@ -1,4 +1,4 @@
-import { test, beforeEach, afterEach } from "node:test";
+import { test, beforeEach, afterEach, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { Db } from "../src/db.ts";
@@ -16,6 +16,13 @@ class FakeObserver extends EventEmitter {
   slot = 1;
   scouted: number[][] = [];
   goalsReported = 0;
+  // Locations 1 and 2 hold progression items.
+  progression = new Set([1, 2]);
+  items = new Map(Array.from({ length: 20 }, (_, i) => [i + 1, `Item ${i + 1}`] as const));
+  itemsKnown = true;
+  hinted = new Set<number>();
+  hintsMade: { locations: number[]; status: number }[] = [];
+  createHints(locations: number[], status: number) { if (locations.length) this.hintsMade.push({ locations, status }); }
   locationName(id: number) { return `Location ${id}`; }
   reportGoal() { this.goalsReported++; return Promise.resolve(true); }
   scout(ids: number[]) { this.scouted.push(ids); }
@@ -40,6 +47,7 @@ class FakeConn implements ProxyConn {
 
 const config = {
   checkLimit: 3,
+  hintsPerTurn: 5,
   graceMs: 60_000,
   offerMs: 60_000,
   queueAbsentMs: 60_000,
@@ -614,4 +622,85 @@ test("a device resuming by itself only gets the turn back if nobody claimed it s
   assert.throws(() => game.claimPlay("a", null), /another device/, "a device that never had a claim");
   assert.ok(game.holdsPlay(laptop), "the laptop keeps it");
   assert.ok(game.holdsPlay(game.claimPlay("a")), "asking to play here still takes it over");
+});
+
+// a uses all three checks on `ids` (b waiting), and the turn ends on its quota.
+function useAllChecks(t: TestContext, ids: number[]) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const conn = startA();
+  game.join("b");
+  assert.deepEqual(game.checks(conn, ids), ids);
+  observer.confirm(ids);
+  t.mock.timers.tick(2000);
+  assert.equal(game.youFor("a")!.lastSession!.reason, "quota");
+}
+
+test("a turn that uses all its checks hints 5 less its progression items, then the next turn starts", (t) => {
+  useAllChecks(t, [1, 3, 4]);
+  assert.deepEqual(game.youFor("a")!.hints, { allowance: 4, perTurn: 5, progressionFound: 1 });
+  assert.equal(game.publicState().hinting!.user.id, "a");
+  assert.equal(game.youFor("b")!.offer, null, "the next turn waits for the hints");
+  // Only locations nobody has checked or hinted.
+  observer.hinted.add(20);
+  const options = game.hintOptions("a").locations.map((l) => l.id);
+  assert.equal(options.length, 16);
+  for (const id of [1, 3, 4, 20]) assert.ok(!options.includes(id));
+
+  assert.equal(game.submitHints("a", [2, 5]), 2);
+  // Progression items are priority hints; the rest have no priority.
+  assert.deepEqual(observer.hintsMade, [{ locations: [2], status: 30 }, { locations: [5], status: 10 }]);
+  assert.equal(game.youFor("a")!.hints, null);
+  assert.equal(game.publicState().hinting, null);
+  assert.ok(game.youFor("b")!.offer);
+  assert.deepEqual(game.adminState().sessions[0].hints, [
+    { location: "Location 2", item: "Item 2", priority: true },
+    { location: "Location 5", item: "Item 5", priority: false },
+  ]);
+});
+
+test("hints are checked: only the hinting player, within the allowance, of open locations", (t) => {
+  useAllChecks(t, [1, 2, 3]);
+  assert.equal(game.youFor("a")!.hints!.allowance, 3);
+  assert.throws(() => game.submitHints("b", [5]), /don't have hints/);
+  assert.throws(() => game.hintOptions("b"), /don't have hints/);
+  assert.throws(() => game.submitHints("a", [5, 6, 7, 8]), /3 locations at most/);
+  assert.throws(() => game.submitHints("a", [1]), /checked already/);
+  observer.hinted.add(9);
+  assert.throws(() => game.submitHints("a", [9]), /hinted already/);
+  assert.throws(() => game.submitHints("a", [99]), /isn't one of the slot's locations/);
+  assert.throws(() => game.submitHints("a", "5"), /list of location ids/);
+  assert.deepEqual(observer.hintsMade, []);
+  // Nothing hinted is fine too: the turn just passes on.
+  assert.equal(game.submitHints("a", []), 0);
+  assert.ok(game.youFor("b")!.offer);
+});
+
+test("a turn that found as many progression items as the hints per turn gets none", (t) => {
+  config.hintsPerTurn = 2;
+  try {
+    useAllChecks(t, [1, 2, 3]);
+    assert.equal(game.youFor("a")!.hints, null);
+    assert.ok(game.youFor("b")!.offer);
+  } finally { config.hintsPerTurn = 5; }
+});
+
+test("giving up gets no hints", () => {
+  startA();
+  game.join("b");
+  game.giveUp("a");
+  assert.equal(game.youFor("a")!.hints, null);
+  assert.ok(game.youFor("b")!.offer);
+});
+
+test("an admin can skip the hints, and a restart keeps them waiting", (t) => {
+  useAllChecks(t, [3, 4, 5]);
+  game.stop();
+  game = new Game(config, db, seed, observer as unknown as Observer, () => {});
+  assert.equal(game.youFor("a")!.hints!.allowance, 5);
+  assert.equal(game.youFor("b")!.offer, null);
+  assert.throws(() => game.rollback("x", false, "admin"), /choosing hints|checkpoints aren't set up/);
+  game.skipHints();
+  assert.equal(game.youFor("a")!.hints, null);
+  assert.ok(game.youFor("b")!.offer);
+  assert.throws(() => game.skipHints(), /nobody is choosing hints/);
 });

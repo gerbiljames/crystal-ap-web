@@ -8,10 +8,10 @@ import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { toPublic } from "./db.ts";
 import type { Seed } from "./seed.ts";
-import type { Observer, ScoutResult } from "./observer.ts";
+import { HINT_NO_PRIORITY, HINT_PRIORITY, type Observer, type ScoutResult } from "./observer.ts";
 import type { Checkpoints } from "./checkpoints.ts";
 import { selectNewChecks, type Role, type SessionCredentials } from "./rules.ts";
-import type { AdminState, CheckpointKind, CheckpointRow, EndReason, PublicState, RollbackResult, ServerMessage, YouState, Credentials } from "../../shared/protocol.ts";
+import type { AdminState, CheckpointKind, CheckpointRow, EndReason, HintAllowance, HintOptions, PublicState, RollbackResult, ServerMessage, YouState, Credentials } from "../../shared/protocol.ts";
 
 export class HttpError extends Error {
   status: number;
@@ -82,6 +82,10 @@ type Active = {
 
 type Live = { ws: WebSocket; userId: string | null; alive: boolean };
 
+// A turn that used all its checks, its player choosing hints. The next turn
+// waits for them (there's no time limit; an admin can skip it).
+type Hinting = { sessionId: string; userId: string; allowance: number; progressionFound: number };
+
 // Marks the game client's connection as the running turn's before it logs
 // in, so it never waits behind sockets that haven't logged in. Derived from
 // the game password (which the same browser holds), so nothing is stored.
@@ -100,6 +104,7 @@ export function randomPassword(): string {
 export class Game {
   private active: Active | null = null;
   private offer: { userId: string; expiresAt: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  private hinting: Hinting | null = null;
   private paused: boolean;
   private complete: boolean;
   // Ended sessions' checks the server hadn't confirmed when they ended, by
@@ -218,6 +223,11 @@ export class Game {
         this.armLinger(this.active);
         this.updateGrace();
       }
+    }
+    const hinting = this.db.get("hinting");
+    if (hinting) {
+      try { this.hinting = JSON.parse(hinting); }
+      catch { this.db.set("hinting", null); this.log("the saved hint choice is unreadable — dropping it"); }
     }
     const offer = this.db.get("offer");
     if (offer) {
@@ -432,7 +442,7 @@ export class Game {
 
   // Offer the next turn, when there's nobody playing or offered.
   private advance() {
-    if (this.active || this.offer || this.paused || this.rollingBack || this.complete || !this.observer.ready) return;
+    if (this.active || this.offer || this.hinting || this.paused || this.rollingBack || this.complete || !this.observer.ready) return;
     for (const userId of this.db.queue()) {
       this.db.dequeue(userId);
       const user = this.db.user(userId);
@@ -493,6 +503,89 @@ export class Game {
         await this.takeCheckpoint(`after ${name}'s turn`, "turn", s.id);
       }).catch((err) => this.log(`couldn't checkpoint after ${name}'s turn: ${(err as Error).message}`));
     }, TURN_CHECKPOINT_DELAY_MS);
+    if (reason === "quota" && !this.complete) this.beginHints(s.id, s.userId);
+    this.advance();
+    this.broadcast();
+  }
+
+  // ---------------------------------------------------------------------------
+  // hints, after a turn that used all its checks
+  // ---------------------------------------------------------------------------
+  private beginHints(sessionId: string, userId: string) {
+    const progressionFound = this.db.findLocationIds(sessionId).filter((id) => this.observer.progression.has(id)).length;
+    const allowance = Math.max(0, this.config.hintsPerTurn - progressionFound);
+    const name = this.db.user(userId)?.name ?? userId;
+    if (!allowance) {
+      this.log(`${name} found ${progressionFound} progression item(s): no hints`);
+      return;
+    }
+    this.hinting = { sessionId, userId, allowance, progressionFound };
+    this.db.set("hinting", JSON.stringify(this.hinting));
+    this.log(`${name} may hint ${allowance} location(s) (found ${progressionFound} progression item(s))`);
+  }
+
+  private allowanceOf(h: Hinting): HintAllowance {
+    return { allowance: h.allowance, perTurn: this.config.hintsPerTurn, progressionFound: h.progressionFound };
+  }
+
+  private requireHinting(userId: string): Hinting {
+    if (this.hinting?.userId !== userId) throw new HttpError(409, "you don't have hints to choose");
+    return this.hinting;
+  }
+
+  // What the player choosing hints may pick from: locations nobody has
+  // checked or hinted.
+  hintOptions(userId: string): HintOptions {
+    const h = this.requireHinting(userId);
+    if (!this.observer.ready) throw new HttpError(503, "the game server isn't ready — try again in a moment");
+    const o = this.observer;
+    const locations = [...o.allLocations]
+      .filter((id) => !o.checked.has(id) && !o.hinted.has(id))
+      .map((id) => ({ id, name: o.locationName(id) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { ...this.allowanceOf(h), locations };
+  }
+
+  // Hint the chosen locations (none is fine) and pass the turn on. Hints of
+  // progression items are priority hints; the rest have no priority.
+  submitHints(userId: string, locations: unknown): number {
+    const h = this.requireHinting(userId);
+    if (!Array.isArray(locations) || !locations.every((id) => Number.isInteger(id))) throw new HttpError(400, "locations: a list of location ids");
+    const ids = [...new Set(locations as number[])];
+    if (ids.length > h.allowance) throw new HttpError(400, `you can hint ${h.allowance} location${h.allowance === 1 ? "" : "s"} at most`);
+    const o = this.observer;
+    if (ids.length) {
+      if (!o.ready) throw new HttpError(503, "the game server isn't ready — try again in a moment");
+      if (!o.itemsKnown) throw new HttpError(503, "still reading the game's items — try again in a moment");
+      for (const id of ids) {
+        if (!o.allLocations.has(id)) throw new HttpError(400, `${id} isn't one of the slot's locations`);
+        if (o.checked.has(id)) throw new HttpError(409, `${o.locationName(id)} has been checked already`);
+        if (o.hinted.has(id)) throw new HttpError(409, `${o.locationName(id)} has been hinted already`);
+      }
+      const priority = ids.filter((id) => o.progression.has(id));
+      o.createHints(priority, HINT_PRIORITY);
+      o.createHints(ids.filter((id) => !o.progression.has(id)), HINT_NO_PRIORITY);
+      // (The server's own list catches up when it tells us.)
+      for (const id of ids) o.hinted.add(id);
+      this.db.addHints(h.sessionId, ids.map((id) => ({
+        locationId: id, location: o.locationName(id), item: o.items.get(id) ?? null, priority: o.progression.has(id),
+      })), Date.now());
+    }
+    const name = this.db.user(userId)?.name ?? userId;
+    this.log(`${name} hinted ${ids.length ? ids.map((id) => o.locationName(id)).join(", ") : "nothing"}`);
+    this.finishHints();
+    return ids.length;
+  }
+
+  skipHints() {
+    if (!this.hinting) throw new HttpError(409, "nobody is choosing hints");
+    this.log(`${this.db.user(this.hinting.userId)?.name ?? this.hinting.userId}'s hints were skipped by an admin`);
+    this.finishHints();
+  }
+
+  private finishHints() {
+    this.hinting = null;
+    this.db.set("hinting", null);
     this.advance();
     this.broadcast();
   }
@@ -837,6 +930,7 @@ export class Game {
       this.db.dequeue(userId);
       if (this.offer?.userId === userId) this.clearOffer();
       if (this.active?.userId === userId) this.end("admin", "banned");
+      if (this.hinting?.userId === userId) { this.hinting = null; this.db.set("hinting", null); }
       this.advance();
     }
     this.broadcast();
@@ -931,6 +1025,7 @@ export class Game {
     if (!target) throw new HttpError(404, "no such checkpoint");
     if (this.rollingBack) throw new HttpError(409, "a rollback is already under way");
     if (this.active) throw new HttpError(409, "end the running turn first");
+    if (this.hinting) throw new HttpError(409, "a player is choosing hints — skip that first");
     if (!this.observer.ready) throw new HttpError(503, "the game server isn't ready — try again in a moment");
     return target;
   }
@@ -993,6 +1088,7 @@ export class Game {
     return {
       seed: this.seed.hash.slice(0, 16),
       checkLimit: this.config.checkLimit,
+      hintsPerTurn: this.config.hintsPerTurn,
       paused: this.paused,
       complete: this.complete,
       queueAbsentSeconds: Math.round(this.config.queueAbsentMs / 1000),
@@ -1007,6 +1103,7 @@ export class Game {
         trackerConnected: !!s.conns.tracker,
       } : null,
       offered: this.offer ? { user: user(this.offer.userId), expiresAt: this.offer.expiresAt } : null,
+      hinting: this.hinting ? { user: user(this.hinting.userId) } : null,
       queue: queue.map(user),
       recent: this.db.recentFinds(15),
       totals: { checked: this.observer.checked.size, total: this.observer.allLocations.size },
@@ -1047,6 +1144,7 @@ export class Game {
         credentials: credentials!,
       } : null,
       lastSession: !s && u.attempt_used ? this.db.lastSessionFor(userId) : null,
+      hints: this.hinting?.userId === userId ? this.allowanceOf(this.hinting) : null,
     };
   }
 
@@ -1144,6 +1242,7 @@ export class Game {
 
   adminState(): AdminState {
     return {
+      hinting: this.hinting ? { ...this.allowanceOf(this.hinting), user: this.db.publicUser(this.hinting.userId) } : null,
       sessions: this.db.sessions(),
       users: this.db.adminUsers(),
       checkpoints: this.checkpoints?.list() ?? [],

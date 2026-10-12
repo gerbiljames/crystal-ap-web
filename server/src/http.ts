@@ -179,7 +179,14 @@ export function startHttp(deps: HttpDeps) {
         return json(res, 200, { holder: game.claimPlay(userId, from) });
       }
 
+      case "GET /api/hints": return json(res, 200, game.hintOptions(signedIn(req)));
+      case "POST /api/hints": {
+        const userId = signedIn(req);
+        return json(res, 200, { hinted: game.submitHints(userId, (await readBody(req))?.locations) });
+      }
+
       case "GET /api/admin/state": admin(req); return json(res, 200, game.adminState());
+      case "POST /api/admin/skip-hints": admin(req); game.skipHints(); return noContent(res);
       case "POST /api/admin/pause": admin(req); game.setPaused(true); return noContent(res);
       case "POST /api/admin/resume": admin(req); game.setPaused(false); return noContent(res);
       case "POST /api/admin/skip": admin(req); game.skipOffer(userIdArg(await readBody(req))); return noContent(res);

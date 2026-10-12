@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
 import { connect } from "node:net";
-import type { AdminState, CheckpointRow, MeResponse, PublicState, RollbackResult } from "../../shared/protocol.ts";
+import type { AdminState, CheckpointRow, HintOptions, MeResponse, PublicState, RollbackResult } from "../../shared/protocol.ts";
 
 const SEED = process.env.YOGOS_IT_SEED;
 const PYTHON = process.env.YOGOS_IT_PYTHON;
@@ -136,6 +136,13 @@ test("a full turn: PopTracker allowed, cheats dropped, exactly ten checks, then 
   const connected = await gameClient.next("Connected");
   const missing: number[] = connected.missing_locations;
   assert.ok(missing.length > LIMIT + 2);
+  // Which locations hold progression items: the checks below avoid them, so
+  // the turn earns its full five hints.
+  gameClient.send({ cmd: "LocationScouts", locations: missing });
+  const scouted = await gameClient.next("LocationInfo");
+  const progression = new Set<number>(scouted.locations.filter((ni: any) => ni.flags & 1).map((ni: any) => ni.location));
+  const plain = missing.filter((id) => !progression.has(id));
+  assert.ok(progression.size > 0 && plain.length > 30);
 
   // PopTracker joins alongside. Like the real one, it fetches the data
   // package before logging in, which is answered without a server socket.
@@ -160,9 +167,9 @@ test("a full turn: PopTracker allowed, cheats dropped, exactly ten checks, then 
 
   // Fifteen new checks in two batches: the ten, plus the two the batch that
   // used the last one may bring with it, reach the server.
-  gameClient.send({ cmd: "LocationChecks", locations: missing.slice(0, 7) });
+  gameClient.send({ cmd: "LocationChecks", locations: plain.slice(0, 7) });
   await waitFor("seven checks", async () => (await alice.me()).session?.checks === 7);
-  gameClient.send({ cmd: "LocationChecks", locations: missing.slice(7, 15) });
+  gameClient.send({ cmd: "LocationChecks", locations: plain.slice(7, 15) });
 
   await gameClient.waitClosed();
   await tracker.waitClosed();
@@ -185,6 +192,37 @@ test("a full turn: PopTracker allowed, cheats dropped, exactly ten checks, then 
 
   // And alice can't queue again.
   await assert.rejects(alice.post("/api/queue/join"), /409/);
+
+  // She used all her checks and found no progression: five hints, which
+  // hold up the next turn until she's chosen.
+  assert.deepEqual((await alice.me()).hints, { allowance: 5, perTurn: 5, progressionFound: 0 });
+  assert.equal((await publicState()).hinting!.user.name, "alice");
+  const options = await alice.get("/api/hints") as HintOptions;
+  assert.equal(options.locations.length, missing.length - LIMIT - 2);
+  const priorityLoc = missing.find((id) => progression.has(id))!;
+  const plainLoc = plain[20];
+  await alice.post("/api/hints", { locations: [priorityLoc, plainLoc] });
+  assert.equal((await alice.me()).hints, null);
+  assert.equal((await publicState()).hinting, null);
+
+  // MultiServer has them: a progression item as a priority hint, the other
+  // with no priority. (Read straight from MultiServer, as PopTracker would.)
+  const direct = new WebSocket(`ws://127.0.0.1:${PORT + 1000}`);
+  const got: any[] = [];
+  direct.on("message", (d) => { for (const m of JSON.parse(d.toString())) got.push(m); });
+  await waitFor("RoomInfo", async () => got.find((m) => m.cmd === "RoomInfo"));
+  direct.send(JSON.stringify([{ cmd: "Connect", password: null, game: "", name: "Player1", uuid: "it-hints", tags: ["Tracker"], items_handling: 0, version: { major: 0, minor: 6, build: 8, class: "Version" }, slot_data: false }]));
+  const login_ = await waitFor("Connected", async () => got.find((m) => m.cmd === "Connected"));
+  const key = `_read_hints_${login_.team}_${login_.slot}`;
+  direct.send(JSON.stringify([{ cmd: "Get", keys: [key] }]));
+  const hints: any[] = (await waitFor("hints", async () => got.find((m) => m.cmd === "Retrieved"))).keys[key];
+  direct.close();
+  const status = new Map(hints.map((h) => [h.location, h.status]));
+  assert.equal(hints.length, 2);
+  assert.equal(status.get(priorityLoc), 30);
+  assert.equal(status.get(plainLoc), 10);
+  // Hinted locations aren't offered again.
+  assert.match(logs, /alice hinted /);
 });
 
 test("anything else using the PopTracker password ends the turn", { skip }, async () => {
@@ -240,13 +278,18 @@ test("scouting can't create hints", { skip }, async () => {
   const gameClient = new ApClient();
   await gameClient.connect(gameConnect(creds.gamePassword));
   const connected = await gameClient.next("Connected");
-  const team = connected.team, slot = connected.slot;
-  const loc = connected.missing_locations[0];
+  const key = `_read_hints_${connected.team}_${connected.slot}`;
+  // (An earlier turn ended with hints of its own.)
+  gameClient.send({ cmd: "Get", keys: [key] });
+  const before: any[] = (await gameClient.next("Retrieved")).keys[key] ?? [];
+  const loc = connected.missing_locations.find((id: number) => !before.some((h) => h.location === id));
+  gameClient.received.length = 0;
   gameClient.send({ cmd: "LocationScouts", locations: [loc], create_as_hint: 2 });
   await gameClient.next("LocationInfo");
-  gameClient.send({ cmd: "Get", keys: [`_read_hints_${team}_${slot}`] });
-  const retrieved = await gameClient.next("Retrieved");
-  assert.deepEqual(retrieved.keys[`_read_hints_${team}_${slot}`] ?? [], []);
+  gameClient.send({ cmd: "Get", keys: [key] });
+  const after: any[] = (await gameClient.next("Retrieved")).keys[key] ?? [];
+  assert.equal(after.length, before.length);
+  assert.ok(!after.some((h) => h.location === loc));
   await carol.post("/api/session/end");
   await gameClient.waitClosed();
 });

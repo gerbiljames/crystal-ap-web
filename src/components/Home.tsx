@@ -3,6 +3,7 @@ import { app, you, publicState, meLoaded, loginUrl, liveConnected, endedNotice, 
 import { handleRomDrop, joinQueue, leaveQueue, startTurn, prepareRom, resumeTurn } from "../actions.js";
 import { END_REASON_TEXT, type Find, type PublicUser, type SessionSummary } from "../../shared/protocol.js";
 import { Dropzone } from "./Dropzone.jsx";
+import { HintPicker } from "./Hints.jsx";
 
 // The server's time, ticking once a second for as long as the calling
 // component is mounted: use it (or <Countdown>) only inside what shows a
@@ -73,6 +74,7 @@ export function FindList<T extends Find>(props: { finds: T[]; empty?: string; wh
 
 function Blurb() {
   const limit = () => publicState()?.checkLimit ?? 10;
+  const hints = () => publicState()?.hintsPerTurn ?? 5;
   return (
     <aside class="blurb">
       <h1><span class="blurb-title">You only get one slot</span><br /><em>one game, everyone's turn.</em></h1>
@@ -81,6 +83,9 @@ function Blurb() {
         <li>Sign in with Discord and join the queue. When it's your turn you have a few minutes to start.</li>
         <li>You start a <b>fresh save</b>, with every item the players before you found already in your bag.</li>
         <li>Your turn ends after <b>{limit()} new checks</b>. Locations someone already checked don't count.</li>
+        <Show when={hints() > 0}>
+          <li>Use all your checks and you can <b>hint</b> up to {hints()} locations before the next turn, one fewer for each progression item you found. Hints show in PopTracker.</li>
+        </Show>
         <li>You get <b>one turn, ever</b>. Your save is deleted when it ends.</li>
         <li>You can connect one <b>PopTracker</b> alongside the game. Connecting a second, or anything else, ends your turn on the spot.</li>
         <li>If the game loses its connection it pauses; stay away too long and your turn ends.</li>
@@ -119,7 +124,14 @@ function NowPlayingCard() {
           <p class="muted">{ps()!.serverProblem ? `the game can't start: ${ps()!.serverProblem}` : "the game server is starting up…"}</p>
         </Show>
         <Show when={ps()!.current} fallback={
-          <Show when={ps()!.offered} fallback={<p class="muted">{ps()!.complete ? "" : "nobody is playing right now"}</p>}>
+          <Show when={ps()!.offered} fallback={
+            <Show when={ps()!.hinting} fallback={<p class="muted">{ps()!.complete ? "" : "nobody is playing right now"}</p>}>
+              <div class="now-row">
+                <UserBadge user={ps()!.hinting!.user} />
+                <span class="muted">is choosing hints; the next turn starts when they're done</span>
+              </div>
+            </Show>
+          }>
             <div class="now-row">
               <UserBadge user={ps()!.offered!.user} />
               <span class="muted">has <Countdown to={ps()!.offered!.expiresAt} /> to start their turn</span>
@@ -205,6 +217,9 @@ function TurnCard() {
           <Match when={y()!.session && app.step !== "play"}>
             <p class="tip">Your turn is running somewhere else: another tab, browser or device. Playing here takes over from it (its game pauses), and this browser starts from its own save.</p>
             <div><button class="btn-primary" onClick={resumeTurn}>play here</button></div>
+          </Match>
+          <Match when={y()!.hints && !y()!.session}>
+            <HintPicker allowance={y()!.hints!} />
           </Match>
           <Match when={y()!.attemptUsed && !y()!.session}>
             <p class="tip">You've had your turn. Thanks for playing!</p>

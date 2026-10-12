@@ -9,6 +9,12 @@ import { CLIENT_GOAL } from "./rules.ts";
 
 export type ScoutResult = { location: number; item: string; receiver: string | null };
 
+// A hint's status in MultiServer (NetUtils.HintStatus).
+export const HINT_NO_PRIORITY = 10;
+export const HINT_PRIORITY = 30;
+// The progression bit of an item's flags (NetworkItem.flags).
+const PROGRESSION = 0b001;
+
 
 // A socket to MultiServer, as the observer, the goal report and the proxy
 // all open one. Compressed, though it's loopback, because MultiServer warns
@@ -28,6 +34,14 @@ export class Observer extends EventEmitter {
   // Every location in the slot, and those checked so far.
   readonly allLocations = new Set<number>();
   readonly checked = new Set<number>();
+  // What each location holds, from a scout of every location on connecting:
+  // whether its item is progression decides a turn's hints.
+  readonly progression = new Set<number>();
+  // Each location's item, by name.
+  readonly items = new Map<number, string>();
+  private scoutedAll = new Set<number>();
+  // The slot's locations someone has a hint for.
+  readonly hinted = new Set<number>();
   ready = false;
   // Why this seed can't be played here (seen on Connected), or null.
   problem: string | null = null;
@@ -81,6 +95,29 @@ export class Observer extends EventEmitter {
   scout(locations: number[]) {
     if (!locations.length) return;
     this.send([{ cmd: "LocationScouts", locations, create_as_hint: 0 }]);
+  }
+
+  // Whether every location's item is known (the scout made on connecting has
+  // come back), so `progression` can be trusted.
+  get itemsKnown(): boolean {
+    return this.ready && [...this.allLocations].every((id) => this.scoutedAll.has(id));
+  }
+
+  // Hint the given locations of the slot, as everyone's trackers will show
+  // them. (Clients can't make hints: the proxy drops every way to.)
+  createHints(locations: number[], status: number) {
+    if (!locations.length) return;
+    this.send([{ cmd: "CreateHints", locations, player: this.slot, status }]);
+  }
+
+  private get hintsKey() { return `_read_hints_${this.team}_${this.slot}`; }
+
+  private noteHints(hints: unknown) {
+    this.hinted.clear();
+    for (const h of Array.isArray(hints) ? hints : []) {
+      if (h?.finding_player === this.slot && typeof h.location === "number") this.hinted.add(h.location);
+    }
+    this.emit("hints");
   }
 
   // Tell MultiServer the slot reached its goal (after an admin confirmed it).
@@ -211,6 +248,16 @@ export class Observer extends EventEmitter {
           break;
         }
         this.ready = true;
+        // Everything each location holds (for which items are progression),
+        // and the hints there are, kept current.
+        this.scoutedAll.clear();
+        this.progression.clear();
+        this.hinted.clear();
+        this.send([
+          { cmd: "LocationScouts", locations: [...this.allLocations], create_as_hint: 0 },
+          { cmd: "Get", keys: [this.hintsKey] },
+          { cmd: "SetNotify", keys: [this.hintsKey] },
+        ]);
         this.opts.log(`[observer] watching ${this.opts.slotName}: ${this.checked.size}/${this.allLocations.size} locations checked`);
         if (missed.length) this.emit("checked", missed);
         this.emit("change");
@@ -240,11 +287,23 @@ export class Observer extends EventEmitter {
         if (fresh.length) { this.emit("checked", fresh); this.emit("change"); }
         break;
       }
+      case "Retrieved": {
+        if (msg.keys && this.hintsKey in msg.keys) this.noteHints(msg.keys[this.hintsKey]);
+        break;
+      }
+      case "SetReply": {
+        if (msg.key === this.hintsKey) this.noteHints(msg.value);
+        break;
+      }
       case "LocationInfo": {
         const results: ScoutResult[] = [];
         for (const ni of msg.locations ?? []) {
+          this.scoutedAll.add(ni.location);
+          if (ni.flags & PROGRESSION) this.progression.add(ni.location);
+          else this.progression.delete(ni.location);
           const receiverGame = this.playerGames.get(ni.player) ?? this.opts.game;
           const item = this.itemNames.get(receiverGame)?.get(ni.item) ?? `item ${ni.item}`;
+          this.items.set(ni.location, item);
           results.push({ location: ni.location, item, receiver: ni.player === this.slot ? null : (this.playerNames.get(ni.player) ?? `player ${ni.player}`) });
         }
         this.emit("scouted", results);

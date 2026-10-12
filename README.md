@@ -16,14 +16,15 @@ Built on [crystal.ap](https://github.com/gerbiljames/crystal-ap-web), which prov
 - **PopTracker.** Players get connection details for one PopTracker. If a second PopTracker, or any other client, connects with those details, the turn ends.
 - **Disconnects.** The game pauses whenever it isn't connected. If it stays disconnected for `DISCONNECT_GRACE_SECONDS`, the turn ends.
 - **When a turn ends**, its credentials are discarded and every connection using them is closed. MultiServer itself is only reachable from inside the container, through the proxy that checks those credentials.
-- **Off limits.** There are no hints, chat, `!` commands, release or collect.
+- **Hints.** A turn that uses all its checks may hint `HINTS_PER_TURN` (5) locations, less one for each progression item it found. The player picks unchecked locations on the site, and the next turn waits until they're done (there's no time limit; an admin can skip it). Hints of progression items are priority hints, the rest have no priority. They show in PopTracker, not on the site.
+- **Off limits.** Players can't make hints any other way, and there's no chat, `!` commands, release or collect.
 
 ## What the server can and can't enforce
 
 The game runs in each player's browser, so the browser holds the credentials for its turn. A player willing to use devtools can drive that game connection with a script instead of the emulator. The server can't tell the two apart (nothing can, for a game running on the player's machine). What it does guarantee, whatever connects:
 
 - At most `CHECK_LIMIT` new checks per turn, and one turn per Discord account. The message that uses the last check may bring up to two more with it: one action can complete several locations at once (a catch that's both a dexsanity and a dexcountsanity check), and cutting it short would leave the rest for the next player's game to send, using up their checks.
-- No hints, chat, `!` commands, release or collect.
+- No hints but the ones the server makes at the end of a turn that used all its checks; no chat, `!` commands, release or collect.
 - Only one PopTracker alongside the game. Anything else using the turn's details ends the turn.
 - Data storage only takes the writes the Crystal client makes: its own keys, operations and value shapes, all bounded in size. So a turn can't stall MultiServer, fill its memory or corrupt what later players read.
 
@@ -75,6 +76,7 @@ The container serves plain HTTP on port 8080, so put TLS in front of it (the exa
 | `SESSION_SECRET` | — | Signs the login cookie. Use a long random string. |
 | `ADMIN_DISCORD_IDS` | — | Comma-separated Discord user ids allowed on the admin page (menu → admin). |
 | `CHECK_LIMIT` | `10` | New checks per turn. |
+| `HINTS_PER_TURN` | `5` | Hints a turn that uses all its checks may make, less one per progression item it found. |
 | `DISCONNECT_GRACE_SECONDS` | `120` | How long the game may be disconnected before the turn ends. |
 | `READY_TIMEOUT_SECONDS` | `180` | How long a player has to start their turn. |
 | `QUEUE_ABSENT_SECONDS` | `60` | How long a queued player may have no page open before losing their place. |

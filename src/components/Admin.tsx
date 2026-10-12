@@ -141,6 +141,13 @@ function AdminBody() {
                 <button class="btn-danger" disabled={busy()} onClick={() => act("end-session", { sessionId: ps()!.current!.sessionId }, `End ${ps()!.current!.user.name}'s turn? It counts as their one turn.`)}>end turn</button>
               </div>
             </Show>
+            <Show when={state()?.hinting}>
+              <div class="admin-row">
+                <UserBadge user={state()!.hinting!.user} small />
+                <span class="muted">choosing {state()!.hinting!.allowance} hint{state()!.hinting!.allowance === 1 ? "" : "s"} (found {state()!.hinting!.progressionFound} progression)</span>
+                <button disabled={busy()} onClick={() => act("skip-hints", {}, `Skip ${state()!.hinting!.user.name}'s hints? The next turn starts and their hints are lost.`)}>skip hints</button>
+              </div>
+            </Show>
             <Show when={ps()!.offered}>
               <div class="admin-row">
                 <UserBadge user={ps()!.offered!.user} small />
@@ -255,6 +262,14 @@ function AdminBody() {
               <Show when={s.detail}><p class="muted">{s.detail}</p></Show>
               <p class="muted">ended {fmtTime(s.endedAt)}</p>
               <FindList finds={s.finds} empty="no new checks" />
+              <Show when={s.hints?.length}>
+                <span class="eyebrow">hinted</span>
+                <ul class="find-list">
+                  <For each={s.hints}>{(h) => (
+                    <li><span class="find-loc">{h.location}</span><span class="find-sep"> → </span><span class="find-item">{h.item ?? "?"}</span>{h.priority ? <span class="find-sep"> (priority)</span> : null}</li>
+                  )}</For>
+                </ul>
+              </Show>
             </details>
           )}</For>
         </section>

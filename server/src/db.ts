@@ -5,7 +5,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { EndReason, Find, PublicUser, SessionSummary, AdminUserRow, CheckpointKind, CheckpointRow } from "../../shared/protocol.ts";
+import type { EndReason, Find, HintMade, PublicUser, SessionSummary, AdminUserRow, CheckpointKind, CheckpointRow } from "../../shared/protocol.ts";
 
 export type UserRow = {
   id: string;
@@ -110,6 +110,16 @@ export class Db {
       CREATE TABLE IF NOT EXISTS kv (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      );
+      -- Hints a player made at the end of their turn.
+      CREATE TABLE IF NOT EXISTS hints (
+        session_id TEXT NOT NULL REFERENCES sessions(id),
+        location_id INTEGER NOT NULL,
+        location TEXT NOT NULL,
+        item TEXT,
+        priority INTEGER NOT NULL,
+        at INTEGER NOT NULL,
+        PRIMARY KEY (session_id, location_id)
       );
       CREATE TABLE IF NOT EXISTS checkpoints (
         id TEXT PRIMARY KEY,
@@ -250,6 +260,15 @@ export class Db {
       FROM sessions s LEFT JOIN users u ON u.id = s.user_id
       ORDER BY s.started_at DESC LIMIT ?
     `).all(limit) as (SessionRow & { uname: string | null; uavatar: string | null })[];
+    const hints = new Map<string, HintMade[]>();
+    const hintRows = this.q(`
+      SELECT * FROM hints WHERE session_id IN (SELECT id FROM sessions ORDER BY started_at DESC LIMIT ?)
+      ORDER BY at, rowid
+    `).all(limit) as any[];
+    for (const h of hintRows) {
+      if (!hints.has(h.session_id)) hints.set(h.session_id, []);
+      hints.get(h.session_id)!.push({ location: h.location, item: h.item ?? null, priority: !!h.priority });
+    }
     const finds = new Map<string, Find[]>();
     const findRows = this.q(`
       SELECT * FROM finds WHERE session_id IN (SELECT id FROM sessions ORDER BY started_at DESC LIMIT ?)
@@ -267,6 +286,7 @@ export class Db {
       reason: r.reason,
       detail: r.detail,
       finds: finds.get(r.id) ?? [],
+      hints: hints.get(r.id) ?? [],
     }));
   }
   private summary(row: SessionRow): SessionSummary {
@@ -279,6 +299,16 @@ export class Db {
       detail: row.detail,
       finds: this.finds(row.id),
     };
+  }
+
+  // --- hints ---
+  addHints(sessionId: string, hints: { locationId: number; location: string; item: string | null; priority: boolean }[], at: number) {
+    this.transaction(() => {
+      for (const h of hints) {
+        this.q("INSERT OR IGNORE INTO hints (session_id, location_id, location, item, priority, at) VALUES (?, ?, ?, ?, ?, ?)")
+          .run(sessionId, h.locationId, h.location, h.item, h.priority ? 1 : 0, at);
+      }
+    });
   }
 
   // --- finds ---

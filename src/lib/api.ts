@@ -1,7 +1,7 @@
 // The YOGOS server's HTTP API, and the live socket it pushes queue and session
 // state over. Same origin as the page; the session cookie rides along.
 
-import type { MeResponse, ServerMessage, AdminState, CheckpointRow, RollbackResult } from "../../shared/protocol.js";
+import type { MeResponse, ServerMessage, AdminState, CheckpointRow, RollbackResult, HintOptions } from "../../shared/protocol.js";
 import { logWarn } from "./log.js";
 
 export class ApiError extends Error {
@@ -34,6 +34,9 @@ export const api = {
   // resumeFrom: the claim this device last had, when resuming by itself.
   claimPlay:   (resumeFrom?: string | null) =>
     request<{ holder: string }>("POST", "/api/session/claim", resumeFrom === undefined ? undefined : { resumeFrom }),
+  // After a turn that used all its checks: what may be hinted, and hinting it.
+  hintOptions: () => request<HintOptions>("GET", "/api/hints"),
+  sendHints:   (locations: number[]) => request<{ hinted: number }>("POST", "/api/hints", { locations }),
   admin: {
     state:     () => request<AdminState>("GET", "/api/admin/state"),
     action:    (action: string, body: Record<string, unknown> = {}) => request<void>("POST", `/api/admin/${action}`, body),
