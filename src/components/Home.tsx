@@ -87,7 +87,7 @@ function Blurb() {
           <li>Use all your checks and you can <b>hint</b> up to {hints()} locations before the next turn, one fewer for each progression item you found. Hints show in PopTracker.</li>
         </Show>
         <li>You get <b>one turn, ever</b>. Your save is deleted when it ends.</li>
-        <li>You can connect one <b>PopTracker</b> alongside the game. Connecting a second, or anything else, ends your turn on the spot.</li>
+        <li>You can connect one <b>PopTracker</b> alongside the game. Connecting anything else ends your turn on the spot.</li>
         <li>If the game loses its connection it pauses; stay away too long and your turn ends.</li>
       </ul>
     </aside>

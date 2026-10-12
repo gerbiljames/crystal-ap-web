@@ -13,7 +13,7 @@ Built on [crystal.ap](https://github.com/gerbiljames/crystal-ap-web), which prov
 - **Starting.** When a player's turn comes up they have `READY_TIMEOUT_SECONDS` to start it. Missing it passes the turn on without using up their attempt.
 - **Fresh save.** Each turn starts from a fresh save. With `remote_items` on, the server hands the new game every item found so far. The save lives only for the turn, and the browser deletes it when the turn ends.
 - **What counts.** Only *new* checks count toward the limit. Locations someone else already checked are free, and the server never forwards checks past the limit.
-- **PopTracker.** Players get connection details for one PopTracker. If a second PopTracker, or any other client, connects with those details, the turn ends.
+- **PopTracker.** Players get connection details for one PopTracker. A second PopTracker is turned away while the first is connected (one that's stopped answering is replaced instead). Any other client connecting with those details ends the turn.
 - **Disconnects.** The game pauses whenever it isn't connected. If it stays disconnected for `DISCONNECT_GRACE_SECONDS`, the turn ends.
 - **When a turn ends**, its credentials are discarded and every connection using them is closed. MultiServer itself is only reachable from inside the container, through the proxy that checks those credentials.
 - **Hints.** A turn that uses all its checks may hint `HINTS_PER_TURN` (5) locations, less one for each progression item it found. The player picks unchecked locations on the site, and the next turn waits until they're done (there's no time limit; an admin can skip it). Hints of progression items are priority hints, the rest have no priority. They show in PopTracker, not on the site.

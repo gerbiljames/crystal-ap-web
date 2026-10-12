@@ -154,7 +154,7 @@ test("a newer connection in the same role replaces the old one once the server a
   assert.deepEqual(game.checks(first, [1]), []);
 });
 
-test("a second PopTracker while the first still answers ends the turn", async () => {
+test("a second PopTracker while the first still answers is turned away", async () => {
   const conn = startA();
   const first = new FakeConn();
   game.attach(first);
@@ -163,9 +163,24 @@ test("a second PopTracker while the first still answers ends the turn", async ()
   game.attach(second);
   game.connected(second, "tracker", 1);
   await new Promise((r) => setImmediate(r));
-  assert.equal(game.youFor("a")!.session, null);
-  assert.equal(game.youFor("a")!.lastSession!.reason, "violation");
-  for (const c of [conn, first, second]) assert.equal(c.closed?.code, 4000);
+  assert.equal(second.closed?.code, 4005);
+  assert.equal(first.closed, null);
+  assert.equal(conn.closed, null);
+  assert.ok(game.youFor("a")!.session!.trackerConnected, "the turn carries on with the first");
+});
+
+test("a PopTracker waiting to hear about the first closes with the turn", () => {
+  startA();
+  const first = new FakeConn();
+  game.attach(first);
+  game.connected(first, "tracker", 1);
+  const second = new FakeConn();
+  // Its answer never comes before the turn ends.
+  first.answers = () => new Promise(() => {});
+  game.attach(second);
+  game.connected(second, "tracker", 1);
+  game.giveUp("a");
+  assert.equal(second.closed?.code, 4000);
 });
 
 test("PopTracker reconnecting over a dead socket replaces it", async () => {

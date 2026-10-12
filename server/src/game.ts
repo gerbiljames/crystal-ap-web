@@ -27,7 +27,7 @@ export interface ProxyConn {
 }
 
 // How long an earlier PopTracker connection has to answer when another logs
-// in: one that does means two are running, which ends the turn.
+// in: one that does is still there, so the new one is turned away.
 const TRACKER_PROBE_MS = 5000;
 // The least time a new turn has to make its first game connection.
 const FIRST_CONNECT_MS = 5 * 60 * 1000;
@@ -60,6 +60,10 @@ type Active = {
   conns: Record<Role, ProxyConn | null>;
   // Connections whose login we've passed but MultiServer hasn't answered yet.
   logins: Set<ProxyConn>;
+  // PopTrackers that logged in while one was connected, waiting to hear
+  // whether that one is still there (then they're turned away) or not (then
+  // they take its place).
+  trackersWaiting: Set<ProxyConn>;
   newChecks: Set<number>;
   // Sent to the server, not confirmed yet. They count against the quota
   // until the server confirms them (or the session ends).
@@ -196,7 +200,7 @@ export class Game {
     if (this.goalRetry) clearTimeout(this.goalRetry);
     // Nothing more reaches MultiServer from a player once we stop watching
     // it, or a check could land that this server never hears about.
-    for (const conn of [this.active?.conns.game, this.active?.conns.tracker, ...(this.active?.logins ?? [])]) conn?.close(1012, "the server is restarting");
+    for (const conn of [this.active?.conns.game, this.active?.conns.tracker, ...(this.active?.logins ?? []), ...(this.active?.trackersWaiting ?? [])]) conn?.close(1012, "the server is restarting");
     clearInterval(this.sweeper);
     clearInterval(this.pinger);
     if (this.offer) clearTimeout(this.offer.timer);
@@ -340,6 +344,7 @@ export class Game {
       id, userId, startedAt, gamePassword, trackerPassword,
       conns: { game: null, tracker: null },
       logins: new Set(),
+      trackersWaiting: new Set(),
       newChecks: new Set(), pending: new Set(),
       closing: false,
       lingering: false,
@@ -493,7 +498,7 @@ export class Game {
     if (unconfirmed.size) { this.unconfirmed.set(s.id, unconfirmed); this.saveUnconfirmed(); }
     // The session's credentials die with it: nothing can log in with them
     // again, and every connection that used them is closed here.
-    for (const conn of [s.conns.game, s.conns.tracker, ...s.logins]) conn?.close(4000, `session ended: ${reason}`);
+    for (const conn of [s.conns.game, s.conns.tracker, ...s.logins, ...s.trackersWaiting]) conn?.close(4000, `session ended: ${reason}`);
     this.log(`session ${s.id} ended: ${reason}${detail ? ` (${detail})` : ""}`);
     this.sendTo(s.userId, { type: "session-ended", sessionId: s.id, reason, detail });
     const name = this.db.user(s.userId)?.name ?? s.userId;
@@ -698,7 +703,7 @@ export class Game {
   // Only now does it replace the role's previous connection (a reload, or a
   // reconnect over a half-dead socket), so a login the server goes on to
   // refuse can't knock the working one off. Never more than one of each: a
-  // second PopTracker while the first is still there ends the turn.
+  // second PopTracker while the first is still there is turned away.
   connected(conn: ProxyConn, role: Role, slot: number): boolean {
     const s = this.active;
     if (!s || (!s.logins.has(conn) && s.conns[role] !== conn)) return false;
@@ -708,27 +713,36 @@ export class Game {
       return false;
     }
     const old = s.conns[role];
+    if (role === "tracker" && old && old !== conn) {
+      this.checkTrackerGone(s, old, conn);
+      return true;
+    }
     s.conns[role] = conn;
     if (role === "game") s.everConnected = true;
-    if (old && old !== conn) {
-      if (role === "game") old.close(4001, "replaced by a newer connection");
-      else this.checkTrackerGone(s, old);
-    }
+    if (old && old !== conn) old.close(4001, "replaced by a newer connection");
     this.updateGrace();
     this.broadcast();
     return true;
   }
 
   // Another PopTracker logged in. If the earlier one still answers, the player
-  // is running two; if not, this is PopTracker reconnecting after its network
-  // dropped, and the earlier socket just hadn't been noticed dead yet.
-  private checkTrackerGone(s: Active, old: ProxyConn) {
+  // is trying to run two: the new one is turned away. If not, this is
+  // PopTracker reconnecting after its network dropped, and the earlier socket
+  // just hadn't been noticed dead yet: the new one takes over.
+  private checkTrackerGone(s: Active, old: ProxyConn, conn: ProxyConn) {
+    s.trackersWaiting.add(conn);
     old.answers(TRACKER_PROBE_MS).then((there) => {
-      if (this.active !== s) return;
-      if (!there) { old.close(4001, "replaced by a newer connection"); return; }
-      this.violation("a second PopTracker connected");
-      // No longer the session's tracker, so ending it didn't close this one.
-      old.close(4000, "session ended: violation");
+      // (Gone meanwhile: the turn ended, or it disconnected.)
+      if (this.active !== s || !s.trackersWaiting.delete(conn)) return;
+      if (there && s.conns.tracker === old) {
+        this.log("[proxy] turned away a second PopTracker");
+        conn.close(4005, "another PopTracker is already connected to this turn");
+        return;
+      }
+      if (s.conns.tracker === old) old.close(4001, "replaced by a newer connection");
+      s.conns.tracker = conn;
+      this.updateGrace();
+      this.broadcast();
     });
   }
 
@@ -736,6 +750,7 @@ export class Game {
     const s = this.active;
     if (!s) return;
     s.logins.delete(conn);
+    s.trackersWaiting.delete(conn);
     if (s.conns.game !== conn && s.conns.tracker !== conn) return;
     for (const role of ["game", "tracker"] as Role[]) {
       if (s.conns[role] !== conn) continue;
