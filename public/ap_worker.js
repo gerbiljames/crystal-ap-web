@@ -544,6 +544,16 @@ _flog.handlers.clear()
 _flog.propagate = False
 logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
 
+# Hints and chat are blocked, so the server's tips about !hint and !help
+# would only mislead: leave them out of the console.
+_UNUSABLE_TIPS = ("A !hint costs ", "Now that you are connected, you can use !help")
+class _DropUnusableTips(logging.Filter):
+    def filter(self, record):
+        try: return not str(record.getMessage()).startswith(_UNUSABLE_TIPS)
+        except Exception: return True
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_DropUnusableTips())
+
 from CommonClient import server_loop
 from worlds._bizhawk.context import BizHawkClientContext, _game_watcher
 # context.py binds connect/disconnect by name at import, so the patches on
