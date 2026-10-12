@@ -107,9 +107,6 @@ function NowPlayingCard() {
     <div class="home-card">
       <div class="card-head">
         <span class="eyebrow">now playing</span>
-        <Show when={ps()}>
-          <span class="eyebrow">{ps()!.totals.checked}/{ps()!.totals.total} locations checked</span>
-        </Show>
       </div>
       <Show when={!liveConnected() && you()}>
         <p class="muted">reconnecting to the server…</p>
