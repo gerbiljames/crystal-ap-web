@@ -12,7 +12,7 @@ export type PublicUser = {
 export type EndReason =
   | "quota"      // reached the check limit
   | "grace"      // the game client stayed disconnected past the grace period
-  | "violation"  // something other than the game client or PopTracker used the credentials
+  | "violation"  // something other than the game client and one PopTracker used the credentials
   | "gave-up"    // the player ended it themselves
   | "admin"      // an admin ended it
   | "goal"       // the game reported the slot's goal: the event is complete
@@ -21,7 +21,7 @@ export type EndReason =
 export const END_REASON_TEXT: Record<EndReason, string> = {
   "quota": "you used all of your checks",
   "grace": "the game was disconnected for too long",
-  "violation": "a client other than the game or PopTracker connected with your session's details",
+  "violation": "something other than the game and one PopTracker connected with your session's details",
   "gave-up": "you ended the session",
   "admin": "an admin ended the session",
   "goal": "the goal was completed",

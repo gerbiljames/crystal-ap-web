@@ -207,6 +207,28 @@ test("anything else using the PopTracker password ends the turn", { skip }, asyn
   assert.equal(me.lastSession!.finds.length, 0);
 });
 
+test("a second PopTracker ends the turn", { skip }, async () => {
+  const trudy = await login("trudy");
+  await trudy.post("/api/queue/join");
+  await waitFor("trudy's offer", async () => (await trudy.me()).offer);
+  await trudy.post("/api/session/start");
+  const creds = (await trudy.me()).session!.credentials;
+
+  const gameClient = new ApClient();
+  await gameClient.connect(gameConnect(creds.gamePassword));
+  await gameClient.next("Connected");
+  const first = new ApClient("/");
+  await first.connect(popTrackerConnect(creds.trackerPassword));
+  await first.next("Connected");
+  // The first is still there (it answers pings), so this isn't a reconnect.
+  const second = new ApClient("/");
+  await second.connect(popTrackerConnect(creds.trackerPassword));
+  await Promise.all([first.waitClosed(), second.waitClosed(), gameClient.waitClosed()]);
+  const me = await trudy.me();
+  assert.equal(me.lastSession!.reason, "violation");
+  assert.equal(me.lastSession!.detail, "a second PopTracker connected");
+});
+
 test("scouting can't create hints", { skip }, async () => {
   const carol = await login("carol");
   await carol.post("/api/queue/join");

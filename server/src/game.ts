@@ -21,8 +21,14 @@ export class HttpError extends Error {
 // A proxied client connection, as the game sees it.
 export interface ProxyConn {
   close(code: number, reason: string): void;
+  // Whether the client answers a ping within `ms` (a connection whose
+  // network died without closing it doesn't).
+  answers(ms: number): Promise<boolean>;
 }
 
+// How long an earlier PopTracker connection has to answer when another logs
+// in: one that does means two are running, which ends the turn.
+const TRACKER_PROBE_MS = 5000;
 // The least time a new turn has to make its first game connection.
 const FIRST_CONNECT_MS = 5 * 60 * 1000;
 // How soon to try telling MultiServer about a confirmed goal again.
@@ -590,7 +596,8 @@ export class Game {
   // logged into our slot (anything else is a violation and ends the session).
   // Only now does it replace the role's previous connection (a reload, or a
   // reconnect over a half-dead socket), so a login the server goes on to
-  // refuse can't knock the working one off. Never more than one of each.
+  // refuse can't knock the working one off. Never more than one of each: a
+  // second PopTracker while the first is still there ends the turn.
   connected(conn: ProxyConn, role: Role, slot: number): boolean {
     const s = this.active;
     if (!s || (!s.logins.has(conn) && s.conns[role] !== conn)) return false;
@@ -602,10 +609,26 @@ export class Game {
     const old = s.conns[role];
     s.conns[role] = conn;
     if (role === "game") s.everConnected = true;
-    if (old && old !== conn) old.close(4001, "replaced by a newer connection");
+    if (old && old !== conn) {
+      if (role === "game") old.close(4001, "replaced by a newer connection");
+      else this.checkTrackerGone(s, old);
+    }
     this.updateGrace();
     this.broadcast();
     return true;
+  }
+
+  // Another PopTracker logged in. If the earlier one still answers, the player
+  // is running two; if not, this is PopTracker reconnecting after its network
+  // dropped, and the earlier socket just hadn't been noticed dead yet.
+  private checkTrackerGone(s: Active, old: ProxyConn) {
+    old.answers(TRACKER_PROBE_MS).then((there) => {
+      if (this.active !== s) return;
+      if (!there) { old.close(4001, "replaced by a newer connection"); return; }
+      this.violation("a second PopTracker connected");
+      // No longer the session's tracker, so ending it didn't close this one.
+      old.close(4000, "session ended: violation");
+    });
   }
 
   detach(conn: ProxyConn) {

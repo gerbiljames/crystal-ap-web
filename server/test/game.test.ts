@@ -32,7 +32,10 @@ const closeCode = (c: FakeConn) => c.closed?.code;
 
 class FakeConn implements ProxyConn {
   closed: { code: number; reason: string } | null = null;
+  // Whether the client is still there to answer a ping.
+  alive = true;
   close(code: number, reason: string) { this.closed = { code, reason }; }
+  answers() { return Promise.resolve(this.alive && !this.closed); }
 }
 
 const config = {
@@ -131,6 +134,36 @@ test("a newer connection in the same role replaces the old one once the server a
   assert.ok(game.youFor("a")!.session);
   // The replaced connection can no longer check anything.
   assert.deepEqual(game.checks(first, [1]), []);
+});
+
+test("a second PopTracker while the first still answers ends the turn", async () => {
+  const conn = startA();
+  const first = new FakeConn();
+  game.attach(first);
+  game.connected(first, "tracker", 1);
+  const second = new FakeConn();
+  game.attach(second);
+  game.connected(second, "tracker", 1);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(game.youFor("a")!.session, null);
+  assert.equal(game.youFor("a")!.lastSession!.reason, "violation");
+  for (const c of [conn, first, second]) assert.equal(c.closed?.code, 4000);
+});
+
+test("PopTracker reconnecting over a dead socket replaces it", async () => {
+  const conn = startA();
+  const first = new FakeConn();
+  game.attach(first);
+  game.connected(first, "tracker", 1);
+  first.alive = false;
+  const second = new FakeConn();
+  game.attach(second);
+  game.connected(second, "tracker", 1);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(closeCode(first), 4001);
+  assert.equal(second.closed, null);
+  assert.equal(conn.closed, null);
+  assert.ok(game.youFor("a")!.session!.trackerConnected);
 });
 
 test("a violation ends the session and closes every connection", () => {

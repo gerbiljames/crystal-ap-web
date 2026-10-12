@@ -56,6 +56,15 @@ export function handleApClient(client: WebSocket, deps: {
       try { client.close(code, reason.slice(0, 120)); } catch {}
       try { upstream?.close(); } catch {}
     },
+    answers(ms) {
+      if (closed || client.readyState !== WebSocket.OPEN) return Promise.resolve(false);
+      return new Promise((resolve) => {
+        const onPong = () => { clearTimeout(timer); resolve(true); };
+        const timer = setTimeout(() => { client.off("pong", onPong); resolve(false); }, ms);
+        client.once("pong", onPong);
+        try { client.ping(); } catch {}
+      });
+    },
   };
 
   // Nothing to tell the client until we've seen the server ourselves.

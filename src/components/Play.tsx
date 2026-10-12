@@ -257,7 +257,7 @@ function SessionPanel() {
           </summary>
           <p class="muted">
             In PopTracker, load the Pokémon Crystal Archipelago pack, click the AP button and enter these.
-            They only work during this turn. <strong>Only PopTracker may use them: anything else that connects with them ends your turn.</strong>
+            They only work during this turn. <strong>Only one PopTracker may use them: a second one, or anything else that connects with them, ends your turn.</strong>
           </p>
           <CopyField label="host" value={session()!.credentials.apAddress} />
           <CopyField label="slot" value={session()!.credentials.slot} />

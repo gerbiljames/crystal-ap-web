@@ -82,7 +82,7 @@ function Blurb() {
         <li>You start a <b>fresh save</b>, with every item the players before you found already in your bag.</li>
         <li>Your turn ends after <b>{limit()} new checks</b>. Locations someone already checked don't count.</li>
         <li>You get <b>one turn, ever</b>. Your save is deleted when it ends.</li>
-        <li>You can connect <b>PopTracker</b> alongside the game. Connecting anything else ends your turn on the spot.</li>
+        <li>You can connect one <b>PopTracker</b> alongside the game. Connecting a second, or anything else, ends your turn on the spot.</li>
         <li>If the game loses its connection it pauses; stay away too long and your turn ends.</li>
       </ul>
     </aside>
