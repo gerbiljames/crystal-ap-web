@@ -52,7 +52,7 @@ export type Find = {
   undone?: boolean;
 };
 
-// A hint a player made at the end of their turn (shown to admins).
+// A hint a player made at the end of their turn, and what was there.
 export type HintMade = {
   location: string;
   item: string | null;
@@ -68,7 +68,7 @@ export type SessionSummary = {
   reason: EndReason | null;
   detail: string | null;
   finds: Find[];
-  // (Admins only.)
+  // The hints made after the turn (for the player themselves and admins).
   hints?: HintMade[];
 };
 

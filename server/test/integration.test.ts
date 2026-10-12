@@ -203,6 +203,10 @@ test("a full turn: PopTracker allowed, cheats dropped, exactly ten checks, then 
   const plainLoc = plain[20];
   await alice.post("/api/hints", { locations: [priorityLoc, plainLoc] });
   assert.equal((await alice.me()).hints, null);
+  // Now she can see what was there.
+  const seen = (await alice.me()).lastSession!.hints!;
+  assert.deepEqual(seen.map((h) => h.priority), [true, false]);
+  assert.ok(seen.every((h) => h.item && !h.item.startsWith("item ")));
   assert.equal((await publicState()).hinting, null);
 
   // MultiServer has them: a progression item as a priority hint, the other

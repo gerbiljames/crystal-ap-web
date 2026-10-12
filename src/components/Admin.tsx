@@ -267,7 +267,7 @@ function AdminBody() {
                 <span class="eyebrow">hinted</span>
                 <ul class="find-list">
                   <For each={s.hints}>{(h) => (
-                    <li><span class="find-loc">{h.location}</span><span class="find-sep"> → </span><span class="find-item">{h.item ?? "?"}</span>{h.priority ? <span class="find-sep"> (priority)</span> : null}</li>
+                    <li><span class="find-item">{h.item ?? "something"}</span><span class="find-sep"> at </span><span class="find-loc">{h.location}</span>{h.priority ? <span class="find-sep"> (priority)</span> : null}</li>
                   )}</For>
                 </ul>
               </Show>

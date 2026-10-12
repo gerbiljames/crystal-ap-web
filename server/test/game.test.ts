@@ -652,10 +652,13 @@ test("a turn that uses all its checks hints 5 less its progression items, then t
   assert.equal(game.youFor("a")!.hints, null);
   assert.equal(game.publicState().hinting, null);
   assert.ok(game.youFor("b")!.offer);
-  assert.deepEqual(game.adminState().sessions[0].hints, [
+  const made = [
     { location: "Location 2", item: "Item 2", priority: true },
     { location: "Location 5", item: "Item 5", priority: false },
-  ]);
+  ];
+  assert.deepEqual(game.adminState().sessions[0].hints, made);
+  // The player sees what was at the locations they hinted.
+  assert.deepEqual(game.youFor("a")!.lastSession!.hints, made);
 });
 
 test("hints are checked: only the hinting player, within the allowance, of open locations", (t) => {

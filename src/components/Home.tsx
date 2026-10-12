@@ -171,6 +171,14 @@ function SessionSummaryView(props: { s: SessionSummary }) {
       </Show>
       <span class="eyebrow">what you found</span>
       <FindList finds={props.s.finds} empty="no new checks" />
+      <Show when={props.s.hints?.length}>
+        <span class="eyebrow">what you hinted</span>
+        <ul class="find-list">
+          <For each={props.s.hints}>{(h) => (
+            <li><span class="find-item">{h.item ?? "something"}</span><span class="find-sep"> at </span><span class="find-loc">{h.location}</span></li>
+          )}</For>
+        </ul>
+      </Show>
     </>
   );
 }

@@ -298,6 +298,7 @@ export class Db {
       reason: row.reason,
       detail: row.detail,
       finds: this.finds(row.id),
+      hints: this.hintsFor(row.id),
     };
   }
 
@@ -309,6 +310,11 @@ export class Db {
           .run(sessionId, h.locationId, h.location, h.item, h.priority ? 1 : 0, at);
       }
     });
+    this.sessionChanged(sessionId);
+  }
+  hintsFor(sessionId: string): HintMade[] {
+    return (this.q("SELECT * FROM hints WHERE session_id = ? ORDER BY at, rowid").all(sessionId) as any[])
+      .map((h) => ({ location: h.location, item: h.item ?? null, priority: !!h.priority }));
   }
 
   // --- finds ---
