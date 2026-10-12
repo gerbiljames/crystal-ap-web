@@ -11,9 +11,10 @@ export type ScoutResult = { location: number; item: string; receiver: string | n
 
 
 // A socket to MultiServer, as the observer, the goal report and the proxy
-// all open one. Uncompressed: it's loopback, where deflate only costs CPU.
+// all open one. Compressed, though it's loopback, because MultiServer warns
+// every player whose connection isn't.
 export function connectUpstream(url: string): WebSocket {
-  return new WebSocket(url, { perMessageDeflate: false, maxPayload: 64 * 1024 * 1024 });
+  return new WebSocket(url, { perMessageDeflate: true, maxPayload: 64 * 1024 * 1024 });
 }
 
 export type ObserverOptions = {
