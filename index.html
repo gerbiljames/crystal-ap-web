@@ -1659,7 +1659,8 @@
   .btn-danger:hover { background: var(--coral-deep); border-color: var(--coral); }
   .victory { color: var(--amber); font-family: var(--display); font-style: italic; font-size: 17px; margin: 0; }
 
-  .user-badge { display: inline-flex; align-items: center; gap: 8px; min-width: 0; color: var(--ink-0); }
+  /* Middle-aligned: a flex box takes its baseline from the avatar's bottom edge, which drops whatever text sits beside it. */
+  .user-badge { display: inline-flex; align-items: center; gap: 8px; min-width: 0; color: var(--ink-0); vertical-align: middle; }
   .user-badge .avatar { width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0; object-fit: cover; }
   .user-badge .avatar-blank { background: var(--bg-3); display: inline-block; }
   .user-badge[data-small="true"] .avatar { width: 18px; height: 18px; }
