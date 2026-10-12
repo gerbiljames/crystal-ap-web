@@ -238,13 +238,15 @@ function SessionPanel() {
   return (
     <div class="session-panel">
       <Show when={session()} fallback={<p class="muted">no session running</p>}>
-        <div class="session-row">
-          <span class="eyebrow">checks</span>
-          <ChecksMeter checks={session()!.checks} limit={limit()} />
-        </div>
-        {/* One 12px line at 1.5 line height plus the list's 6px gap per check. */}
-        <div class="session-finds" style={{ height: `min(${limit() * 24 - 6}px, 40vh)` }}>
-          <FindList finds={session()!.finds} empty="no new checks yet" />
+        <div class="checks-box">
+          <div class="session-row">
+            <span class="eyebrow">checks</span>
+            <ChecksMeter checks={session()!.checks} limit={limit()} />
+          </div>
+          {/* One 12px line at 1.5 line height plus the list's 6px gap per check. */}
+          <div class="session-finds" style={{ height: `min(${limit() * 24 - 6}px, 40vh)` }}>
+            <FindList finds={session()!.finds} empty="no new checks yet" />
+          </div>
         </div>
         <details class="poptracker" open={!session()!.trackerConnected}>
           <summary>

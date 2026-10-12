@@ -1700,7 +1700,10 @@
   .pause-title { font-family: "Pokemon GB", var(--mono); font-size: 14px; color: var(--ink-0); text-transform: uppercase; }
   .pause-text { font-size: 12px; color: var(--ink-1); max-width: 34ch; }
 
-  .session-panel { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; }
+  /* No inset of its own: its boxes line up with the console below (and the
+     mobile popup pads itself). */
+  .session-panel { display: flex; flex-direction: column; gap: 12px; padding: 0; }
+  .checks-box { border: 1px solid var(--line); padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
   .session-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   /* Room for every check of the turn from the start (its height is set from
      the limit), so the panel below doesn't move as checks come in. */
