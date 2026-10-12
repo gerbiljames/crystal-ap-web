@@ -99,7 +99,7 @@ export function setOverlayPrefs(next: OverlayPrefs) {
 const AUDIO_PREFS_KEY  = "crystal-ap-audio-prefs";
 const LEGACY_VOLUME_KEY = "crystal-ap-volume"; // 0–100 string, pre-prefs era
 export type AudioPrefs = { volume: number; background: boolean }; // volume 0–1
-const AUDIO_DEFAULTS: AudioPrefs = { volume: 0.1, background: false };
+const AUDIO_DEFAULTS: AudioPrefs = { volume: 0.1, background: true };
 
 function loadAudioPrefs(): AudioPrefs {
   try {
