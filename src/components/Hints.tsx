@@ -45,7 +45,7 @@ export function HintPicker(props: { allowance: HintAllowance }) {
   return (
     <div class="hint-picker">
       <p class="tip">
-        <strong>You used all your checks.</strong> Before the next turn you can hint up
+        <strong>You used all your checks.</strong><br />Before the next turn you can hint up
         to <strong>{a().allowance}</strong> location{a().allowance === 1 ? "" : "s"}
         <Show when={a().progressionFound > 0}> ({a().perTurn}, less the {a().progressionFound} progression item{a().progressionFound === 1 ? "" : "s"} you found)</Show>.
         Everyone using PopTracker will see what's there.
