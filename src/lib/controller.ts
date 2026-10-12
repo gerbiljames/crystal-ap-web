@@ -65,7 +65,9 @@ export function bindController({ emulator, module }: { emulator: number; module:
     // When background input is off and the document doesn't have focus,
     // ignore pad state and release any held buttons so they don't get stuck
     // when the user alt-tabs away mid-press.
-    if (!controllerPrefs().background && !document.hasFocus()) {
+    // Likewise while a dialog is up: the pad is the settings panel's to
+    // capture rebinds with, not the game's.
+    if ((!controllerPrefs().background && !document.hasFocus()) || document.querySelector('.modal[aria-modal="true"]')) {
       for (const name of Object.keys(held)) setHeld(name, false);
       return;
     }
