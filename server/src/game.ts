@@ -853,7 +853,9 @@ export class Game {
   // The state before anyone played, the first time the game server is seen.
   private firstCheckpoint() {
     if (!this.checkpoints || this.checkpoints.list().length) return;
-    this.checkpoint("start of the game", "start", null)
+    // (A server that ran turns before it had checkpoints starts from now.)
+    const label = this.db.latestSessionId() ? "when checkpoints were set up" : "start of the game";
+    this.checkpoint(label, "start", null)
       .catch((err) => this.log(`couldn't take the first checkpoint: ${(err as Error).message}`));
   }
 
