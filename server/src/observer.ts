@@ -230,6 +230,9 @@ export class Observer extends EventEmitter {
         break;
       }
       case "RoomUpdate": {
+        // Clients that haven't logged in get our copy of the RoomInfo: keep
+        // its permissions current (they're set again after every start).
+        if (msg.permissions && this.roomInfo) this.roomInfo = { ...this.roomInfo, permissions: msg.permissions };
         const fresh: number[] = [];
         for (const id of msg.checked_locations ?? []) {
           if (!this.checked.has(id)) { this.checked.add(id); this.allLocations.add(id); fresh.push(id); }

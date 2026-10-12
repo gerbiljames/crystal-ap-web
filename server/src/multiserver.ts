@@ -11,6 +11,20 @@ import { extname } from "node:path";
 // How long MultiServer gets to answer /save.
 const SAVE_TIMEOUT_MS = 15000;
 
+// What MultiServer must run with. Its save keeps these and they override the
+// command line on every start (a save from an earlier setup, or a checkpoint
+// rolled back to), so they're set again through its console each time too.
+const ENFORCED_OPTIONS = [
+  // Nothing may grant items or checks outside the proxy's count.
+  ["item_cheat", "false"],
+  ["release_mode", "disabled"],
+  ["collect_mode", "disabled"],
+  ["remaining_mode", "disabled"],
+  // No password of its own (the proxy holds each turn's), and no remote admin.
+  ["password", "null"],
+  ["server_password", "null"],
+];
+
 export type MultiServerOptions = {
   python: string;
   apDir: string;
@@ -52,22 +66,25 @@ export class MultiServer {
       "MultiServer.py", o.multidataPath,
       "--host", "127.0.0.1",
       "--port", String(o.port),
-      // Nothing may grant items or checks outside the proxy's count.
+      // As ENFORCED_OPTIONS, for a game with no save yet.
       "--disable_item_cheat",
       "--release_mode", "disabled",
       "--collect_mode", "disabled",
-      "--remaining_mode", "goal",
+      "--remaining_mode", "disabled",
       "--loglevel", "info",
     ];
     const child = this.child = spawn(o.python, args, {
       cwd: o.apDir,
       // Only what Python needs: none of this server's secrets.
       env: { ...pythonEnv(), SKIP_REQUIREMENTS_UPDATE: "1", PYTHONUNBUFFERED: "1" },
-      // MultiServer's console: only /save is ever written to it. (A pipe, not
-      // /dev/null, where it would spin reading end-of-file forever.)
+      // MultiServer's console: only ENFORCED_OPTIONS and /save are ever
+      // written to it. (A pipe, not /dev/null, where it would spin reading
+      // end-of-file forever.)
       stdio: ["pipe", "pipe", "pipe"],
     });
     child.stdin!.on("error", () => { /* it exited; 'close' handles that */ });
+    // Read once its console starts, which is after the save has loaded.
+    child.stdin!.write(ENFORCED_OPTIONS.map(([name, value]) => `/option ${name} ${value}\n`).join(""));
     for (const stream of [child.stdout!, child.stderr!]) {
       createInterface({ input: stream }).on("line", (line) => {
         o.log(`[multiserver] ${line}`);
