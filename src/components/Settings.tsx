@@ -6,7 +6,7 @@ import {
   type InputName,
 } from "../lib/controller.js";
 import {
-  DEFAULT_KEY_BINDINGS, loadKeyBindings, saveKeyBindings, captureNextKey,
+  DEFAULT_KEY_BINDINGS, loadKeyBindings, saveKeyBindings, captureNextKey, keyLabel,
 } from "../lib/keyboard.js";
 import { backdropDismiss } from "../lib/backdrop.js";
 
@@ -192,16 +192,6 @@ function ControllerPanel() {
   );
 }
 
-function formatKeyCode(code: string): string {
-  if (code.startsWith("Key")) return code.slice(3);
-  if (code.startsWith("Digit")) return code.slice(5);
-  if (code === "ArrowUp") return "↑";
-  if (code === "ArrowDown") return "↓";
-  if (code === "ArrowLeft") return "←";
-  if (code === "ArrowRight") return "→";
-  return code;
-}
-
 function KeyboardPanel() {
   const [bindings, setBindings] = createSignal({ ...loadKeyBindings() });
   const [capturing, setCapturing] = createSignal<InputName | null>(null);
@@ -251,7 +241,7 @@ function KeyboardPanel() {
             <div class="ctrl-row" data-capturing={isCapturing()}>
               <span class="ctrl-label">{row.label}</span>
               <span class="ctrl-binding">
-                {isCapturing() ? "press any key…" : (bindings()[row.name] ? formatKeyCode(bindings()[row.name]) : "unbound")}
+                {isCapturing() ? "press any key…" : (bindings()[row.name] ? keyLabel(bindings()[row.name]) : "unbound")}
               </span>
               <button
                 class="ctrl-rebind"

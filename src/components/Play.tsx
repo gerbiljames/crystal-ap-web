@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 import { app, logLines, type LogEntry, overlayPrefs, audioPrefs, setAudioPrefs, connectOpen, setConnectOpen, isMobile, uiPrefs, you, publicState } from "../state.js";
 import { ansiToHtml } from "../lib/ansi.js";
 import { disposeEmulator, ensureEmulator, giveUp } from "../actions.js";
-import { keyBindings, isDefaultKeyBindings } from "../lib/keyboard.js";
+import { keyBindings, isDefaultKeyBindings, keyLabel, DEFAULT_KEY_BINDINGS } from "../lib/keyboard.js";
 import { ChecksMeter, FindList, formatCountdown, useNow } from "./Home.jsx";
 
 // Recent log lines drawn over the game canvas while fullscreen. Mounted only
@@ -130,7 +130,7 @@ function ScreenFrame() {
       </div>
       <div class="screen-label-bottom">
         <Show when={isDefaultKeyBindings(keyBindings())}>
-          <span class="screen-keys">arrows · <kbd>Z</kbd> b · <kbd>X</kbd> a · <kbd>↵</kbd> start · <kbd>⇥</kbd> select</span>
+          <span class="screen-keys">arrows · <kbd>{keyLabel(DEFAULT_KEY_BINDINGS.B)}</kbd> b · <kbd>{keyLabel(DEFAULT_KEY_BINDINGS.A)}</kbd> a · <kbd>↵</kbd> start · <kbd>⇥</kbd> select</span>
         </Show>
         <label class="vol" title="volume">
           <span class="vol-label" classList={{ muted: audioPrefs().volume === 0 }}>
