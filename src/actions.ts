@@ -3,7 +3,7 @@
 // it ends). These mutate the reactive store (state.js) and talk to the
 // framework-agnostic lib/ modules.
 
-import { app, setApp, setPageNotice, you, setYou, setPublicState, setClockOffset, setPlayStatus, setMeLoaded, setLoginUrl, setLiveConnected, setEndedNotice, setConnectOpen, prep, setPrep, romOverridePrefs } from "./state.js";
+import { app, setApp, setPageNotice, you, setYou, publicState, setPublicState, setClockOffset, setPlayStatus, setMeLoaded, setLoginUrl, setLiveConnected, setEndedNotice, setConnectOpen, prep, setPrep, romOverridePrefs } from "./state.js";
 import { GB_ROM_SIZE, PHASE_LABELS, ROM_STORE, VANILLA_STORE, SAVE_STORE, STATE_STORE, WRAM_BASE, RAM, VANILLA_ROM_HASHES } from "./lib/constants.js";
 import { checkPatch } from "./lib/apworld.js";
 import { buildOverrides, overridesHash } from "./lib/overrides.js";
@@ -238,7 +238,10 @@ export async function startTurn() {
 }
 
 export async function giveUp() {
-  if (!confirm("End your session now? You won't be able to play again.")) return;
+  // Only a turn that uses all its checks gets to hint.
+  const hints = publicState()?.hintsPerTurn ?? 0;
+  const warning = hints > 0 ? "\n\nEnding early means you miss the chance to hint locations: only a turn that uses all its checks gets hints." : "";
+  if (!confirm(`End your turn now? You won't be able to play again.${warning}`)) return;
   try { await api.giveUp(); }
   catch (err: any) { logErr(err?.message || String(err)); }
 }
