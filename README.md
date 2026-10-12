@@ -30,7 +30,7 @@ The game runs in each player's browser, so the browser holds the credentials for
 
 Scouting locations reveals nothing new either: with `remote_items` the patched ROM already names every location's item for its in-game text.
 
-What the server can't check is whether the progress a game reports is real. Story events, fly points, the Pokédex, EnergyLink and wonder trades pass from turn to turn through data storage. That's how each player picks up where the last one left off, and later players' games load it. A player who edits their emulator's memory (or scripts the connection) can therefore hand later players progress nobody earned, or a wonder-trade Pokémon nobody caught. Location checks stay capped either way. The admin page shows every turn's finds, and admins can ban players.
+What the server can't check is whether the progress a game reports is real. Story events, fly points, the Pokédex, EnergyLink and wonder trades pass from turn to turn through data storage. That's how each player picks up where the last one left off, and later players' games load it. A player who edits their emulator's memory (or scripts the connection) can therefore hand later players progress nobody earned, or a wonder-trade Pokémon nobody caught. Location checks stay capped either way. The admin page shows every turn's finds, admins can ban players, and they can roll the game back to a checkpoint from before the damage (see [Admin](#admin)).
 
 ## The seed
 
@@ -50,6 +50,7 @@ Generate it with the same Crystal apworld version the image bundles (shown in th
 Progress lives in `data/`:
 - `data/yogos.db` holds players, turns and the queue.
 - `data/run/` holds MultiServer's `.apsave`.
+- `data/checkpoints/` holds the checkpoints' copies of it.
 
 One data directory belongs to one seed. To start a new seed, use an empty data directory.
 
@@ -89,7 +90,10 @@ Admins can do the following from the admin page:
 - remove players from the queue;
 - give a player another turn;
 - ban and unban players;
-- read every turn's finds.
+- read every turn's finds;
+- take checkpoints and roll the game back to one.
+
+A checkpoint is a copy of MultiServer's save: every checked location, every item sent and all of data storage. One is taken when the server first sees the game, and one after every turn; admins can take more. Rolling back (only with no turn running) restarts MultiServer from the checkpoint's save and leaves the queue paused. Finds the server no longer has are marked undone: hidden from players, struck through on the admin page. Admins can choose to give everyone who started a turn since the checkpoint another one. The rollback takes a checkpoint first, so rolling back to that undoes it. This is the remedy for the progress-tampering limit above.
 
 A server restart keeps the running turn. The player has the grace period to reconnect.
 

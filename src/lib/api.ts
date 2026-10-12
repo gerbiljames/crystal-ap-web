@@ -1,7 +1,7 @@
 // The YOGOS server's HTTP API, and the live socket it pushes queue and session
 // state over. Same origin as the page; the session cookie rides along.
 
-import type { MeResponse, ServerMessage, AdminState } from "../../shared/protocol.js";
+import type { MeResponse, ServerMessage, AdminState, CheckpointRow, RollbackResult } from "../../shared/protocol.js";
 import { logWarn } from "./log.js";
 
 export class ApiError extends Error {
@@ -37,6 +37,9 @@ export const api = {
   admin: {
     state:     () => request<AdminState>("GET", "/api/admin/state"),
     action:    (action: string, body: Record<string, unknown> = {}) => request<void>("POST", `/api/admin/${action}`, body),
+    checkpoint: (label: string) => request<CheckpointRow>("POST", "/api/admin/checkpoint", { label }),
+    rollback:  (checkpointId: string, returnTurns: boolean) =>
+      request<RollbackResult>("POST", "/api/admin/rollback", { checkpointId, returnTurns }),
   },
 };
 

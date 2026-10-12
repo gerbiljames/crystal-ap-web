@@ -70,6 +70,17 @@ export function startHttp(deps: HttpDeps) {
     return id;
   };
 
+  // Checkpoints and rollbacks fail for reasons an admin can act on (the game
+  // server didn't save, didn't come back): say what happened.
+  const adminTask = async <T>(task: Promise<T>): Promise<T> => {
+    try { return await task; }
+    catch (err) {
+      if (err instanceof HttpError) throw err;
+      log(`admin task failed: ${(err as Error)?.stack || err}`);
+      throw new HttpError(500, (err as Error)?.message || String(err));
+    }
+  };
+
   const readBody = (req: IncomingMessage): Promise<any> => new Promise((resolve, reject) => {
     let size = 0;
     const chunks: Buffer[] = [];
@@ -191,6 +202,20 @@ export function startHttp(deps: HttpDeps) {
         return noContent(res);
       }
       case "POST /api/admin/unban": admin(req); game.setBanned(userIdArg(await readBody(req)), false); return noContent(res);
+      case "POST /api/admin/checkpoint": {
+        const who = admin(req);
+        const label = (await readBody(req))?.label;
+        if (label !== undefined && label !== null && typeof label !== "string") throw new HttpError(400, "label: text or nothing");
+        const text = (label ?? "").trim().slice(0, 80) || `taken by ${db.user(who)?.name ?? who}`;
+        return json(res, 200, await adminTask(game.checkpoint(text, "manual", null)));
+      }
+      case "POST /api/admin/rollback": {
+        const who = admin(req);
+        const body = await readBody(req);
+        if (typeof body?.checkpointId !== "string") throw new HttpError(400, "checkpointId is required");
+        if (typeof body?.returnTurns !== "boolean") throw new HttpError(400, "returnTurns: true or false");
+        return json(res, 200, await adminTask(game.rollback(body.checkpointId, body.returnTurns, db.user(who)?.name ?? who)));
+      }
     }
     throw new HttpError(404, "not found");
   }

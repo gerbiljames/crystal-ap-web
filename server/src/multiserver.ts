@@ -1,9 +1,15 @@
 // Runs Archipelago's MultiServer.py as a child process, bound to localhost so
 // the only way in is through the proxy (which authenticates every session
 // itself, so MultiServer has no password of its own). Restarts it if it dies.
+// Saves on demand (for checkpoints), and restarts it from another save (a
+// rollback).
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
+import { extname } from "node:path";
+
+// How long MultiServer gets to answer /save.
+const SAVE_TIMEOUT_MS = 15000;
 
 export type MultiServerOptions = {
   python: string;
@@ -18,12 +24,22 @@ export class MultiServer {
   private stopping = false;
   private restartDelay = 1000;
   private opts: MultiServerOptions;
+  // Called with each line MultiServer prints (a /save waits for its answer).
+  private lineWatchers = new Set<(line: string) => void>();
 
   constructor(opts: MultiServerOptions) {
     this.opts = opts;
   }
 
   get url() { return `ws://127.0.0.1:${this.opts.port}`; }
+
+  // Where MultiServer keeps the game's progress: beside the multidata, named
+  // the way MultiServer names it.
+  get savePath(): string {
+    const path = this.opts.multidataPath;
+    const ext = extname(path);
+    return [".archipelago", ".zip"].includes(ext.toLowerCase()) ? path.slice(0, -ext.length) + ".apsave" : `${path}_apsave`;
+  }
 
   start() {
     this.stopping = false;
@@ -47,12 +63,16 @@ export class MultiServer {
       cwd: o.apDir,
       // Only what Python needs: none of this server's secrets.
       env: { ...pythonEnv(), SKIP_REQUIREMENTS_UPDATE: "1", PYTHONUNBUFFERED: "1" },
-      // A pipe nothing is ever written to: MultiServer's console blocks on it
-      // quietly (on /dev/null it would spin, reading end-of-file forever).
+      // MultiServer's console: only /save is ever written to it. (A pipe, not
+      // /dev/null, where it would spin reading end-of-file forever.)
       stdio: ["pipe", "pipe", "pipe"],
     });
+    child.stdin!.on("error", () => { /* it exited; 'close' handles that */ });
     for (const stream of [child.stdout!, child.stderr!]) {
-      createInterface({ input: stream }).on("line", (line) => o.log(`[multiserver] ${line}`));
+      createInterface({ input: stream }).on("line", (line) => {
+        o.log(`[multiserver] ${line}`);
+        for (const watch of this.lineWatchers) watch(line);
+      });
     }
     // 'close' comes after the process exits, and also after a spawn that
     // failed outright (which never emits 'exit').
@@ -68,6 +88,40 @@ export class MultiServer {
 
   // Back to a short restart delay once a run has stayed up.
   markHealthy() { this.restartDelay = 1000; }
+
+  // Have MultiServer write its save now; resolves once it says it has.
+  saveNow(): Promise<void> {
+    const child = this.child;
+    if (!child?.stdin?.writable) return Promise.reject(new Error("the game server isn't running"));
+    return new Promise((resolve, reject) => {
+      const done = (err?: Error) => {
+        clearTimeout(timer);
+        this.lineWatchers.delete(watch);
+        child.off("close", onClose);
+        if (err) reject(err); else resolve();
+      };
+      const watch = (line: string) => {
+        if (line.trim() === "Game saved") done();
+        else if (line.trim() === "Saving is disabled.") done(new Error("the game server has saving disabled"));
+      };
+      const onClose = () => done(new Error("the game server stopped while saving"));
+      const timer = setTimeout(() => done(new Error("the game server didn't save in time")), SAVE_TIMEOUT_MS);
+      this.lineWatchers.add(watch);
+      child.once("close", onClose);
+      child.stdin!.write("/save\n");
+    });
+  }
+
+  // Stop MultiServer, run `swap` while it's down (it replaces the save), and
+  // start it again. MultiServer saves as it exits, so the swap comes after.
+  async restartWith(swap: () => void): Promise<void> {
+    await this.stop();
+    try { swap(); }
+    finally {
+      this.restartDelay = 1000;
+      this.start();
+    }
+  }
 
   // SIGTERM makes MultiServer save before it exits.
   stop(): Promise<void> {

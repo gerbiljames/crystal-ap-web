@@ -58,7 +58,7 @@ export function FindList<T extends Find>(props: { finds: T[]; empty?: string; wh
     <Show when={props.finds.length > 0} fallback={<p class="muted">{props.empty ?? "nothing found yet"}</p>}>
       <ul class="find-list">
         <For each={props.finds}>{(f) => (
-          <li>
+          <li data-undone={f.undone ? "true" : undefined} title={f.undone ? "undone by a rollback" : undefined}>
             <Show when={props.who}>{props.who!(f)}</Show>
             <span class="find-item">{f.item ?? "something"}</span>
             <Show when={f.receiver}><span class="find-receiver"> for {f.receiver}</span></Show>

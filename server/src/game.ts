@@ -9,8 +9,9 @@ import type { Db } from "./db.ts";
 import { toPublic } from "./db.ts";
 import type { Seed } from "./seed.ts";
 import type { Observer, ScoutResult } from "./observer.ts";
+import type { Checkpoints } from "./checkpoints.ts";
 import { selectNewChecks, type Role, type SessionCredentials } from "./rules.ts";
-import type { AdminState, EndReason, PublicState, ServerMessage, YouState, Credentials } from "../../shared/protocol.ts";
+import type { AdminState, CheckpointKind, CheckpointRow, EndReason, PublicState, RollbackResult, ServerMessage, YouState, Credentials } from "../../shared/protocol.ts";
 
 export class HttpError extends Error {
   status: number;
@@ -31,6 +32,11 @@ const GOAL_RETRY_MS = 30000;
 const QUOTA_LINGER_MS = 2000;
 // Upper bound on waiting for the last checks to be confirmed.
 const QUOTA_WAIT_MS = 6000;
+// After a turn ends, how long to wait before checkpointing (its last checks
+// still on their way are in it then).
+const TURN_CHECKPOINT_DELAY_MS = 3000;
+// How long a rollback waits for the game server to come back.
+const ROLLBACK_READY_MS = 60000;
 
 type Active = {
   id: string;
@@ -96,6 +102,16 @@ export class Game {
   private broadcastQueued = false;
   private lastPublic: { state: string; positions: Map<string, number> } | null = null;
   private stopped = false;
+  // Checkpoints and rollbacks (see useCheckpoints). One at a time, in order.
+  private checkpoints: Checkpoints | null = null;
+  private restartGameServer: ((swap: () => void) => Promise<void>) | null = null;
+  private checkpointLock: Promise<unknown> = Promise.resolve();
+  private rollingBack = false;
+  // Counts rollbacks: a turn's checkpoint still waiting when one starts would
+  // be of the rolled-back game, so it's dropped.
+  private rollbacks = 0;
+  // A rollback whose game server didn't come back in time: settled when it does.
+  private unsettledRollback: { target: CheckpointRow; returnTurns: boolean } | null = null;
   private config: Config;
   private db: Db;
   private seed: Seed;
@@ -132,6 +148,12 @@ export class Game {
         // while it was away.
         this.pruneUnconfirmed();
         this.reportGoal();
+        if (this.unsettledRollback) {
+          const { target, returnTurns } = this.unsettledRollback;
+          this.unsettledRollback = null;
+          this.settleAfterRollback(target, returnTurns);
+        }
+        this.firstCheckpoint();
         const unnamed = this.db.unnamedFindLocationIds();
         if (unnamed.length) this.observer.scout(unnamed);
       }
@@ -330,7 +352,7 @@ export class Game {
     const user = this.requireUser(userId);
     if (this.active?.userId === userId) return;
     if (this.offer?.userId !== userId) throw new HttpError(409, "it isn't your turn");
-    if (this.paused) throw new HttpError(409, "the queue is paused — wait for an admin to resume it");
+    if (this.paused || this.rollingBack) throw new HttpError(409, "the queue is paused — wait for an admin to resume it");
     if (user.attempt_used) throw new HttpError(409, "you've already had your turn");
     if (!this.observer.ready) throw new HttpError(503, "the game server isn't ready — try again in a moment");
     const id = randomBytes(8).toString("hex");
@@ -383,7 +405,7 @@ export class Game {
 
   // Offer the next turn, when there's nobody playing or offered.
   private advance() {
-    if (this.active || this.offer || this.paused || this.complete || !this.observer.ready) return;
+    if (this.active || this.offer || this.paused || this.rollingBack || this.complete || !this.observer.ready) return;
     for (const userId of this.db.queue()) {
       this.db.dequeue(userId);
       const user = this.db.user(userId);
@@ -435,6 +457,15 @@ export class Game {
     for (const conn of [s.conns.game, s.conns.tracker, ...s.logins]) conn?.close(4000, `session ended: ${reason}`);
     this.log(`session ${s.id} ended: ${reason}${detail ? ` (${detail})` : ""}`);
     this.sendTo(s.userId, { type: "session-ended", sessionId: s.id, reason, detail });
+    const name = this.db.user(s.userId)?.name ?? s.userId;
+    const rollbacks = this.rollbacks;
+    setTimeout(() => {
+      if (this.stopped || !this.checkpoints) return;
+      this.locked(async () => {
+        if (this.rollbacks !== rollbacks) return;
+        await this.takeCheckpoint(`after ${name}'s turn`, "turn", s.id);
+      }).catch((err) => this.log(`couldn't checkpoint after ${name}'s turn: ${(err as Error).message}`));
+    }, TURN_CHECKPOINT_DELAY_MS);
     this.advance();
     this.broadcast();
   }
@@ -765,6 +796,7 @@ export class Game {
   // ---------------------------------------------------------------------------
   setPaused(paused: boolean) {
     if (!paused && this.db.get("goal_claim")) throw new HttpError(409, "confirm or dismiss the reported goal first");
+    if (!paused && this.rollingBack) throw new HttpError(409, "wait for the rollback to finish");
     this.paused = paused;
     // A turn on offer waits too: back to the head of the line, not used up.
     if (paused && this.offer) {
@@ -798,6 +830,147 @@ export class Game {
       this.advance();
     }
     this.broadcast();
+  }
+
+  // ---------------------------------------------------------------------------
+  // checkpoints
+  // ---------------------------------------------------------------------------
+  // `restart` stops the game server, runs its argument (which swaps the save)
+  // and starts it again.
+  useCheckpoints(checkpoints: Checkpoints, restart: (swap: () => void) => Promise<void>) {
+    this.checkpoints = checkpoints;
+    this.restartGameServer = restart;
+    if (this.observer.ready) this.firstCheckpoint();
+  }
+
+  // Runs `fn` once every checkpoint or rollback queued before it is done.
+  private locked<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.checkpointLock.then(fn, fn);
+    this.checkpointLock = run.catch(() => {});
+    return run;
+  }
+
+  // The state before anyone played, the first time the game server is seen.
+  private firstCheckpoint() {
+    if (!this.checkpoints || this.checkpoints.list().length) return;
+    this.checkpoint("start of the game", "start", null)
+      .catch((err) => this.log(`couldn't take the first checkpoint: ${(err as Error).message}`));
+  }
+
+  checkpoint(label: string, kind: CheckpointKind, sessionId: string | null): Promise<CheckpointRow> {
+    return this.locked(() => this.takeCheckpoint(label, kind, sessionId));
+  }
+
+  private async takeCheckpoint(label: string, kind: CheckpointKind, sessionId: string | null): Promise<CheckpointRow> {
+    if (!this.checkpoints) throw new HttpError(503, "checkpoints aren't set up");
+    if (!this.observer.ready) throw new HttpError(503, "the game server isn't ready — try again in a moment");
+    // (Once per checkpoint: the first one is taken only when there are none.)
+    if (kind === "start" && this.checkpoints.list().length) return this.checkpoints.list().at(-1)!;
+    const row = await this.checkpoints.take({
+      label, kind, sessionId,
+      checked: this.observer.checked.size,
+      total: this.observer.allLocations.size,
+      complete: this.complete,
+    });
+    this.log(`checkpoint ${row.id}: ${label} (${row.checked}/${row.total} checked)`);
+    return row;
+  }
+
+  // Put the game back to a checkpoint: MultiServer restarts from its save
+  // (checks, items sent, data storage), finds it took back are marked undone,
+  // and the queue stays paused for an admin to resume. With `returnTurns`,
+  // everyone who started a turn after the checkpoint gets theirs back.
+  rollback(id: string, returnTurns: boolean, by: string): Promise<RollbackResult> {
+    // Checked up front too, so a refusal doesn't wait behind other work.
+    this.checkRollback(id);
+    return this.locked(async () => {
+      const target = this.checkRollback(id);
+      this.rollingBack = true;
+      this.rollbacks++;
+      this.setPausedForRollback();
+      try {
+        // So this rollback can itself be undone.
+        await this.takeCheckpoint(`before rolling back to “${target.label}”`, "before-rollback", null);
+        this.log(`${by} is rolling the game back to checkpoint ${target.id} (${target.label})`);
+        let installed = false;
+        await this.restartGameServer!(() => {
+          this.observer.expectRestore();
+          this.checkpoints!.install(target.id);
+          installed = true;
+        });
+        if (!installed) throw new Error("the checkpoint couldn't be put in place");
+        try { await this.waitForGameServer(ROLLBACK_READY_MS); }
+        catch (err) {
+          // It may yet come back: finish the rollback then.
+          this.unsettledRollback = { target, returnTurns };
+          throw err;
+        }
+        return this.settleAfterRollback(target, returnTurns);
+      } finally {
+        this.rollingBack = false;
+        this.broadcast();
+      }
+    });
+  }
+
+  private checkRollback(id: string): CheckpointRow {
+    if (!this.checkpoints || !this.restartGameServer) throw new HttpError(503, "checkpoints aren't set up");
+    const target = this.checkpoints.get(id);
+    if (!target) throw new HttpError(404, "no such checkpoint");
+    if (this.rollingBack) throw new HttpError(409, "a rollback is already under way");
+    if (this.active) throw new HttpError(409, "end the running turn first");
+    if (this.goalPending) throw new HttpError(409, "confirm or dismiss the reported goal first");
+    if (!this.observer.ready) throw new HttpError(503, "the game server isn't ready — try again in a moment");
+    return target;
+  }
+
+  // Pause the queue (an offered turn goes back to the head of the line).
+  private setPausedForRollback() {
+    this.paused = true;
+    if (this.offer) { this.requeueFront(this.offer.userId); this.clearOffer(); }
+    this.db.set("paused", "1");
+    this.broadcast();
+  }
+
+  private waitForGameServer(ms: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this.observer.ready) return resolve();
+      const timer = setTimeout(() => { this.observer.off("change", onChange); reject(new Error("the game server didn't come back after the rollback — check its log")); }, ms);
+      const onChange = () => {
+        if (!this.observer.ready) return;
+        clearTimeout(timer);
+        this.observer.off("change", onChange);
+        resolve();
+      };
+      this.observer.on("change", onChange);
+    });
+  }
+
+  private settleAfterRollback(target: CheckpointRow, returnTurns: boolean): RollbackResult {
+    const checked = this.observer.checked;
+    const undone = this.db.settleFinds(checked);
+    // Nothing from before is still owed or on its way.
+    this.unconfirmed.clear();
+    this.saveUnconfirmed();
+    this.db.set("seen_checks", JSON.stringify([...checked]));
+    // The goal stands or not as it did at the checkpoint (MultiServer's own
+    // record of it came back with the save).
+    if (this.complete !== target.complete) {
+      this.complete = target.complete;
+      this.db.set("complete", target.complete ? "1" : null);
+      this.db.set("goal_unreported", target.complete ? "1" : null);
+      if (target.complete) { this.db.clearQueue(); this.reportGoal(); }
+    }
+    let turnsReturned = 0;
+    if (returnTurns) {
+      for (const userId of this.db.usersWithTurnsSince(target.createdAt)) {
+        if (!this.db.user(userId)?.attempt_used) continue;
+        this.db.setAttemptUsed(userId, false);
+        turnsReturned++;
+      }
+    }
+    this.log(`rolled back to checkpoint ${target.id}: ${checked.size}/${this.observer.allLocations.size} checked, ${undone} find(s) undone, ${turnsReturned} turn(s) returned`);
+    return { undone, turnsReturned };
   }
 
   // ---------------------------------------------------------------------------
@@ -965,6 +1138,8 @@ export class Game {
       sessions: this.db.sessions(),
       users: this.db.adminUsers(),
       goalClaim: claim && { sessionId: claim.sessionId, at: claim.at, user: claim.user },
+      checkpoints: this.checkpoints?.list() ?? [],
+      checkpointBusy: this.rollingBack,
     };
   }
 

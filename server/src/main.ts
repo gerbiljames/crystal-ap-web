@@ -7,6 +7,7 @@ import { loadConfig } from "./config.ts";
 import { Db } from "./db.ts";
 import { loadSeed, loadSignNames } from "./seed.ts";
 import { MultiServer } from "./multiserver.ts";
+import { Checkpoints } from "./checkpoints.ts";
 import { Observer } from "./observer.ts";
 import { Game } from "./game.ts";
 import { startHttp } from "./http.ts";
@@ -48,6 +49,10 @@ function main() {
   observer.on("change", () => { if (observer.ready) multiServer.markHealthy(); });
 
   const game = new Game(config, db, seed, observer, log);
+  game.useCheckpoints(
+    new Checkpoints(db, join(config.dataDir, "checkpoints"), multiServer),
+    (swap) => multiServer.restartWith(swap),
+  );
 
   multiServer.start();
   observer.start();

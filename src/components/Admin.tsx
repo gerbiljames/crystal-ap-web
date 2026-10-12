@@ -2,7 +2,7 @@ import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { adminOpen, setAdminOpen, publicState, you } from "../state.js";
 import { api } from "../lib/api.js";
-import { END_REASON_ADMIN_TEXT, type AdminState, type AdminUserRow } from "../../shared/protocol.js";
+import { END_REASON_ADMIN_TEXT, type AdminState, type AdminUserRow, type CheckpointRow } from "../../shared/protocol.js";
 import { UserBadge, ChecksMeter, FindList } from "./Home.jsx";
 
 function fmtTime(ms: number | null) {
@@ -53,6 +53,41 @@ function AdminBody() {
     catch (err: any) { setError(err?.message || String(err)); }
     finally { setBusy(false); }
   };
+
+  // Checkpoints: the one picked to roll back to, and the outcome of the last
+  // checkpoint or rollback.
+  const [label, setLabel] = createSignal("");
+  const [picked, setPicked] = createSignal<string | null>(null);
+  const [returnTurns, setReturnTurns] = createSignal(false);
+  const [notice, setNotice] = createSignal<string | null>(null);
+  const run = async (task: () => Promise<string>) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try { setNotice(await task()); await refetch(); }
+    catch (err: any) { setError(err?.message || String(err)); }
+    finally { setBusy(false); }
+  };
+  const takeCheckpoint = () => run(async () => {
+    const row = await api.admin.checkpoint(label());
+    setLabel("");
+    return `Checkpoint taken: ${row.label} (${row.checked}/${row.total} checked).`;
+  });
+  const rollback = (c: CheckpointRow) => run(async () => {
+    const r = await api.admin.rollback(c.id, returnTurns());
+    setPicked(null);
+    return `Rolled back to “${c.label}”: ${r.undone} check${r.undone === 1 ? "" : "s"} undone`
+      + (returnTurns() ? `, ${r.turnsReturned} turn${r.turnsReturned === 1 ? "" : "s"} given back` : "")
+      + ". The queue is paused: resume it when you're ready.";
+  });
+  // Turns started after a checkpoint (from the turns list, the latest 200).
+  const turnsAfter = (c: CheckpointRow) => (state()?.sessions ?? []).filter((s) => s.startedAt > c.createdAt);
+  // Why a rollback can't be started right now, if it can't.
+  const rollbackBlocked = () =>
+    ps()?.current ? "end the running turn first"
+    : state()?.goalClaim ? "confirm or dismiss the reported goal first"
+    : !ps()?.serverReady ? "the game server isn't ready"
+    : null;
 
   const users = () => {
     const q = filter().trim().toLowerCase();
@@ -117,6 +152,53 @@ function AdminBody() {
       </section>
 
       <section class="admin-section">
+        <h3>checkpoints</h3>
+        <p class="admin-note">
+          A checkpoint saves everything the game server holds: checked locations, items sent and data storage. One is
+          taken at the start and after every turn. Rolling back puts the game back to a checkpoint and pauses the queue;
+          a checkpoint is taken first, so a rollback can be undone.
+        </p>
+        <Show when={notice()}><p class="admin-note">{notice()}</p></Show>
+        <div class="admin-row">
+          <input class="admin-filter" type="text" maxLength={80} placeholder="label (optional)" value={label()} onInput={(ev) => setLabel(ev.currentTarget.value)} />
+          <button disabled={busy() || state()?.checkpointBusy || !ps()?.serverReady} onClick={takeCheckpoint}>checkpoint now</button>
+        </div>
+        <Show when={(state()?.checkpoints.length ?? 0) > 0} fallback={<p class="muted">no checkpoints yet</p>}>
+          <ul class="checkpoint-list">
+            <For each={state()!.checkpoints}>{(c) => (
+              <li data-selected={picked() === c.id ? "true" : undefined}>
+                <div class="checkpoint-main">
+                  <span class="checkpoint-label">{c.label}</span>
+                  <span class="muted">{fmtTime(c.createdAt)}</span>
+                  <span>{c.checked}/{c.total}{c.complete ? " · goal" : ""}</span>
+                  <button disabled={busy() || state()?.checkpointBusy || !!rollbackBlocked()} title={rollbackBlocked() ?? undefined}
+                    onClick={() => { setReturnTurns(false); setPicked(picked() === c.id ? null : c.id); }}>roll back</button>
+                </div>
+                <Show when={picked() === c.id}>
+                  <div class="checkpoint-confirm">
+                    <span>
+                      Put the game back to how it was {fmtTime(c.createdAt)}: {c.checked}/{c.total} checked
+                      (now {ps()?.totals.checked ?? "?"}/{ps()?.totals.total ?? "?"}). Players see the game server restart.
+                    </span>
+                    <Show when={turnsAfter(c).length > 0}>
+                      <label>
+                        <input type="checkbox" checked={returnTurns()} onChange={(ev) => setReturnTurns(ev.currentTarget.checked)} />
+                        give the {turnsAfter(c).length} player{turnsAfter(c).length === 1 ? "" : "s"} who started a turn since then another turn
+                      </label>
+                    </Show>
+                    <div class="admin-row">
+                      <button class="btn-danger" disabled={busy() || !!rollbackBlocked()} onClick={() => rollback(c)}>{busy() ? "rolling back…" : "roll back"}</button>
+                      <button disabled={busy()} onClick={() => setPicked(null)}>cancel</button>
+                    </div>
+                  </div>
+                </Show>
+              </li>
+            )}</For>
+          </ul>
+        </Show>
+      </section>
+
+      <section class="admin-section">
         <h3>users</h3>
         <input class="admin-filter" type="search" placeholder="filter by name or id" value={filter()} onInput={(ev) => setFilter(ev.currentTarget.value)} />
         <table class="admin-table">
@@ -150,7 +232,7 @@ function AdminBody() {
             <summary>
               <UserBadge user={s.user} small />
               <span>{fmtTime(s.startedAt)}</span>
-              <span>{s.finds.length} check{s.finds.length === 1 ? "" : "s"}</span>
+              <span>{s.finds.filter((f) => !f.undone).length} check{s.finds.filter((f) => !f.undone).length === 1 ? "" : "s"}{s.finds.some((f) => f.undone) ? ` (${s.finds.filter((f) => f.undone).length} undone)` : ""}</span>
               <span class="muted">{s.reason ? END_REASON_ADMIN_TEXT[s.reason] : "running"}</span>
             </summary>
             <Show when={s.detail}><p class="muted">{s.detail}</p></Show>

@@ -65,6 +65,13 @@ export class Observer extends EventEmitter {
     this.ws?.close();
   }
 
+  // The server is about to come back from another save (a rollback): what it
+  // has checked then is the new state of the game, not news of checks made
+  // while we weren't looking.
+  expectRestore() {
+    this.everConnected = false;
+  }
+
   locationName(id: number): string {
     return this.locationNames.get(id) ?? `location ${id}`;
   }

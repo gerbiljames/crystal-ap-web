@@ -53,6 +53,9 @@ export type Find = {
   // Who received the item, when it is not the slot itself (multi-slot seeds).
   receiver: string | null;
   at: number;
+  // Taken back by a rollback: the server no longer has this check. (Only
+  // admins are shown these.)
+  undone?: boolean;
 };
 
 export type SessionSummary = {
@@ -160,9 +163,41 @@ export type AdminUserRow = {
   createdAt: number;
 };
 
+// Why a checkpoint was taken.
+//   start:  when the game server was first seen, before anyone played.
+//   turn:   after a turn ended.
+//   manual: by an admin.
+//   before-rollback: just before a rollback, so it can be undone.
+export type CheckpointKind = "start" | "turn" | "manual" | "before-rollback";
+
+export type CheckpointRow = {
+  id: string;
+  createdAt: number;
+  label: string;
+  kind: CheckpointKind;
+  // The turn it was taken after (kind "turn").
+  sessionId: string | null;
+  // Locations checked at the time, out of the total.
+  checked: number;
+  total: number;
+  // Whether the goal had been confirmed.
+  complete: boolean;
+  size: number;
+};
+
 export type AdminState = {
   sessions: SessionSummary[];
   users: AdminUserRow[];
   // A goal reported by a player's game, waiting for an admin.
   goalClaim: { user: PublicUser; sessionId: string; at: number } | null;
+  checkpoints: CheckpointRow[];
+  // A checkpoint or rollback is under way.
+  checkpointBusy: boolean;
+};
+
+export type RollbackResult = {
+  // Checks the rollback took back.
+  undone: number;
+  // Players given their turn back.
+  turnsReturned: number;
 };

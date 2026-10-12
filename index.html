@@ -1737,6 +1737,17 @@
   .admin-goal { border: 1px solid var(--amber); padding: 12px; }
   .admin-session summary { cursor: pointer; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 12px; }
   .admin-session > * + * { margin-top: 8px; }
+  .checkpoint-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; max-height: 320px; overflow: auto; border: 1px solid var(--line); }
+  .checkpoint-list > li { padding: 6px 10px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+  .checkpoint-list > li:last-child { border-bottom: none; }
+  .checkpoint-list > li[data-selected] { background: var(--bg-2); }
+  .checkpoint-main { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .checkpoint-label { flex: 1; min-width: 12ch; color: var(--ink-0); }
+  .checkpoint-main button { padding: 5px 10px; font-size: 10px; }
+  .checkpoint-confirm { display: flex; flex-direction: column; gap: 8px; border-top: 1px dashed var(--line-bright); padding-top: 8px; }
+  .checkpoint-confirm label { display: flex; gap: 8px; align-items: center; }
+  .admin-note { font-size: 12px; color: var(--ink-2); margin: 0; }
+  .find-list li[data-undone] { text-decoration: line-through; opacity: 0.55; }
 </style>
 </head>
 <body>

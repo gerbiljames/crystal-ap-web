@@ -5,7 +5,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { EndReason, Find, PublicUser, SessionSummary, AdminUserRow } from "../../shared/protocol.ts";
+import type { EndReason, Find, PublicUser, SessionSummary, AdminUserRow, CheckpointKind, CheckpointRow } from "../../shared/protocol.ts";
 
 export type UserRow = {
   id: string;
@@ -111,7 +111,22 @@ export class Db {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS checkpoints (
+        id TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        label TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        session_id TEXT,
+        checked INTEGER NOT NULL,
+        total INTEGER NOT NULL,
+        complete INTEGER NOT NULL,
+        size INTEGER NOT NULL
+      );
     `);
+    // Added with rollbacks: a find the server no longer has (a rollback took
+    // it back). Kept for the admins' history, hidden from everyone else.
+    const findColumns = (this.db.prepare("PRAGMA table_info(finds)").all() as { name: string }[]).map((c) => c.name);
+    if (!findColumns.includes("undone")) this.db.exec("ALTER TABLE finds ADD COLUMN undone INTEGER NOT NULL DEFAULT 0");
   }
 
   close() { this.db.close(); }
@@ -242,7 +257,7 @@ export class Db {
     `).all(limit) as any[];
     for (const f of findRows) {
       if (!finds.has(f.session_id)) finds.set(f.session_id, []);
-      finds.get(f.session_id)!.push(toFind(f));
+      finds.get(f.session_id)!.push(toFind(f, true));
     }
     return rows.map((r) => ({
       id: r.id,
@@ -287,16 +302,17 @@ export class Db {
   finds(sessionId: string): Find[] {
     let finds = this.findsCache.get(sessionId);
     if (!finds) {
-      finds = (this.q("SELECT * FROM finds WHERE session_id = ? ORDER BY at, rowid").all(sessionId) as any[]).map(toFind);
+      finds = (this.q("SELECT * FROM finds WHERE session_id = ? AND undone = 0 ORDER BY at, rowid").all(sessionId) as any[]).map((r) => toFind(r));
       this.findsCache.set(sessionId, finds);
     }
     return finds;
   }
-  // A session's checked locations, or with no session every recorded one.
+  // A session's checked locations, or with no session every recorded one
+  // (leaving out those a rollback took back).
   findLocationIds(sessionId?: string): number[] {
     const rows = sessionId === undefined
-      ? this.q("SELECT location_id FROM finds").all()
-      : this.q("SELECT location_id FROM finds WHERE session_id = ?").all(sessionId);
+      ? this.q("SELECT location_id FROM finds WHERE undone = 0").all()
+      : this.q("SELECT location_id FROM finds WHERE session_id = ? AND undone = 0").all(sessionId);
     return (rows as { location_id: number }[]).map((r) => r.location_id);
   }
   // The latest finds across all sessions, for the public state on every
@@ -312,16 +328,63 @@ export class Db {
     const rows = this.q(`
       SELECT f.*, u.id AS uid, u.name AS uname, u.avatar AS uavatar
       FROM finds f JOIN sessions s ON s.id = f.session_id JOIN users u ON u.id = s.user_id
+      WHERE f.undone = 0
       ORDER BY f.at DESC, f.rowid DESC LIMIT ?
     `).all(limit) as any[];
     return rows.map((r) => ({ ...toFind(r), who: { id: r.uid, name: r.uname, avatar: r.uavatar } }));
   }
+
+  // After a rollback: a find stands only if the server has its location
+  // checked again, and only the newest one for that location (one checked,
+  // taken back and checked again by someone else is theirs). Returns how
+  // many finds this took back.
+  settleFinds(checked: Iterable<number>): number {
+    const ids = JSON.stringify([...checked]);
+    const stands = `location_id IN (SELECT value FROM json_each(?1))
+      AND rowid = (SELECT MAX(f2.rowid) FROM finds f2 WHERE f2.location_id = finds.location_id)`;
+    let undone = 0;
+    this.transaction(() => {
+      undone = (this.q(`SELECT COUNT(*) AS n FROM finds WHERE undone = 0 AND NOT (${stands})`).get(ids) as { n: number }).n;
+      this.q(`UPDATE finds SET undone = CASE WHEN ${stands} THEN 0 ELSE 1 END`).run(ids);
+    });
+    this.findsCache.clear();
+    this.recentCache = null;
+    this.lastSessionCache.clear();
+    return undone;
+  }
+  // Players who started a turn after the given time.
+  usersWithTurnsSince(at: number): string[] {
+    return (this.q("SELECT DISTINCT user_id FROM sessions WHERE started_at > ?").all(at) as { user_id: string }[]).map((r) => r.user_id);
+  }
+
+  // --- checkpoints ---
+  addCheckpoint(c: CheckpointRow) {
+    this.q("INSERT INTO checkpoints (id, created_at, label, kind, session_id, checked, total, complete, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(c.id, c.createdAt, c.label, c.kind, c.sessionId, c.checked, c.total, c.complete ? 1 : 0, c.size);
+  }
+  checkpoints(): CheckpointRow[] {
+    return (this.q("SELECT * FROM checkpoints ORDER BY created_at DESC, rowid DESC").all() as any[]).map(toCheckpoint);
+  }
+  checkpoint(id: string): CheckpointRow | null {
+    const row = this.q("SELECT * FROM checkpoints WHERE id = ?").get(id);
+    return row ? toCheckpoint(row) : null;
+  }
+}
+
+function toCheckpoint(r: any): CheckpointRow {
+  return {
+    id: r.id, createdAt: r.created_at, label: r.label, kind: r.kind as CheckpointKind, sessionId: r.session_id ?? null,
+    checked: r.checked, total: r.total, complete: !!r.complete, size: r.size,
+  };
 }
 
 export function toPublic(u: UserRow): PublicUser {
   return { id: u.id, name: u.name, avatar: u.avatar };
 }
 
-function toFind(r: any): Find {
-  return { location: r.location, item: r.item ?? null, receiver: r.receiver ?? null, at: r.at };
+// `withUndone`: say which finds a rollback took back (for admins).
+function toFind(r: any, withUndone = false): Find {
+  const find: Find = { location: r.location, item: r.item ?? null, receiver: r.receiver ?? null, at: r.at };
+  if (withUndone && r.undone) find.undone = true;
+  return find;
 }

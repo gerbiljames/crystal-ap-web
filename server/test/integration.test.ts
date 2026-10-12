@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
 import { connect } from "node:net";
-import type { MeResponse, PublicState } from "../../shared/protocol.ts";
+import type { AdminState, CheckpointRow, MeResponse, PublicState, RollbackResult } from "../../shared/protocol.ts";
 
 const SEED = process.env.YOGOS_IT_SEED;
 const PYTHON = process.env.YOGOS_IT_PYTHON;
@@ -45,14 +45,17 @@ async function waitFor<T>(what: string, fn: () => Promise<T | null | undefined |
 async function login(name: string) {
   const res = await fetch(`${BASE}/api/auth/dev?name=${name}`, { redirect: "manual" });
   const cookie = res.headers.get("set-cookie")!.split(";")[0];
-  const call = async (method: string, path: string) => {
-    const r = await fetch(`${BASE}${path}`, { method, headers: { cookie, origin: BASE } });
+  const call = async (method: string, path: string, body?: unknown) => {
+    const headers: Record<string, string> = { cookie, origin: BASE };
+    if (body !== undefined) headers["content-type"] = "application/json";
+    const r = await fetch(`${BASE}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     if (!r.ok) throw new Error(`${method} ${path}: ${r.status} ${await r.text()}`);
     return r.status === 204 ? null : r.json();
   };
   return {
     me: async () => (await call("GET", "/api/me") as MeResponse).you!,
-    post: (path: string) => call("POST", path),
+    post: (path: string, body?: unknown) => call("POST", path, body),
+    get: (path: string) => call("GET", path),
   };
 }
 
@@ -362,6 +365,64 @@ test("the game's event flags reach data storage intact, and harmful writes don't
   await again.next("SetReply", 5000);
   await gus.post("/api/session/end");
   await again.waitClosed();
+});
+
+test("an admin can roll the game back to a checkpoint, and undo that", { skip }, async () => {
+  const admin = await login("admin");
+  const adminState = async () => await admin.get("/api/admin/state") as AdminState;
+  await waitFor("the first checkpoint", async () => (await adminState()).checkpoints.some((c) => c.kind === "start"));
+  const before = await admin.post("/api/admin/checkpoint", { label: "it: before hank" }) as CheckpointRow;
+  assert.equal(before.checked, (await publicState()).totals.checked);
+
+  // Hank checks two locations and writes to data storage.
+  const hank = await login("hank");
+  await hank.post("/api/queue/join");
+  await waitFor("hank's offer", async () => (await hank.me()).offer);
+  await hank.post("/api/session/start");
+  let creds = (await hank.me()).session!.credentials;
+  let game = new ApClient();
+  await game.connect(gameConnect(creds.gamePassword));
+  const connected = await game.next("Connected");
+  const statics = `pokemon_crystal_statics_${connected.team}_${connected.slot}`;
+  game.send({ cmd: "Set", key: statics, default: 0, want_reply: false, operations: [{ operation: "or", value: 7 }] });
+  game.send({ cmd: "LocationChecks", locations: connected.missing_locations.slice(0, 2) });
+  await waitFor("hank's two checks", async () => (await hank.me()).session?.checks === 2);
+  await hank.post("/api/session/end");
+  await game.waitClosed();
+  await waitFor("the checkpoint after hank's turn", async () => (await adminState()).checkpoints.some((c) => c.label === "after hank's turn"));
+  assert.equal((await publicState()).totals.checked, before.checked + 2);
+
+  // Rolling back takes the checks and the write back, and can give hank his turn back.
+  const result = await admin.post("/api/admin/rollback", { checkpointId: before.id, returnTurns: true }) as RollbackResult;
+  assert.deepEqual(result, { undone: 2, turnsReturned: 1 });
+  let state = await publicState();
+  assert.equal(state.totals.checked, before.checked);
+  assert.equal(state.paused, true, "the queue stays paused after a rollback");
+  assert.ok(!state.recent.some((f) => f.who.name === "hank"), "undone finds aren't shown to players");
+  const hankTurn = (await adminState()).sessions.find((s) => s.user.name === "hank")!;
+  assert.ok(hankTurn.finds.length === 2 && hankTurn.finds.every((f) => f.undone), "the admin history keeps them, marked undone");
+  assert.equal((await hank.me()).attemptUsed, false);
+
+  // Hank's new turn starts from the checkpoint's data storage.
+  await admin.post("/api/admin/resume");
+  await hank.post("/api/queue/join");
+  await waitFor("hank's second offer", async () => (await hank.me()).offer);
+  await hank.post("/api/session/start");
+  creds = (await hank.me()).session!.credentials;
+  game = new ApClient();
+  await game.connect(gameConnect(creds.gamePassword));
+  await game.next("Connected");
+  game.send({ cmd: "Get", keys: [statics] });
+  assert.equal((await game.next("Retrieved")).keys[statics], null);
+  await hank.post("/api/session/end");
+  await game.waitClosed();
+
+  // The rollback took a checkpoint first: rolling back to it undoes it.
+  const undo = (await adminState()).checkpoints.find((c) => c.kind === "before-rollback")!;
+  assert.deepEqual(await admin.post("/api/admin/rollback", { checkpointId: undo.id, returnTurns: false }), { undone: 0, turnsReturned: 0 });
+  assert.equal((await publicState()).totals.checked, before.checked + 2);
+  assert.ok((await adminState()).sessions.find((s) => s.id === hankTurn.id)!.finds.every((f) => !f.undone), "the finds stand again");
+  await admin.post("/api/admin/resume");
 });
 
 // Last: confirming the goal completes the event, so nothing can start after it.
