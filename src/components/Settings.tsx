@@ -2,7 +2,7 @@ import { For, Show, createSignal, createEffect, onCleanup } from "solid-js";
 import { settingsOpen, setSettingsOpen, overlayPrefs, setOverlayPrefs, controllerPrefs, setControllerPrefs, audioPrefs, setAudioPrefs, uiPrefs, setUiPrefs, romOverridePrefs, setRomOverridePrefs } from "../state.js";
 import { TOP_LEVEL_FIELDS, GAME_OPTION_FIELDS, type OverrideField } from "../lib/overrides.js";
 import {
-  DEFAULT_BINDINGS, loadBindings, saveBindings, captureNextButton, getActivePad,
+  DEFAULT_BINDINGS, loadBindings, saveBindings, captureNextButton, getActivePad, connectedPadCount,
   type InputName,
 } from "../lib/controller.js";
 import {
@@ -84,7 +84,7 @@ export function Settings() {
 function ControllerPanel() {
   const [bindings, setBindings] = createSignal({ ...loadBindings() });
   const [capturing, setCapturing] = createSignal<InputName | null>(null);
-  const [padInfo, setPadInfo] = createSignal<{ id: string; mapping: string } | null>(null);
+  const [padInfo, setPadInfo] = createSignal<{ id: string; mapping: string; others: number } | null>(null);
 
   // Cheap periodic poll to surface pad identity + live button feedback
   // (so users can see which index lights up when they press a button).
@@ -95,7 +95,9 @@ function ControllerPanel() {
       rafId = requestAnimationFrame(tick);
       const pad = getActivePad();
       if (!pad) { setPadInfo(null); setPressed(new Set<number>()); return; }
-      setPadInfo({ id: pad.id, mapping: pad.mapping || "non-standard" });
+      const others = connectedPadCount() - 1;
+      const info = padInfo();
+      if (info?.id !== pad.id || info.others !== others) setPadInfo({ id: pad.id, mapping: pad.mapping || "non-standard", others });
       const s = new Set<number>();
       for (let i = 0; i < pad.buttons.length; i++) if (pad.buttons[i]?.pressed) s.add(i);
       setPressed(s);
@@ -145,6 +147,9 @@ function ControllerPanel() {
             <>
               <div><span class="ctrl-k">device</span> <span class="ctrl-v">{info().id}</span></div>
               <div><span class="ctrl-k">mapping</span> <span class="ctrl-v">{info().mapping}</span></div>
+              <Show when={info().others > 0}>
+                <div class="muted">{info().others} other controller{info().others === 1 ? "" : "s"} connected: press a button on yours to use it</div>
+              </Show>
             </>
           )}
         </Show>
