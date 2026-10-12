@@ -6,9 +6,6 @@ import { For, Show, createMemo, createSignal, onMount } from "solid-js";
 import { api } from "../lib/api.js";
 import type { HintAllowance } from "../../shared/protocol.js";
 
-// Search results shown at once; more means narrowing the search.
-const SHOWN = 40;
-
 export function HintPicker(props: { allowance: HintAllowance }) {
   const [locations, setLocations] = createSignal<{ id: number; name: string }[] | null>(null);
   const [query, setQuery] = createSignal("");
@@ -60,14 +57,14 @@ export function HintPicker(props: { allowance: HintAllowance }) {
         <input class="admin-filter hint-search" type="search" placeholder={`search ${locations()!.length.toLocaleString()} unchecked locations`}
           value={query()} onInput={(ev) => setQuery(ev.currentTarget.value)} />
         <ul class="hint-options">
-          <For each={matches().slice(0, SHOWN)}>{(l) => (
+          <For each={matches()}>{(l) => (
             <li><button disabled={busy() || left() <= 0} onClick={() => setChosen([...chosen(), l])}>{l.name}</button></li>
           )}</For>
         </ul>
         <p class="muted hint-status">{
           left() <= 0 ? "that's all your hints — remove one to pick another"
             : !matches().length ? "no unchecked location matches"
-            : matches().length > SHOWN ? `${(matches().length - SHOWN).toLocaleString()} more — narrow the search`
+            : query().trim() ? `${matches().length.toLocaleString()} match${matches().length === 1 ? "" : "es"}`
             : ""
         }</p>
       </Show>
