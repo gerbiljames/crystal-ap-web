@@ -64,12 +64,12 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     port: 8765,
-    // The YOGOS server (npm run server) on its default port: the API, its live
-    // socket, and the game's Archipelago endpoint. Not /ap — that's the
-    // bundle tars in public/.
+    // The YOGOS server (npm run server), on its default port unless
+    // YOGOS_SERVER says otherwise: the API, its live socket, and the game's
+    // Archipelago endpoint. Not /ap — that's the bundle tars in public/.
     proxy: {
-      "/api": { target: "http://127.0.0.1:8080", ws: true },
-      "/archipelago": { target: "http://127.0.0.1:8080", ws: true },
+      "/api": { target: process.env.YOGOS_SERVER || "http://127.0.0.1:8080", ws: true },
+      "/archipelago": { target: process.env.YOGOS_SERVER || "http://127.0.0.1:8080", ws: true },
     },
   },
   build: {
