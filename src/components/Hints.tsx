@@ -47,7 +47,6 @@ export function HintPicker(props: { allowance: HintAllowance }) {
       <p class="tip">
         <strong>You used all your checks.</strong><br />Before the next turn you can hint up
         to <strong>{a().allowance}</strong> location{a().allowance === 1 ? "" : "s"}.
-        Everyone using PopTracker will see what's there.
       </p>
       <Show when={error()}>
         <div class="error-box" role="alert"><span class="err-title">couldn't do that</span><span>{error()}</span></div>
