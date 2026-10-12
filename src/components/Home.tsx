@@ -261,13 +261,13 @@ function RomCard() {
           <p class="tip">Your ROM is patched and ready to go.</p>
         </Show>
         <Show when={prep().kind === "saved"}>
-          <p class="tip">Your ROM is saved in this browser. It'll be patched when you join the queue. To use a different one, drop it here.</p>
+          <p class="tip">Your ROM is saved in this browser. It'll be patched when you join the queue.</p>
         </Show>
         <Show when={prep().kind === "need-rom"}>
           <p class="tip">Get your ROM ready while you wait.</p>
           <p class="legend">accepts: <kbd>.gbc</kbd> · 2,097,152 bytes · Crystal v1.0 or v1.1</p>
         </Show>
-        <Show when={prep().kind === "saved" || prep().kind === "need-rom"}>
+        <Show when={prep().kind === "need-rom"}>
           <Dropzone id="dz-rom" inputId="rom-file" accept=".gbc,.gb,application/octet-stream" onFile={handleRomDrop}>
             <div class="dz-mark">▱</div>
             <div class="dz-primary">Drop vanilla Pokémon Crystal ROM</div>
