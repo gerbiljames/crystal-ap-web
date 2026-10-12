@@ -149,10 +149,6 @@ function NowPlayingCard() {
             </ol>
           </Show>
         </div>
-        <div class="queue-block">
-          <span class="eyebrow">recent finds</span>
-          <FindList finds={ps()!.recent} empty="no finds yet" who={(f) => <><UserBadge user={f.who} small /> found </>} />
-        </div>
       </Show>
     </div>
   );
