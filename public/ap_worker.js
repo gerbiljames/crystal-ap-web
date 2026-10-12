@@ -555,6 +555,11 @@ for _h in logging.getLogger().handlers:
     _h.addFilter(_DropUnusableTips())
 
 from CommonClient import server_loop
+import CommonClient as _common_client
+# For a wss:// address server_loop builds an SSL context from certifi, which
+# isn't bundled. The browser's WebSocket (see _ws_connect) does the TLS and
+# never sees that context, so there's nothing to build.
+_common_client.get_ssl_context = lambda: None
 from worlds._bizhawk.context import BizHawkClientContext, _game_watcher
 # context.py binds connect/disconnect by name at import, so the patches on
 # the package above only reach it when it's imported after them. Patch its
