@@ -22,7 +22,7 @@ Built on [crystal.ap](https://github.com/gerbiljames/crystal-ap-web), which prov
 
 The game runs in each player's browser, so the browser holds the credentials for its turn. A player willing to use devtools can drive that game connection with a script instead of the emulator. The server can't tell the two apart (nothing can, for a game running on the player's machine). What it does guarantee, whatever connects:
 
-- At most `CHECK_LIMIT` new checks per turn, and one turn per Discord account.
+- At most `CHECK_LIMIT` new checks per turn, and one turn per Discord account. The message that uses the last check may bring up to two more with it: one action can complete several locations at once (a catch that's both a dexsanity and a dexcountsanity check), and cutting it short would leave the rest for the next player's game to send, using up their checks.
 - No hints, chat, `!` commands, release or collect.
 - Only one PopTracker alongside the game. Anything else using the turn's details ends the turn.
 - Data storage only takes the writes the Crystal client makes: its own keys, operations and value shapes, all bounded in size. So a turn can't stall MultiServer, fill its memory or corrupt what later players read.

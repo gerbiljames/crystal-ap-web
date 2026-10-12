@@ -91,15 +91,15 @@ test("the next player waits in the queue until the turn is over", () => {
   assert.ok(game.youFor("b")!.offer);
 });
 
-test("checks beyond the limit are never forwarded, and the session ends", async (t) => {
+test("the message that uses the last check brings at most two more, and the session ends", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const conn = startA();
-  // Batch crossing the limit of 3: only three go to the server.
-  assert.deepEqual(game.checks(conn, [1, 2, 3, 4, 5]), [1, 2, 3]);
+  // Batch crossing the limit of 3: three, plus two that came with them.
+  assert.deepEqual(game.checks(conn, [1, 2, 3, 4, 5, 6, 7]), [1, 2, 3, 4, 5]);
   // Nothing else goes through while the last ones are confirmed.
   assert.deepEqual(game.checks(conn, [6]), []);
   assert.equal(game.gameOpen(conn), false);
-  observer.confirm([1, 2, 3]);
+  observer.confirm([1, 2, 3, 4, 5]);
   t.mock.timers.tick(2000);
   assert.equal(game.youFor("a")!.session, null);
   assert.equal(game.youFor("a")!.lastSession!.reason, "quota");
@@ -118,10 +118,20 @@ test("already-checked locations don't count", () => {
 test("unconfirmed checks keep counting, and re-sends go through without counting twice", () => {
   const conn = startA();
   assert.deepEqual(game.checks(conn, [1, 2]), [1, 2]);
-  // The server hasn't confirmed 1 and 2: the client sends them again with a
-  // new one. Only one more fits the limit of 3.
-  assert.deepEqual(game.checks(conn, [1, 2, 4, 5]), [1, 2, 4]);
+  // The server hasn't confirmed 1 and 2: the client sends them again with new
+  // ones. One more fits the limit of 3, and two came with it.
+  assert.deepEqual(game.checks(conn, [1, 2, 4, 5, 6, 7]), [1, 2, 4, 5, 6]);
   assert.equal(game.gameOpen(conn), false);
+});
+
+test("a dexsanity and dexcountsanity check made together both count as the last", () => {
+  const conn = startA();
+  assert.deepEqual(game.checks(conn, [1, 2]), [1, 2]);
+  observer.confirm([1, 2]);
+  assert.equal(game.youFor("a")!.session!.checks, 2);
+  assert.deepEqual(game.checks(conn, [1, 2, 3, 4]), [3, 4]);
+  observer.confirm([3, 4]);
+  assert.equal(game.youFor("a")!.session!.checks, 4);
 });
 
 test("a newer connection in the same role replaces the old one once the server accepts it", () => {

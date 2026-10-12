@@ -158,10 +158,11 @@ test("a full turn: PopTracker allowed, cheats dropped, exactly ten checks, then 
   assert.equal(gameClient.received.filter((m) => m.cmd === "ReceivedItems").length, itemsBefore);
   assert.ok(!gameClient.received.some((m) => m.cmd === "PrintJSON" && JSON.stringify(m).includes("Cheat")));
 
-  // Twelve new checks in two batches: only ten reach the server.
+  // Fifteen new checks in two batches: the ten, plus the two the batch that
+  // used the last one may bring with it, reach the server.
   gameClient.send({ cmd: "LocationChecks", locations: missing.slice(0, 7) });
   await waitFor("seven checks", async () => (await alice.me()).session?.checks === 7);
-  gameClient.send({ cmd: "LocationChecks", locations: missing.slice(7, 12) });
+  gameClient.send({ cmd: "LocationChecks", locations: missing.slice(7, 15) });
 
   await gameClient.waitClosed();
   await tracker.waitClosed();
@@ -170,10 +171,10 @@ test("a full turn: PopTracker allowed, cheats dropped, exactly ten checks, then 
   assert.equal(me.session, null);
   assert.equal(me.attemptUsed, true);
   assert.equal(me.lastSession!.reason, "quota");
-  assert.equal(me.lastSession!.finds.length, LIMIT);
+  assert.equal(me.lastSession!.finds.length, LIMIT + 2);
   await waitFor("named finds", async () => (await alice.me()).lastSession!.finds.every((f) => f.item));
   const totals = (await publicState()).totals;
-  assert.equal(totals.checked, LIMIT);
+  assert.equal(totals.checked, LIMIT + 2);
 
   // The old credentials are dead.
   const stale = new ApClient();

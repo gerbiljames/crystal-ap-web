@@ -38,6 +38,12 @@ const GOAL_RETRY_MS = 30000;
 const QUOTA_LINGER_MS = 2000;
 // Upper bound on waiting for the last checks to be confirmed.
 const QUOTA_WAIT_MS = 6000;
+// How many more checks the message that uses the last one may bring with it.
+// One action can complete several locations (a catch that's both a dexsanity
+// and a dexcountsanity check), which the client reports together; cutting the
+// message short would leave the rest unchecked, for the next player's game to
+// send as soon as it loads the shared state, using up one of their checks.
+const LAST_MESSAGE_EXTRA = 2;
 // After a turn ends, how long to wait before checkpointing (its last checks
 // still on their way are in it then).
 const TURN_CHECKPOINT_DELAY_MS = 3000;
@@ -666,7 +672,7 @@ export class Game {
       valid: this.observer.allLocations,
       checked: { has: (id: number) => this.observer.checked.has(id) || s.newChecks.has(id) },
       pending: s.pending,
-      remaining,
+      remaining: remaining > 0 ? remaining + LAST_MESSAGE_EXTRA : 0,
     });
     let claimsMoved = false;
     for (const id of fresh) {
