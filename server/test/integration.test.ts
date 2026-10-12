@@ -392,6 +392,11 @@ test("an admin can roll the game back to a checkpoint, and undo that", { skip },
   await waitFor("the checkpoint after hank's turn", async () => (await adminState()).checkpoints.some((c) => c.label === "after hank's turn"));
   assert.equal((await publicState()).totals.checked, before.checked + 2);
 
+  // Only admins can checkpoint or roll back.
+  await assert.rejects(hank.post("/api/admin/checkpoint", { label: "mine" }), /403/);
+  await assert.rejects(hank.post("/api/admin/rollback", { checkpointId: before.id, returnTurns: true }), /403/);
+  assert.equal((await publicState()).totals.checked, before.checked + 2);
+
   // Rolling back takes the checks and the write back, and can give hank his turn back.
   const result = await admin.post("/api/admin/rollback", { checkpointId: before.id, returnTurns: true }) as RollbackResult;
   assert.deepEqual(result, { undone: 2, turnsReturned: 1 });
