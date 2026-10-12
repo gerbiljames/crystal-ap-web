@@ -476,7 +476,9 @@ export class Game {
   // ---------------------------------------------------------------------------
   // ending a session
   // ---------------------------------------------------------------------------
-  end(reason: EndReason, detail: string | null) {
+  // `hints`: the player then chooses hints before the next turn (a turn
+  // that used all its checks, or one an admin sends to its hints).
+  end(reason: EndReason, detail: string | null, hints = reason === "quota") {
     const s = this.active;
     if (!s) return;
     this.active = null;
@@ -503,7 +505,7 @@ export class Game {
         await this.takeCheckpoint(`after ${name}'s turn`, "turn", s.id);
       }).catch((err) => this.log(`couldn't checkpoint after ${name}'s turn: ${(err as Error).message}`));
     }, TURN_CHECKPOINT_DELAY_MS);
-    if (reason === "quota" && !this.complete) this.beginHints(s.id, s.userId);
+    if (hints && !this.complete) this.beginHints(s.id, s.userId);
     this.advance();
     this.broadcast();
   }
@@ -893,6 +895,15 @@ export class Game {
   endSession(sessionId: string, detail: string) {
     if (this.active?.id !== sessionId) throw new HttpError(409, "that turn has already ended");
     this.end("admin", detail);
+  }
+
+  // End the turn as though it had used all its checks: its player chooses
+  // hints (as many as that would give) before the next turn. Returns how many.
+  endSessionToHints(sessionId: string, detail: string): number {
+    if (this.active?.id !== sessionId) throw new HttpError(409, "that turn has already ended");
+    const userId = this.active.userId;
+    this.end("admin", detail, true);
+    return this.hinting?.userId === userId ? this.hinting.allowance : 0;
   }
 
   // ---------------------------------------------------------------------------

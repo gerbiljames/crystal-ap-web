@@ -704,3 +704,16 @@ test("an admin can skip the hints, and a restart keeps them waiting", (t) => {
   assert.ok(game.youFor("b")!.offer);
   assert.throws(() => game.skipHints(), /nobody is choosing hints/);
 });
+
+test("an admin can end a turn and send its player to their hints", () => {
+  const conn = startA();
+  game.join("b");
+  game.checks(conn, [1]);
+  observer.confirm([1]);
+  assert.equal(game.endSessionToHints(game.publicState().current!.sessionId, "sent by an admin"), 4);
+  assert.equal(conn.closed?.code, 4000);
+  assert.equal(game.youFor("a")!.lastSession!.reason, "admin");
+  assert.deepEqual(game.youFor("a")!.hints, { allowance: 4, perTurn: 5, progressionFound: 1 });
+  assert.equal(game.youFor("b")!.offer, null);
+  assert.throws(() => game.endSessionToHints("gone", "again"), /already ended/);
+});

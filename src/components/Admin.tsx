@@ -139,6 +139,7 @@ function AdminBody() {
                 <UserBadge user={ps()!.current!.user} small />
                 <ChecksMeter checks={ps()!.current!.checks} limit={ps()!.checkLimit} />
                 <button class="btn-danger" disabled={busy()} onClick={() => act("end-session", { sessionId: ps()!.current!.sessionId }, `End ${ps()!.current!.user.name}'s turn? It counts as their one turn.`)}>end turn</button>
+                <button disabled={busy()} onClick={() => act("end-session-to-hints", { sessionId: ps()!.current!.sessionId }, `End ${ps()!.current!.user.name}'s turn and let them choose hints, as if they'd used all their checks? It counts as their one turn.`)}>end turn with hints</button>
               </div>
             </Show>
             <Show when={state()?.hinting}>

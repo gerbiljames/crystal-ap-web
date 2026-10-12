@@ -197,6 +197,12 @@ export function startHttp(deps: HttpDeps) {
         game.endSession(body.sessionId, `ended by ${db.user(who)?.name ?? who}`);
         return noContent(res);
       }
+      case "POST /api/admin/end-session-to-hints": {
+        const who = admin(req);
+        const body = await readBody(req);
+        if (typeof body?.sessionId !== "string") throw new HttpError(400, "sessionId is required");
+        return json(res, 200, { hints: game.endSessionToHints(body.sessionId, `sent to their hints by ${db.user(who)?.name ?? who}`) });
+      }
       case "POST /api/admin/dequeue": admin(req); game.leave(userIdArg(await readBody(req))); return noContent(res);
       case "POST /api/admin/reset-user": admin(req); game.resetUser(userIdArg(await readBody(req))); return noContent(res);
       case "POST /api/admin/ban": {
