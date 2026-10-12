@@ -1702,7 +1702,10 @@
 
   .session-panel { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; }
   .session-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .session-panel .find-list { max-height: 160px; }
+  /* Room for every check of the turn from the start (its height is set from
+     the limit), so the panel below doesn't move as checks come in. */
+  .session-finds { overflow: auto; flex-shrink: 0; }
+  .session-panel .find-list { max-height: none; }
   .poptracker { border: 1px solid var(--line); padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
   .poptracker[open] { display: flex; }
   .poptracker summary { cursor: pointer; display: flex; justify-content: space-between; align-items: center; list-style: none; }
