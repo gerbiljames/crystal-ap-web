@@ -87,6 +87,12 @@ export function beginLogin(config: Config): { location: string; setCookie: strin
 
 export class AuthError extends Error {}
 
+// When a Discord account was created: its id's top bits are milliseconds
+// since the start of 2015.
+export function discordCreatedAt(id: string): number {
+  return Number((BigInt(id) >> 22n) + 1420070400000n);
+}
+
 // Finish the sign-in: check the state, trade the code for a token, and look
 // the user up. Resolves to the Discord user.
 export async function completeLogin(config: Config, req: IncomingMessage, query: URLSearchParams): Promise<PublicUser> {
@@ -113,6 +119,11 @@ export async function completeLogin(config: Config, req: IncomingMessage, query:
   const meRes = await discord("https://discord.com/api/users/@me", { headers: auth });
   if (!meRes.ok) throw new AuthError(`couldn't read your Discord profile (${meRes.status})`);
   const me = await meRes.json() as { id: string; username: string; global_name?: string | null; avatar?: string | null };
+
+  const before = config.discord.createdBefore;
+  if (before !== null && !(/^\d+$/.test(me.id) && discordCreatedAt(me.id) < before)) {
+    throw new AuthError(`this event is only open to Discord accounts made before ${new Date(before).toUTCString()}`);
+  }
 
   if (config.discord.guildId) {
     const guildsRes = await discord("https://discord.com/api/users/@me/guilds", { headers: auth });

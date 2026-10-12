@@ -12,7 +12,14 @@ export type Config = {
   apUrl: string;
   // What PopTracker users type in: host:port.
   apPublicAddress: string;
-  discord: { clientId: string; clientSecret: string; guildId: string | null };
+  discord: {
+    clientId: string;
+    clientSecret: string;
+    guildId: string | null;
+    // Only accounts created before this (ms since the epoch) may sign in: a
+    // new account would be another turn.
+    createdBefore: number | null;
+  };
   sessionSecret: string;
   admins: Set<string>;
   checkLimit: number;
@@ -45,6 +52,14 @@ function multiServerPort(port: number): number {
   const p = int("MULTISERVER_PORT", 38282, 1);
   if (p === port) throw new Error(`MULTISERVER_PORT must differ from PORT (both ${p})`);
   return p;
+}
+
+function time(name: string): number | null {
+  const raw = process.env[name];
+  if (!raw) return null;
+  const t = Date.parse(raw);
+  if (Number.isNaN(t)) throw new Error(`${name} must be a date or time like 2026-10-13T00:00:00+01:00, got ${raw}`);
+  return t;
 }
 
 function required(name: string, devFallback?: string): string {
@@ -80,6 +95,7 @@ export function loadConfig(): Config {
       clientId: required("DISCORD_CLIENT_ID", ""),
       clientSecret: required("DISCORD_CLIENT_SECRET", ""),
       guildId: process.env.DISCORD_GUILD_ID || null,
+      createdBefore: time("DISCORD_CREATED_BEFORE"),
     },
     sessionSecret,
     admins: new Set((process.env.ADMIN_DISCORD_IDS || "").split(",").map((s) => s.trim()).filter(Boolean)),

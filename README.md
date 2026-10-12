@@ -71,6 +71,7 @@ The container serves plain HTTP on port 8080, so put TLS in front of it (the exa
 | `PUBLIC_URL` | `http://127.0.0.1:8080` | Where players reach the site. |
 | `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | — | Discord application credentials. |
 | `DISCORD_GUILD_ID` | — | Only members of this Discord server may sign in. |
+| `DISCORD_CREATED_BEFORE` | — | Only Discord accounts created before this time may sign in, so nobody can make a new account for another turn. A date and time with its offset, e.g. `2026-10-13T00:00:00+01:00`. |
 | `SESSION_SECRET` | — | Signs the login cookie. Use a long random string. |
 | `ADMIN_DISCORD_IDS` | — | Comma-separated Discord user ids allowed on the admin page (menu → admin). |
 | `CHECK_LIMIT` | `10` | New checks per turn. |
