@@ -261,7 +261,7 @@ function RomCard() {
           <p class="tip">Your ROM is patched and ready to go.</p>
         </Show>
         <Show when={prep().kind === "saved"}>
-          <p class="tip">Your ROM is saved in this browser. It'll be patched when you join the queue.</p>
+          <p class="tip">Your ROM is saved. It'll be patched when you join the queue.</p>
         </Show>
         <Show when={prep().kind === "need-rom"}>
           <p class="tip">Get your ROM ready while you wait.</p>
