@@ -545,6 +545,7 @@ export class Game {
   hintOptions(userId: string): HintOptions {
     const h = this.requireHinting(userId);
     if (!this.observer.ready) throw new HttpError(503, "the game server isn't ready — try again in a moment");
+    if (!this.observer.itemsKnown) throw new HttpError(503, "still reading the game's items — try again in a moment");
     const o = this.observer;
     const locations = [...o.allLocations]
       .filter((id) => !o.checked.has(id) && !o.hinted.has(id))

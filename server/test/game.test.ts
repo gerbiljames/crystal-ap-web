@@ -693,6 +693,15 @@ test("hints are checked: only the hinting player, within the allowance, of open 
   assert.ok(game.youFor("b")!.offer);
 });
 
+test("no hints until the game server's items and hints have been read", (t) => {
+  useAllChecks(t, [3, 4, 5]);
+  observer.itemsKnown = false;
+  assert.throws(() => game.hintOptions("a"), /still reading/);
+  assert.throws(() => game.submitHints("a", [6]), /still reading/);
+  observer.itemsKnown = true;
+  assert.equal(game.submitHints("a", [6]), 1);
+});
+
 test("a turn that found as many progression items as the hints per turn gets none", (t) => {
   config.hintsPerTurn = 2;
   try {

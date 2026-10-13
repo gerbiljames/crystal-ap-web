@@ -50,6 +50,7 @@ export function HintPicker(props: { allowance: HintAllowance }) {
       </p>
       <Show when={error()}>
         <div class="error-box" role="alert"><span class="err-title">couldn't do that</span><span>{error()}</span></div>
+        <Show when={!locations()}><div><button onClick={load}>try again</button></div></Show>
       </Show>
       <Show when={locations()} fallback={<p class="muted">{error() ? "" : "loading locations…"}</p>}>
         <input class="admin-filter hint-search" type="search" placeholder={`search ${locations()!.length.toLocaleString()} unchecked locations`}

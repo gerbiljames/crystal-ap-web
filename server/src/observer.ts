@@ -40,8 +40,9 @@ export class Observer extends EventEmitter {
   // Each location's item, by name.
   readonly items = new Map<number, string>();
   private scoutedAll = new Set<number>();
-  // The slot's locations someone has a hint for.
+  // The slot's locations someone has a hint for, once read (hintsRead).
   readonly hinted = new Set<number>();
+  private hintsRead = false;
   ready = false;
   // Why this seed can't be played here (seen on Connected), or null.
   problem: string | null = null;
@@ -98,9 +99,10 @@ export class Observer extends EventEmitter {
   }
 
   // Whether every location's item is known (the scout made on connecting has
-  // come back), so `progression` can be trusted.
+  // come back), so `progression` can be trusted, and the hints there are have
+  // been read, so `hinted` can.
   get itemsKnown(): boolean {
-    return this.ready && [...this.allLocations].every((id) => this.scoutedAll.has(id));
+    return this.ready && this.hintsRead && [...this.allLocations].every((id) => this.scoutedAll.has(id));
   }
 
   // Hint the given locations of the slot, as everyone's trackers will show
@@ -113,6 +115,7 @@ export class Observer extends EventEmitter {
   private get hintsKey() { return `_read_hints_${this.team}_${this.slot}`; }
 
   private noteHints(hints: unknown) {
+    this.hintsRead = true;
     this.hinted.clear();
     for (const h of Array.isArray(hints) ? hints : []) {
       if (h?.finding_player === this.slot && typeof h.location === "number") this.hinted.add(h.location);
@@ -253,6 +256,7 @@ export class Observer extends EventEmitter {
         this.scoutedAll.clear();
         this.progression.clear();
         this.hinted.clear();
+        this.hintsRead = false;
         this.send([
           { cmd: "LocationScouts", locations: [...this.allLocations], create_as_hint: 0 },
           { cmd: "Get", keys: [this.hintsKey] },
