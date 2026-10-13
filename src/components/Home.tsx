@@ -81,14 +81,14 @@ function Blurb() {
       <p>A single Pokémon Crystal Archipelago slot, played in relay. Everyone takes one turn, one at a time.</p>
       <ul class="blurb-list">
         <li>Sign in with Discord and join the queue. When it's your turn you have a few minutes to start.</li>
-        <li>You start a <b>fresh save</b>, with every item the players before you found already in your bag.</li>
-        <li>Your turn ends after <b>{limit()} new checks</b>. Locations someone already checked don't count.</li>
+        <li>You start with a <b>fresh save</b>, but with every item previous players collected and their shared knowledge.</li>
+        <li>Your turn ends after checking <b>{limit()} new locations</b>.</li>
         <Show when={hints() > 0}>
-          <li>Use all your checks and you can <b>hint</b> up to {hints()} locations before the next turn, one fewer for each progression item you found. Hints show in PopTracker.</li>
+          <li>If you finish your turn by getting your maximum checks, you can <b>hint</b> up to {hints()} locations before the next turn, one fewer for each progression item you found.</li>
         </Show>
-        <li>You get <b>one turn, ever</b>. Your save is deleted when it ends.</li>
-        <li>You can connect one <b>PopTracker</b> alongside the game. Connecting anything else ends your turn on the spot.</li>
-        <li>If the game loses its connection it pauses; stay away too long and your turn ends.</li>
+        <li>You only have <b>one shot</b> at playing, ever. Your save is deleted, but the game carries on with the next player.</li>
+        <li>You can connect <b>one Pokémon Crystal PopTracker Pack</b> alongside the game. Connecting anything else will end your turn on the spot.</li>
+        <li>If the game loses its connection it pauses, but if you stay away too long your turn ends.</li>
       </ul>
     </aside>
   );
@@ -99,7 +99,7 @@ function AccountCard() {
     <Show when={meLoaded() && !you()}>
       <div class="home-card">
         <div class="card-head"><span class="eyebrow">sign in</span></div>
-        <p class="tip">Sign in with Discord to join the queue. Only your Discord name and avatar are used.</p>
+        <p class="tip">Sign in with Discord to join the queue. Your Discord name and avatar will be shown to other people temporarily.</p>
         <div><a class="btn btn-primary btn-discord" href={loginUrl()}>sign in with discord</a></div>
       </div>
     </Show>
