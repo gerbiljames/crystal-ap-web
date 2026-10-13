@@ -4,6 +4,7 @@
 node_modules
 dist
 data
+data-*
 public/ap
 public/ap.tar
 binjgb
