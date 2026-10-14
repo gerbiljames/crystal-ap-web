@@ -1,4 +1,4 @@
-# You only get one slot: the site, the Node server and Archipelago's
+# You only have one slot: the site, the Node server and Archipelago's
 # MultiServer in one image. Build from a checkout with submodules:
 #   git submodule update --init vendor/archipelago
 #   docker build -t you-only-get-one-slot .

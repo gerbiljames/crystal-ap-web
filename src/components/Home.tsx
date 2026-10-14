@@ -77,7 +77,7 @@ function Blurb() {
   const hints = () => publicState()?.hintsPerTurn ?? 5;
   return (
     <aside class="blurb">
-      <h1><span class="blurb-title">You only get one slot</span><br /><em>one game, everyone's turn.</em></h1>
+      <h1><span class="blurb-title">You only have one slot</span><br /><em>one game, everyone's turn.</em></h1>
       <p>A single Pokémon Crystal Archipelago slot, played in relay. Everyone takes one turn, one at a time.</p>
       <ul class="blurb-list">
         <li>Sign in with Discord and join the queue. When it's your turn you have a few minutes to start.</li>

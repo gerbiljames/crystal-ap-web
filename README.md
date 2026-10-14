@@ -1,4 +1,4 @@
-# You only get one slot
+# You only have one slot
 
 One Pokémon Crystal Archipelago slot, played in relay. Players sign in with Discord and queue up. Each player gets **one turn, ever**, and the turn ends after **10 new location checks**. Turns run one at a time, in the browser.
 

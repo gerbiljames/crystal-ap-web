@@ -1,4 +1,4 @@
-You only get one slot bundles and redistributes the third-party components listed
+You only have one slot bundles and redistributes the third-party components listed
 below. Each component is used under the terms of its own license, reproduced
 verbatim here.
 
