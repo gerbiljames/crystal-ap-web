@@ -266,6 +266,21 @@ test("a running session survives a server restart", () => {
   assert.equal(game.youFor("a")!.session!.checks, 1);
 });
 
+test("only the queued, the offered and the player may fetch the patch", () => {
+  assert.equal(game.mayFetchPatch("a"), false);
+  game.join("a");
+  assert.equal(game.mayFetchPatch("a"), true);
+  game.start("a");
+  assert.equal(game.mayFetchPatch("a"), true);
+  game.join("b");
+  assert.equal(game.mayFetchPatch("b"), true);
+  game.leave("b");
+  assert.equal(game.mayFetchPatch("b"), false);
+  game.giveUp("a");
+  assert.equal(game.mayFetchPatch("a"), false);
+  assert.equal(game.mayFetchPatch("nobody"), false);
+});
+
 test("banning a player ends their turn", () => {
   startA();
   game.setBanned("a", true);

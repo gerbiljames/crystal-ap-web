@@ -1137,6 +1137,14 @@ export class Game {
     };
   }
 
+  // Whether a user may download the patch: only someone who'll patch a ROM
+  // with it, i.e. who's queued, offered the turn or playing it.
+  mayFetchPatch(userId: string): boolean {
+    const u = this.db.user(userId);
+    if (!u || u.banned) return false;
+    return this.active?.userId === userId || this.offer?.userId === userId || this.db.isQueued(userId);
+  }
+
   // `positions` (user → place in the queue) lets a broadcast work the queue
   // out once for everyone.
   youFor(userId: string, positions: Map<string, number> = positionsOf(this.db.queue())): YouState | null {

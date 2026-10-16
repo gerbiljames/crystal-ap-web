@@ -156,7 +156,7 @@ export function startHttp(deps: HttpDeps) {
         return res.end();
 
       case "GET /api/patch": {
-        if (db.user(signedIn(req))?.banned) throw new HttpError(403, "you can't take part in this event");
+        if (!game.mayFetchPatch(signedIn(req))) throw new HttpError(403, "the patch is only for players in the queue or taking their turn");
         res.writeHead(200, {
           // Which seed this patch is for (as PublicState.seed names it).
           "x-yogos-seed": deps.seed.hash.slice(0, 16),
