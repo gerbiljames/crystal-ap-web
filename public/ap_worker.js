@@ -275,7 +275,7 @@ async function patch(id, romBytes, patchBytes, overrides) {
   // Dispatch by game name from the patch's archipelago.json manifest. Stable
   // and prerelease both ship a PokemonCrystalProcedurePatch class but they
   // live in different modules and produce binary-incompatible patches.
-  await pyodide.runPythonAsync(`
+  await runPyChecked(`
 import zipfile, json
 with zipfile.ZipFile("/tmp/seed.apcrystalpre") as zf:
     _manifest = json.loads(zf.read("archipelago.json"))
