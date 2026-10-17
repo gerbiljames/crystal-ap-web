@@ -8,10 +8,10 @@
       "channel": "stable",
       "package": "pokemon_crystal",
       "game": "Pokemon Crystal",
-      "world_version": "6.0.4",
-      "display_version": "6.0.4",
+      "world_version": "6.0.5",
+      "display_version": "6.0.5",
       "minimum_patch_version": "6.0.0",
-      "tar": "worlds/pokemon_crystal-6.0.4.tar",
+      "tar": "worlds/pokemon_crystal-6.0.5.tar",
       "size": 4198400
     }
   ]
