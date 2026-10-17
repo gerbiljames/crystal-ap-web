@@ -264,6 +264,7 @@ function AdminBody() {
               <p class="muted">ended {fmtTime(s.endedAt)}</p>
               <FindList finds={s.finds} empty="no new checks" />
               <Show when={s.hints?.length}>
+                <hr />
                 <span class="eyebrow">hinted</span>
                 <ul class="find-list">
                   <For each={s.hints}>{(h) => (
