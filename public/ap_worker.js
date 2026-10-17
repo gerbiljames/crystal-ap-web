@@ -137,6 +137,25 @@ function pyodideIsDead() {
   catch (err) { return /fatally failed|fatal error/i.test(err?.message || String(err)); }
 }
 
+// Run Python and surface the traceback as a real Error message on failure.
+// sys.stderr is rerouted to the log (_Tee), which leaves Pyodide's own
+// PythonError with an empty message by the time it reaches our outer catch.
+async function runPyChecked(code) {
+  const wrapped = `
+import traceback
+def _go():
+${code.split("\n").map(l => "    " + l).join("\n")}
+try:
+    _go()
+    _ = None
+except BaseException:
+    _ = traceback.format_exc()
+_
+`;
+  const result = await pyodide.runPythonAsync(wrapped);
+  if (result) throw new Error(result);
+}
+
 async function ensureInit(id) {
   if (booted) return;
   if (initPromise) return initPromise;
@@ -251,7 +270,7 @@ async function patch(id, romBytes, patchBytes, overrides) {
   // per call matters because apply_overrides may pop keys from it.
   const overridesJson = JSON.stringify(JSON.stringify(overrides || {}));
   // Dispatch by game name from the patch's archipelago.json manifest.
-  await pyodide.runPythonAsync(`
+  await runPyChecked(`
 import zipfile, json
 with zipfile.ZipFile("/tmp/seed.apcrystalpre") as zf:
     _manifest = json.loads(zf.read("archipelago.json"))
